@@ -1,5 +1,3 @@
-use anyhow::Result;
-
 pub use self::dense_file::DenseFileCache;
 
 mod dense_file;
@@ -22,21 +20,14 @@ pub fn unpack_f32(x: u64) -> (f32, f32) {
 // }
 
 pub trait Cache {
-    fn set_value_f32(&mut self, index: u64, lat: f32, lon: f32) -> Result<()> {
+    fn get_value(&self, index: usize) -> u64;
+    fn set_value(&mut self, index: usize, value: u64);
+
+    fn set_value_f32(&mut self, index: usize, lat: f32, lon: f32) {
         self.set_value(index, pack_f32(lat, lon))
     }
 
-    fn set_value_i32(&mut self, index: u64, lat: i32, lon: i32) -> Result<()> {
+    fn set_value_i32(&mut self, index: usize, lat: i32, lon: i32) {
         self.set_value(index, pack_i32(lat, lon))
-    }
-
-    fn set_value(&mut self, index: u64, value: u64) -> Result<()>;
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }
