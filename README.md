@@ -27,3 +27,6 @@ fn main() {
             });
 }
 ```
+
+## License
+You may use this project under MIT or Apache 2.0 license

@@ -3,6 +3,14 @@ name = "osmnodecache"
 version = "0.1.0"
 authors = ["Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Flat file OSM node cache to store (latitude,longitude) pairs as indexed entries"
+homepage = "https://github.com/nyurik/osm-node-cache"
+repository = "https://github.com/nyurik/osm-node-cache"
+documentation = "https://docs.rs/osmnodecache"
+readme = "README.md"
+keywords = ["osm", "cache"]
+categories = ["caching"]
 
 [dependencies]
 memmap2 = "0.5.0"
