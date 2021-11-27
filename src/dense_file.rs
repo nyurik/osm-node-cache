@@ -3,8 +3,8 @@ extern crate test;
 
 use std::fs::OpenOptions;
 use std::mem::{size_of, transmute};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use anyhow::Result;
 use bytesize::ByteSize;
@@ -13,11 +13,24 @@ use memmap2::MmapMut;
 use crate::Cache;
 
 /// Increase the size of the file if needed, and create a memory map from it
-fn resize_and_memmap(filename: &str, index: usize, page_size: usize, verbose: bool) -> Result<MmapMut> {
+fn resize_and_memmap(
+    filename: &str,
+    index: usize,
+    page_size: usize,
+    verbose: bool,
+) -> Result<MmapMut> {
     if page_size % size_of::<usize>() != 0 {
-        panic!("page_size={} is not a multiple of {}.", page_size, size_of::<usize>())
+        panic!(
+            "page_size={} is not a multiple of {}.",
+            page_size,
+            size_of::<usize>()
+        )
     }
-    let file = OpenOptions::new().read(true).write(true).create(true).open(filename)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(filename)?;
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
@@ -26,7 +39,12 @@ fn resize_and_memmap(filename: &str, index: usize, page_size: usize, verbose: bo
     // println!("Trying to grow {} ➡ {}", old_size, new_size);
     if old_size < new_size {
         if verbose {
-            println!("Growing cache {} ➡ {} ({} pages)", ByteSize(old_size), ByteSize(new_size), pages);
+            println!(
+                "Growing cache {} ➡ {} ({} pages)",
+                ByteSize(old_size),
+                ByteSize(new_size),
+                pages
+            );
         }
         file.set_len(new_size)?;
     }
@@ -35,9 +53,11 @@ fn resize_and_memmap(filename: &str, index: usize, page_size: usize, verbose: bo
 
 fn lock_and_link(memmap: &RwLock<MmapMut>) -> (Option<RwLockReadGuard<MmapMut>>, &[AtomicU64]) {
     let mm = memmap.read().unwrap();
-    let data_as_u8: &[u8] = mm.as_ref();  // ideally this should be as_mut()
-    // Major hack -- the array actually contains [u8], but AtomicU64 should work just as well
+    // ideally this should be as_mut(), but mut is not multithreaded
+    let data_as_u8: &[u8] = mm.as_ref();
+    // Major hack -- the array actually contains [u8], but AtomicU64 appear to work and simplify things
     let raw_data: &[AtomicU64] = unsafe { transmute(data_as_u8) };
+
     (Some(mm), raw_data)
 }
 
@@ -76,7 +96,11 @@ impl DenseFileCache {
     /// Create a thread-safe caching accessor
     pub fn get_accessor(&self) -> impl Cache + '_ {
         let (mm_setter, raw_data) = lock_and_link(&self.memmap);
-        CacheWriter { parent: &self, mm_setter, raw_data }
+        CacheWriter {
+            parent: self,
+            mm_setter,
+            raw_data,
+        }
     }
 }
 
@@ -113,14 +137,15 @@ impl<'a> Cache for CacheWriter<'a> {
             // has already been grown.
             self.mm_setter = Option::None;
             {
-                let _ = self.parent.mutex.lock().unwrap();
+                let _pre_write_lock = self.parent.mutex.lock().unwrap();
                 if index >= self.len() {
                     // println!("Growing:  Index {}, Length {} ", index, self.len());
                     let p = self.parent;
                     let mut write_lock = p.memmap.write().unwrap();
                     // println!("Got write lock:  Index {}, Length {} ", index, self.len());
                     write_lock.flush().unwrap();
-                    *write_lock = resize_and_memmap(&p.filename, index, p.page_size, p.verbose).unwrap();
+                    *write_lock =
+                        resize_and_memmap(&p.filename, index, p.page_size, p.verbose).unwrap();
                     // println!("Got write lock:  Index {}, Length {} ", index, self.len());
                 }
             }
@@ -153,24 +178,22 @@ mod tests {
             let fc = DenseFileCache::new_ex(test_file.to_string(), 8, false).unwrap();
             let threads = 10;
             let items = 100000;
-            (0_usize..threads).par_bridge()
-                .for_each_with(fc.clone(),
-                               |fc, _thread_id| {
-                                   let mut cache = fc.get_accessor();
-                                   for v in get_random_items(items) {
-                                       cache.set_value(v, v as u64);
-                                   }
-                               },
-                );
-            (0_usize..threads).par_bridge()
-                .for_each_with(fc,
-                               |fc, _thread_id| {
-                                   let cache = fc.get_accessor();
-                                   for v in get_random_items(items) {
-                                       assert_eq!(v as u64, cache.get_value(v))
-                                   }
-                               },
-                );
+            (0_usize..threads)
+                .par_bridge()
+                .for_each_with(fc.clone(), |fc, _thread_id| {
+                    let mut cache = fc.get_accessor();
+                    for v in get_random_items(items) {
+                        cache.set_value(v, v as u64);
+                    }
+                });
+            (0_usize..threads)
+                .par_bridge()
+                .for_each_with(fc, |fc, _thread_id| {
+                    let cache = fc.get_accessor();
+                    for v in get_random_items(items) {
+                        assert_eq!(v as u64, cache.get_value(v))
+                    }
+                });
         }
         let _ = fs::remove_file(test_file);
     }
