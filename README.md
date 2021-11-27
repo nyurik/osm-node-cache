@@ -2,7 +2,7 @@
   <img src="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml/badge.svg"/>
 </a>
 
-#osm-node-cache
+# osm-node-cache
 
 Flat file node cache stores lat,lon coordinate pairs as `u64` values with their index being the position in the file.  In other words - 0th u64 value is stored as the first 8 bytes, etc.
 
