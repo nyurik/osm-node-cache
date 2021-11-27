@@ -1,5 +1,5 @@
-<a href="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yml">
-  <img src="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yml/badge.svg"/>
+<a href="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml">
+  <img src="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml/badge.svg"/>
 </a>
 
 #osm-node-cache
