@@ -1,16 +1,15 @@
 [package]
 name = "osmnodecache"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Flat file OSM node cache to store (latitude,longitude) pairs as indexed entries"
-homepage = "https://github.com/nyurik/osm-node-cache"
 repository = "https://github.com/nyurik/osm-node-cache"
-documentation = "https://docs.rs/osmnodecache"
 readme = "README.md"
 keywords = ["osm", "cache"]
 categories = ["caching"]
+build = "build.rs"
 
 [dependencies]
 memmap2 = "0.5.0"
@@ -18,5 +17,11 @@ anyhow = "1.0.47"
 bytesize = { version = "1.1.0", features = ["serde"] }
 
 [dev-dependencies]
-rayon = "1.5.1"
-rand = "0.8.4"
+rayon = "1.5.*"
+rand = "0.8.*"
+
+[build-dependencies]
+rustc_version = "0.4.*"
+
+[features]
+nightly = []

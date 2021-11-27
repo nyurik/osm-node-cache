@@ -1,5 +1,8 @@
+#[cfg(all(feature = "nightly", test))]
+extern crate test;
+
 use std::fs::OpenOptions;
-use std::mem::{transmute, size_of};
+use std::mem::{size_of, transmute};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,7 +13,7 @@ use memmap2::MmapMut;
 use crate::Cache;
 
 /// Increase the size of the file if needed, and create a memory map from it
-fn resize_and_memmap(filename: &str, index: usize, page_size: usize) -> Result<MmapMut> {
+fn resize_and_memmap(filename: &str, index: usize, page_size: usize, verbose: bool) -> Result<MmapMut> {
     if page_size % size_of::<usize>() != 0 {
         panic!("page_size={} is not a multiple of {}.", page_size, size_of::<usize>())
     }
@@ -22,7 +25,9 @@ fn resize_and_memmap(filename: &str, index: usize, page_size: usize) -> Result<M
     let new_size = (pages * page_size) as u64;
     // println!("Trying to grow {} ➡ {}", old_size, new_size);
     if old_size < new_size {
-        println!("Growing cache {} ➡ {} ({} pages)", ByteSize(old_size), ByteSize(new_size), pages);
+        if verbose {
+            println!("Growing cache {} ➡ {} ({} pages)", ByteSize(old_size), ByteSize(new_size), pages);
+        }
         file.set_len(new_size)?;
     }
     Ok(unsafe { MmapMut::map_mut(&file)? })
@@ -40,6 +45,7 @@ fn lock_and_link(memmap: &RwLock<MmapMut>) -> (Option<RwLockReadGuard<MmapMut>>,
 pub struct DenseFileCache {
     filename: Arc<String>,
     page_size: usize,
+    verbose: bool,
     memmap: Arc<RwLock<MmapMut>>,
     mutex: Arc<Mutex<()>>,
 }
@@ -52,12 +58,16 @@ struct CacheWriter<'a> {
 
 impl DenseFileCache {
     /// Open or create a file for caching
-    pub fn new(filename: String, page_size: Option<usize>) -> Result<Self> {
-        let page_size = page_size.unwrap_or(1024 * 1024 * 1024);
-        let mmap = resize_and_memmap(&filename, 0, page_size)?;
+    pub fn new(filename: String) -> Result<Self> {
+        Self::new_ex(filename, 1024 * 1024 * 1024, true)
+    }
+
+    fn new_ex(filename: String, page_size: usize, verbose: bool) -> Result<Self> {
+        let mmap = resize_and_memmap(&filename, 0, page_size, verbose)?;
         Ok(Self {
             filename: Arc::new(filename),
             page_size,
+            verbose,
             memmap: Arc::new(RwLock::new(mmap)),
             mutex: Arc::new(Mutex::new(())),
         })
@@ -106,10 +116,11 @@ impl<'a> Cache for CacheWriter<'a> {
                 let _ = self.parent.mutex.lock().unwrap();
                 if index >= self.len() {
                     // println!("Growing:  Index {}, Length {} ", index, self.len());
-                    let mut write_lock = self.parent.memmap.write().unwrap();
+                    let p = self.parent;
+                    let mut write_lock = p.memmap.write().unwrap();
                     // println!("Got write lock:  Index {}, Length {} ", index, self.len());
                     write_lock.flush().unwrap();
-                    *write_lock = resize_and_memmap(&self.parent.filename, index, self.parent.page_size).unwrap();
+                    *write_lock = resize_and_memmap(&p.filename, index, p.page_size, p.verbose).unwrap();
                     // println!("Got write lock:  Index {}, Length {} ", index, self.len());
                 }
             }
@@ -126,10 +137,11 @@ impl<'a> Cache for CacheWriter<'a> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    use rand::seq::SliceRandom;
+    use rand::thread_rng;
     use rayon::iter::ParallelBridge;
     use rayon::iter::ParallelIterator;
-    use rand::thread_rng;
-    use rand::seq::SliceRandom;
 
     use crate::*;
 
@@ -138,7 +150,7 @@ mod tests {
         let test_file = "./dense_file_test.dat";
         let _ = fs::remove_file(test_file);
         {
-            let fc = DenseFileCache::new(test_file.to_string(), Some(8)).unwrap();
+            let fc = DenseFileCache::new_ex(test_file.to_string(), 8, false).unwrap();
             let threads = 10;
             let items = 100000;
             (0_usize..threads).par_bridge()
@@ -167,5 +179,31 @@ mod tests {
         let mut vec: Vec<usize> = (0_usize..items).collect();
         vec.shuffle(&mut thread_rng());
         vec
+    }
+}
+
+/// The benchmarks require nightly to run:
+///   $ cargo +nightly bench
+#[cfg(all(feature = "nightly", test))]
+mod bench {
+    use std::fs;
+
+    use crate::*;
+
+    use super::test::Bencher;
+
+    #[bench]
+    fn dense_bench(bench: &mut Bencher) {
+        let test_file = "./dense_file_perf.dat";
+        let _ = fs::remove_file(test_file);
+        let fc = DenseFileCache::new_ex(test_file.to_string(), 1024 * 1024, false).unwrap();
+
+        let mut cache = fc.get_accessor();
+        bench.iter(|| {
+            for v in 0..1000 {
+                cache.set_value(v, v as u64);
+            }
+        });
+        let _ = fs::remove_file(test_file);
     }
 }
