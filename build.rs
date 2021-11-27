@@ -1,9 +1,9 @@
 extern crate rustc_version;
 
 use rustc_version::{version_meta, Channel};
-use std::env;
-use std::fs::OpenOptions;
-use std::io::Write;
+// use std::env;
+// use std::fs::OpenOptions;
+// use std::io::Write;
 
 fn main() {
     let meta = version_meta().unwrap();
