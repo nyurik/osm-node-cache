@@ -12,7 +12,7 @@ The library allows multithreaded access to the cache, and can dynamically grow t
 // Libraries:  osmpbf, rayon
 fn main() {
     let reader = BlobReader::from_path("planet.osm.pbf").unwrap();
-    let file_cache = DenseFileCache::new("flat_index.data".to_string(), None)?;
+    let file_cache = DenseFileCache::new("flat_index.data".to_string())?;
 
     reader.par_bridge()
         .for_each_with(
