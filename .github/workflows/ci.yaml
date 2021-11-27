@@ -12,7 +12,7 @@ name: CI
 
 env:
   RUST_TOOLCHAIN: stable
-  TOOLCHAIN_PROFILE: minimal
+  TOOLCHAIN_PROFILE: default
 
 jobs:
   lints:
