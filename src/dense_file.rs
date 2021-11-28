@@ -21,13 +21,19 @@ pub struct DenseFileCacheOptions {
     verbose: bool,
 }
 
+impl Default for DenseFileCacheOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DenseFileCacheOptions {
     pub fn new() -> Self {
         DenseFileCacheOptions {
             write: true,
             autogrow: true,
-            init_size: 1 * 1024 * 1024 * 1024, // 1 GB
-            page_size: 1 * 1024 * 1024 * 1024, // 1 GB
+            init_size: 1024 * 1024 * 1024, // 1 GB
+            page_size: 1024 * 1024 * 1024, // 1 GB
             verbose: true,
         }
     }
