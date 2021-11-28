@@ -1,6 +1,7 @@
-<a href="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml">
-  <img src="https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml/badge.svg"/>
-</a>
+[![Build](https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml/badge.svg)](https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yaml)
+[![Crates.io](https://img.shields.io/crates/v/osmnodecache.svg)](https://crates.io/crates/osmnodecache)
+[![Documentation](https://docs.rs/osmnodecache/badge.svg)](https://docs.rs/osmnodecache)
+
 
 # osm-node-cache
 
