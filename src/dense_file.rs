@@ -12,17 +12,78 @@ use memmap2::MmapMut;
 
 use crate::Cache;
 
+#[derive(Clone, Copy, Debug)]
+pub struct DenseFileCacheOptions {
+    write: bool,
+    autogrow: bool,
+    init_size: usize,
+    page_size: usize,
+    verbose: bool,
+}
+
+impl DenseFileCacheOptions {
+    pub fn new() -> Self {
+        DenseFileCacheOptions {
+            write: true,
+            autogrow: true,
+            init_size: 1 * 1024 * 1024 * 1024, // 1 GB
+            page_size: 1 * 1024 * 1024 * 1024, // 1 GB
+            verbose: true,
+        }
+    }
+
+    /// Allow data modification
+    pub fn write(&mut self, write: bool) -> &mut Self {
+        if !write {
+            todo!("Readonly cache is not supported yet")
+        }
+        self.write = write;
+        self
+    }
+
+    /// Print cache file notifications.
+    pub fn verbose(&mut self, verbose: bool) -> &mut Self {
+        self.verbose = verbose;
+        self
+    }
+
+    /// Automatically increase cache file size as needed. Ignored for read-only files.
+    pub fn autogrow(&mut self, autogrow: bool) -> &mut Self {
+        if !autogrow {
+            todo!("Constant cache size is not supported yet")
+        }
+        self.autogrow = autogrow;
+        self
+    }
+
+    /// Ensure cache file is at least this big. Ignored for read-only files.
+    pub fn init_size(&mut self, init_size: usize) -> &mut Self {
+        self.init_size = init_size;
+        self
+    }
+
+    /// When increasing file size, grow it in page size increments. Ignored for read-only files.
+    pub fn page_size(&mut self, page_size: usize) -> &mut Self {
+        self.page_size = page_size;
+        self
+    }
+
+    /// Open and initialize cache file.
+    pub fn open(self, filename: String) -> Result<DenseFileCache> {
+        DenseFileCache::new_opt(filename, self)
+    }
+}
+
 /// Increase the size of the file if needed, and create a memory map from it
 fn resize_and_memmap(
     filename: &str,
     index: usize,
-    page_size: usize,
-    verbose: bool,
+    opts: &DenseFileCacheOptions,
 ) -> Result<MmapMut> {
-    if page_size % size_of::<usize>() != 0 {
+    if opts.page_size % size_of::<usize>() != 0 {
         panic!(
             "page_size={} is not a multiple of {}.",
-            page_size,
+            opts.page_size,
             size_of::<usize>()
         )
     }
@@ -34,11 +95,10 @@ fn resize_and_memmap(
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
-    let pages = capacity / page_size + (if capacity % page_size == 0 { 0 } else { 1 });
-    let new_size = (pages * page_size) as u64;
-    // println!("Trying to grow {} ➡ {}", old_size, new_size);
+    let pages = capacity / opts.page_size + (if capacity % opts.page_size == 0 { 0 } else { 1 });
+    let new_size = (pages * opts.page_size) as u64;
     if old_size < new_size {
-        if verbose {
+        if opts.verbose {
             println!(
                 "Growing cache {} ➡ {} ({} pages)",
                 ByteSize(old_size),
@@ -64,8 +124,7 @@ fn lock_and_link(memmap: &RwLock<MmapMut>) -> (Option<RwLockReadGuard<MmapMut>>,
 #[derive(Clone)]
 pub struct DenseFileCache {
     filename: Arc<String>,
-    page_size: usize,
-    verbose: bool,
+    options: DenseFileCacheOptions,
     memmap: Arc<RwLock<MmapMut>>,
     mutex: Arc<Mutex<()>>,
 }
@@ -79,15 +138,14 @@ struct CacheWriter<'a> {
 impl DenseFileCache {
     /// Open or create a file for caching
     pub fn new(filename: String) -> Result<Self> {
-        Self::new_ex(filename, 1024 * 1024 * 1024, true)
+        DenseFileCacheOptions::new().open(filename)
     }
 
-    fn new_ex(filename: String, page_size: usize, verbose: bool) -> Result<Self> {
-        let mmap = resize_and_memmap(&filename, 0, page_size, verbose)?;
+    fn new_opt(filename: String, options: DenseFileCacheOptions) -> Result<Self> {
+        let mmap = resize_and_memmap(&filename, 0, &options)?;
         Ok(Self {
             filename: Arc::new(filename),
-            page_size,
-            verbose,
+            options,
             memmap: Arc::new(RwLock::new(mmap)),
             mutex: Arc::new(Mutex::new(())),
         })
@@ -139,21 +197,16 @@ impl<'a> Cache for CacheWriter<'a> {
             {
                 let _pre_write_lock = self.parent.mutex.lock().unwrap();
                 if index >= self.len() {
-                    // println!("Growing:  Index {}, Length {} ", index, self.len());
                     let p = self.parent;
                     let mut write_lock = p.memmap.write().unwrap();
-                    // println!("Got write lock:  Index {}, Length {} ", index, self.len());
                     write_lock.flush().unwrap();
-                    *write_lock =
-                        resize_and_memmap(&p.filename, index, p.page_size, p.verbose).unwrap();
-                    // println!("Got write lock:  Index {}, Length {} ", index, self.len());
+                    *write_lock = resize_and_memmap(&p.filename, index, &p.options).unwrap();
                 }
             }
 
             let (mm_setter, raw_data) = lock_and_link(&self.parent.memmap);
             self.mm_setter = mm_setter;
             self.raw_data = raw_data;
-            // println!("Got read lock:  Index {}, Length {} ", index, self.len());
         }
         self.raw_data[index].store(value, Ordering::Relaxed);
     }
@@ -175,7 +228,11 @@ mod tests {
         let test_file = "./dense_file_test.dat";
         let _ = fs::remove_file(test_file);
         {
-            let fc = DenseFileCache::new_ex(test_file.to_string(), 8, false).unwrap();
+            let fc = DenseFileCacheOptions::new()
+                .page_size(8)
+                .verbose(false)
+                .open(test_file.to_string())
+                .unwrap();
             let threads = 10;
             let items = 100000;
             (0_usize..threads)
@@ -219,7 +276,11 @@ mod bench {
     fn dense_bench(bench: &mut Bencher) {
         let test_file = "./dense_file_perf.dat";
         let _ = fs::remove_file(test_file);
-        let fc = DenseFileCache::new_ex(test_file.to_string(), 1024 * 1024, false).unwrap();
+        let fc = DenseFileCacheOptions::new()
+            .page_size(1024 * 1024)
+            .verbose(false)
+            .open(test_file.to_string())
+            .unwrap();
 
         let mut cache = fc.get_accessor();
         bench.iter(|| {
