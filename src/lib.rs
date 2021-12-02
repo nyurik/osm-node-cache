@@ -1,6 +1,6 @@
 #![cfg_attr(all(feature = "nightly", test), feature(test))]
 
-pub use self::dense_file::{DenseFileCache, DenseFileCacheOptions};
+pub use self::dense_file::{DenseFileCache, DenseFileCacheOpts};
 
 mod dense_file;
 

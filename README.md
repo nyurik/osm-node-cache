@@ -13,7 +13,7 @@ The library allows multithreaded access to the cache, and can dynamically grow t
 // Libraries:  osmpbf, rayon
 fn main() {
     let reader = BlobReader::from_path("planet.osm.pbf").unwrap();
-    let file_cache = DenseFileCache::new("node.cache".to_string())?;
+    let file_cache = DenseFileCache::new(PathBuf::from("node.cache"))?;
 
     reader.par_bridge().for_each_with(
         file_cache,
