@@ -21,7 +21,7 @@ fn main() {
             let mut cache = fc.get_accessor();
             if let BlobDecode::OsmData(block) = blob.unwrap().decode().unwrap() {
                 for node in block.groups().flat_map(|g| g.dense_nodes()) {
-                    cache.set_value_i32(node.id as usize, node.decimicro_lat(), node.decimicro_lon());
+                    cache.set_lat_lon(node.id as usize, node.lat(), node.lon());
                 }
             };
         });

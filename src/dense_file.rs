@@ -163,7 +163,7 @@ impl<'a> CacheWriter<'a> {
 }
 
 impl<'a> Cache for CacheWriter<'a> {
-    fn get_value(&self, index: usize) -> u64 {
+    fn get(&self, index: usize) -> u64 {
         if index >= self.len() {
             panic!("Index {} exceeds cache size {}", index, self.len())
         }
@@ -178,7 +178,7 @@ impl<'a> Cache for CacheWriter<'a> {
     ///    "read" lock means we can write to memmap (OK in parallel)
     ///    "write" lock means we can destroy memmap, grow file, and re-create memmap (exclusive)
     /// It would be prohibitively expensive to acquire a read lock on each call.
-    fn set_value(&mut self, index: usize, value: u64) {
+    fn set(&mut self, index: usize, value: u64) {
         if index >= self.len() {
             // Ensure we save everything and drop the lock.
             // Growing file size can only happen inside the write lock.
@@ -233,7 +233,7 @@ mod tests {
                 .for_each_with(fc.clone(), |fc, _thread_id| {
                     let mut cache = fc.get_accessor();
                     for v in get_random_items(items) {
-                        cache.set_value(v, v as u64);
+                        cache.set(v, v as u64);
                     }
                 });
             (0_usize..threads)
@@ -241,7 +241,7 @@ mod tests {
                 .for_each_with(fc, |fc, _thread_id| {
                     let cache = fc.get_accessor();
                     for v in get_random_items(items) {
-                        assert_eq!(v as u64, cache.get_value(v))
+                        assert_eq!(v as u64, cache.get(v))
                     }
                 });
         }
@@ -278,7 +278,7 @@ mod bench {
         let mut cache = fc.get_accessor();
         bench.iter(|| {
             for v in 0..1000 {
-                cache.set_value(v, v as u64);
+                cache.set(v, v as u64);
             }
         });
         let _ = fs::remove_file(test_file);
