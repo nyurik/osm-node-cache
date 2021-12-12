@@ -11,7 +11,7 @@ const I32_LON_RATE: f64 = 1_f64 / LON_I32_RATE;
 
 #[inline]
 fn latitude_to_i32(value: f64) -> i32 {
-    if -90_f64 <= value && value <= 90_f64 {
+    if (-90_f64..=90_f64).contains(&value) {
         (value * LAT_I32_RATE) as i32
     } else {
         panic!("Invalid latitude {}", value)
@@ -25,7 +25,7 @@ fn i32_to_latitude(value: i32) -> f64 {
 
 #[inline]
 fn longitude_to_i32(value: f64) -> i32 {
-    if -180_f64 <= value && value <= 180_f64 {
+    if (-180_f64..=180_f64).contains(&value) {
         (value * LON_I32_RATE) as i32
     } else {
         // experimental
@@ -62,15 +62,18 @@ pub trait Cache {
     /// Store latitude/longitude by encoding them as two i32 values, normalized on (-180..180) and (-90..90) ranges.
     #[inline]
     fn set_lat_lon(&mut self, index: usize, lat: f64, lon: f64) {
-        self.set(index, i32s_to_u64(latitude_to_i32(lat), longitude_to_i32(lon)))
+        self.set(
+            index,
+            i32s_to_u64(latitude_to_i32(lat), longitude_to_i32(lon)),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::*;
     use std::panic;
     use std::panic::{catch_unwind, UnwindSafe};
-    use crate::*;
 
     const EPSILON: f64 = f32::EPSILON as f64;
 
@@ -90,58 +93,64 @@ mod tests {
     }
 
     macro_rules! test_lat {
-    ( $stored:expr, $value:expr, $expected:expr ) => {
-        assert_eq!($stored, latitude_to_i32($value));
-        assert_floats($expected, i32_to_latitude(latitude_to_i32($value)));
-    };
-    ( $stored:expr, $value:expr ) => {
-        assert_eq!($stored, latitude_to_i32($value));
-        assert_floats($value, i32_to_latitude(latitude_to_i32($value)));
-    }}
+        ( $stored:expr, $value:expr, $expected:expr ) => {
+            assert_eq!($stored, latitude_to_i32($value));
+            assert_floats($expected, i32_to_latitude(latitude_to_i32($value)));
+        };
+        ( $stored:expr, $value:expr ) => {
+            assert_eq!($stored, latitude_to_i32($value));
+            assert_floats($value, i32_to_latitude(latitude_to_i32($value)));
+        };
+    }
     macro_rules! test_lon {
-    ( $stored:expr, $value:expr, $expected:expr ) => {
-        assert_eq!($stored, longitude_to_i32($value));
-        assert_floats($expected, i32_to_longitude(longitude_to_i32($value)));
-    };
-    ( $stored:expr, $value:expr ) => {
-        assert_eq!($stored, longitude_to_i32($value));
-        assert_floats($value, i32_to_longitude(longitude_to_i32($value)));
-    }}
+        ( $stored:expr, $value:expr, $expected:expr ) => {
+            assert_eq!($stored, longitude_to_i32($value));
+            assert_floats($expected, i32_to_longitude(longitude_to_i32($value)));
+        };
+        ( $stored:expr, $value:expr ) => {
+            assert_eq!($stored, longitude_to_i32($value));
+            assert_floats($value, i32_to_longitude(longitude_to_i32($value)));
+        };
+    }
 
     fn assert_panic<F: FnOnce() -> R + UnwindSafe, R: std::fmt::Debug>(f: F) {
         let handler = panic::take_hook();
         panic::set_hook(Box::new(|_| {}));
         let res = catch_unwind(f);
         panic::set_hook(handler);
-        assert!(res.is_err(), "Expected a panic, but received {:?} instead", res.unwrap());
+        assert!(
+            res.is_err(),
+            "Expected a panic, but received {:?} instead",
+            res.unwrap()
+        );
     }
 
     #[test]
     fn test_latitude() {
-        test_lat!( 0, 0.0);
-        test_lat!( 0, 0.00000001);
-        test_lat!( 0, -0.00000001);
-        test_lat!( 2, 0.0000001);
-        test_lat!( -2, -0.0000001);
-        test_lat!( 23, 0.000001);
-        test_lat!( -23, -0.000001);
-        test_lat!( 238, 0.00001);
-        test_lat!( -238, -0.00001);
-        test_lat!( 2386, 0.0001);
-        test_lat!( -2386, -0.0001);
-        test_lat!( 23860, 0.001);
-        test_lat!( -23860, -0.001);
-        test_lat!( 238609, 0.01);
-        test_lat!( 2386092, 0.1);
-        test_lat!( 23860929, 1.0);
-        test_lat!( 2147483408, 89.99999);
-        test_lat!( 2147483623, 89.999999);
-        test_lat!( 2147483644, 89.9999999);
-        test_lat!( 2147483646, 89.99999999);
-        test_lat!( 2147483646, 89.999999999);
-        test_lat!( 2147483644, 90_f64-EPSILON);
-        test_lat!( -2147483644, -90_f64+EPSILON);
-        test_lat!( 2147483647, 90.0);
+        test_lat!(0, 0.0);
+        test_lat!(0, 0.00000001);
+        test_lat!(0, -0.00000001);
+        test_lat!(2, 0.0000001);
+        test_lat!(-2, -0.0000001);
+        test_lat!(23, 0.000001);
+        test_lat!(-23, -0.000001);
+        test_lat!(238, 0.00001);
+        test_lat!(-238, -0.00001);
+        test_lat!(2386, 0.0001);
+        test_lat!(-2386, -0.0001);
+        test_lat!(23860, 0.001);
+        test_lat!(-23860, -0.001);
+        test_lat!(238609, 0.01);
+        test_lat!(2386092, 0.1);
+        test_lat!(23860929, 1.0);
+        test_lat!(2147483408, 89.99999);
+        test_lat!(2147483623, 89.999999);
+        test_lat!(2147483644, 89.9999999);
+        test_lat!(2147483646, 89.99999999);
+        test_lat!(2147483646, 89.999999999);
+        test_lat!(2147483644, 90_f64 - EPSILON);
+        test_lat!(-2147483644, -90_f64 + EPSILON);
+        test_lat!(2147483647, 90.0);
 
         assert_panic(|| latitude_to_i32(90_f64 + EPSILON));
         assert_panic(|| latitude_to_i32(-90_f64 - EPSILON));
@@ -149,38 +158,39 @@ mod tests {
 
     #[test]
     fn test_longitude() {
-        test_lon!( 0, 0.0);
-        test_lon!( 0, 0.00000001);
-        test_lon!( 0, -0.00000001);
-        test_lon!( 1, 0.0000001);
-        test_lon!( -1, -0.0000001);
-        test_lon!( 23, 0.000002);
-        test_lon!( -23, -0.000002);
-        test_lon!( 119, 0.00001);
-        test_lon!( -119, -0.00001);
-        test_lon!( 1193, 0.0001);
-        test_lon!( -1193, -0.0001);
-        test_lon!( 11930, 0.001);
-        test_lon!( -11930, -0.001);
-        test_lon!( 119304, 0.01);
-        test_lon!( 1193046, 0.1);
-        test_lon!( 11930464, 1.0);
-        test_lon!( 2147483527, 179.99999);
-        test_lon!( 2147483635, 179.999999);
-        test_lon!( 2147483645, 179.9999999);
-        test_lon!( 2147483646, 179.99999999);
-        test_lon!( 2147483646, 179.999999999);
-        test_lon!( 2147483647, 180.0);
-        test_lon!( -2147483647, 180.00000001, -180.0);
-        test_lon!( -2147483646, 180.0000001, -180.0);
-        test_lon!( -1908874353, 200.0, -160.0);
+        test_lon!(0, 0.0);
+        test_lon!(0, 0.00000001);
+        test_lon!(0, -0.00000001);
+        test_lon!(1, 0.0000001);
+        test_lon!(-1, -0.0000001);
+        test_lon!(23, 0.000002);
+        test_lon!(-23, -0.000002);
+        test_lon!(119, 0.00001);
+        test_lon!(-119, -0.00001);
+        test_lon!(1193, 0.0001);
+        test_lon!(-1193, -0.0001);
+        test_lon!(11930, 0.001);
+        test_lon!(-11930, -0.001);
+        test_lon!(119304, 0.01);
+        test_lon!(1193046, 0.1);
+        test_lon!(11930464, 1.0);
+        test_lon!(2147483527, 179.99999);
+        test_lon!(2147483635, 179.999999);
+        test_lon!(2147483645, 179.9999999);
+        test_lon!(2147483646, 179.99999999);
+        test_lon!(2147483646, 179.999999999);
+        test_lon!(2147483647, 180.0);
+        test_lon!(-2147483647, 180.00000001, -180.0);
+        test_lon!(-2147483646, 180.0000001, -180.0);
+        test_lon!(-1908874353, 200.0, -160.0);
     }
 
     macro_rules! test_pack {
-    ( $high:expr, $low:expr ) => {{
-        let (high, low) = u64_to_i32s(i32s_to_u64($high, $low));
-        assert_eq!((high, low), ($high, $low));
-    }}}
+        ( $high:expr, $low:expr ) => {{
+            let (high, low) = u64_to_i32s(i32s_to_u64($high, $low));
+            assert_eq!((high, low), ($high, $low));
+        }};
+    }
 
     #[test]
     fn test_pack() {
