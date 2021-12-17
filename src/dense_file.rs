@@ -1,7 +1,6 @@
 #[cfg(all(feature = "nightly", test))]
 extern crate test;
 
-use std::fs::OpenOptions;
 use std::mem::{size_of, transmute};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -87,11 +86,7 @@ fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> Result<MmapMut>
             size_of::<usize>()
         )
     }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(opts.filename.as_ref())?;
+    let file = crate::open_cache_file(opts.filename.as_ref())?;
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
@@ -210,11 +205,10 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
     use rayon::iter::ParallelBridge;
     use rayon::iter::ParallelIterator;
 
+    use crate::tests::get_random_items;
     use crate::*;
 
     #[test]
@@ -246,12 +240,6 @@ mod tests {
                 });
         }
         let _ = fs::remove_file(test_file);
-    }
-
-    fn get_random_items(items: usize) -> Vec<usize> {
-        let mut vec: Vec<usize> = (0_usize..items).collect();
-        vec.shuffle(&mut thread_rng());
-        vec
     }
 }
 

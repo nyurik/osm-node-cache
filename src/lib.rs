@@ -1,8 +1,15 @@
 #![cfg_attr(all(feature = "nightly", test), feature(test))]
 
+use std::fs::{File, OpenOptions};
+use std::path::Path;
+
+use anyhow::{Context, Result};
+
 pub use self::dense_file::{DenseFileCache, DenseFileCacheOpts};
+pub use self::hashmap::HashMapCache;
 
 mod dense_file;
+mod hashmap;
 
 const LAT_I32_RATE: f64 = i32::MAX as f64 / 90_f64;
 const I32_LAT_RATE: f64 = 1_f64 / LAT_I32_RATE;
@@ -69,11 +76,30 @@ pub trait Cache {
     }
 }
 
+fn open_cache_file<P: AsRef<Path>>(filename: P) -> Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(filename.as_ref())
+        .with_context(|| {
+            format!(
+                "unable to open/create cache file {}",
+                filename.as_ref().display()
+            )
+        })?;
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use std::panic;
     use std::panic::{catch_unwind, UnwindSafe};
+
+    use rand::prelude::SliceRandom;
+    use rand::thread_rng;
+
+    use crate::*;
 
     const EPSILON: f64 = f32::EPSILON as f64;
 
@@ -203,5 +229,11 @@ mod tests {
         test_pack!(-1, i32::MAX);
         test_pack!(i32::MAX, i32::MIN);
         test_pack!(i32::MIN, i32::MAX);
+    }
+
+    pub(crate) fn get_random_items(items: usize) -> Vec<usize> {
+        let mut vec: Vec<usize> = (0_usize..items).collect();
+        vec.shuffle(&mut thread_rng());
+        vec
     }
 }
