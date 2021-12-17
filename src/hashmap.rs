@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use dashmap::DashMap;
 
-use crate::{open_cache_file, Cache};
+use crate::{open_cache_file, Cache, CacheStore};
 
 #[derive(Clone, Default)]
 pub struct HashMapCache {
@@ -63,6 +63,12 @@ impl HashMapCache {
             open_for_write(filename)?,
             self.data.as_ref(),
         )?)
+    }
+}
+
+impl CacheStore for HashMapCache {
+    fn get_accessor(&self) -> Box<dyn Cache + '_> {
+        Box::new(self.clone())
     }
 }
 
