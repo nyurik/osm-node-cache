@@ -55,6 +55,11 @@ fn i32s_to_u64(high: i32, low: i32) -> u64 {
     (high as u32 as u64) << 32 | (low as u32 as u64)
 }
 
+pub trait CacheStore {
+    /// Create a thread-safe caching accessor
+    fn get_accessor(&self) -> Box<dyn Cache + '_>;
+}
+
 pub trait Cache {
     fn get(&self, index: usize) -> u64;
     fn set(&mut self, index: usize, value: u64);

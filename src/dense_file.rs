@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use anyhow::Result;
 use memmap2::MmapMut;
 
-use crate::Cache;
+use crate::{Cache, CacheStore};
 
 type OnSizeChange = fn(old_size: usize, new_size: usize) -> ();
 
@@ -138,15 +138,16 @@ impl DenseFileCache {
             mutex: Arc::new(Mutex::new(())),
         })
     }
+}
 
-    /// Create a thread-safe caching accessor
-    pub fn get_accessor(&self) -> impl Cache + '_ {
+impl CacheStore for DenseFileCache {
+    fn get_accessor(&self) -> Box<dyn Cache + '_> {
         let (mm_setter, raw_data) = lock_and_link(&self.memmap);
-        CacheWriter {
+        Box::new(CacheWriter {
             parent: self,
             mm_setter,
             raw_data,
-        }
+        })
     }
 }
 
