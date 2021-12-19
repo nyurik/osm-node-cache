@@ -166,4 +166,14 @@ mod tests {
             let _ = fs::remove_file(filename);
         }
     }
+
+    #[test]
+    fn clone_test() {
+        let mut cache = HashMapCache::new();
+        let mut clone = cache.clone();
+        cache.set(11, 42);
+        clone.set(12, 43);
+        assert_eq!(cache.get(11), 42);
+        assert_eq!(clone.get(12), 43);
+    }
 }
