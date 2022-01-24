@@ -161,7 +161,7 @@ impl<'a> CacheWriter<'a> {
 impl<'a> Cache for CacheWriter<'a> {
     fn get(&self, index: usize) -> u64 {
         if index >= self.len() {
-            panic!("Index {} exceeds cache size {}", index, self.len())
+            panic!("Index {index} exceeds cache size {}", self.len())
         }
         self.raw_data[index].load(Ordering::Relaxed)
     }

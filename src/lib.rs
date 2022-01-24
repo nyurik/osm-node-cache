@@ -21,7 +21,7 @@ fn latitude_to_i32(value: f64) -> i32 {
     if (-90_f64..=90_f64).contains(&value) {
         (value * LAT_I32_RATE) as i32
     } else {
-        panic!("Invalid latitude {}", value)
+        panic!("Invalid latitude {value}")
     }
 }
 
@@ -115,9 +115,7 @@ mod tests {
     fn assert_floats(expected: f64, actual: f64) {
         if eq(expected, actual) {
             panic!(
-                "Assert failed: expected={}, actual={}, delta={}",
-                expected,
-                actual,
+                "Assert failed: expected={expected}, actual={actual}, delta={}",
                 (expected - actual).abs()
             );
         }
