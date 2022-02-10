@@ -5,8 +5,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-pub use self::dense_file::{DenseFileCache, DenseFileCacheOpts};
-pub use self::hashmap::HashMapCache;
+#[cfg(unix)]
+pub use crate::dense_file::Advice;
+pub use crate::dense_file::{DenseFileCache, DenseFileCacheOpts};
+pub use crate::hashmap::HashMapCache;
 
 mod dense_file;
 mod hashmap;

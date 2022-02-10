@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use anyhow::Result;
+#[cfg(unix)]
+pub use memmap2::Advice;
 use memmap2::MmapMut;
 
 use crate::{Cache, CacheStore};
@@ -128,6 +130,12 @@ impl DenseFileCache {
     /// Open or create a file for caching
     pub fn new(filename: PathBuf) -> Result<Self> {
         DenseFileCacheOpts::new(filename).open()
+    }
+
+    #[cfg(unix)]
+    pub fn advise(&self, advice: Advice) -> Result<()> {
+        self.memmap.read().unwrap().advise(advice)?;
+        Ok(())
     }
 
     fn new_opt(opts: DenseFileCacheOpts) -> Result<Self> {
