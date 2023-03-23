@@ -1,19 +1,18 @@
 #[cfg(all(feature = "nightly", test))]
 extern crate test;
 
+use crate::traits::{open_cache_file, Cache, CacheStore};
+use crate::{OsmNodeCacheError, OsmNodeCacheResult};
+use memmap2::MmapMut;
 use std::mem::{size_of, transmute};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
-use anyhow::Result;
 #[cfg(unix)]
 pub use memmap2::Advice;
-use memmap2::MmapMut;
 
-use crate::{Cache, CacheStore};
-
-type OnSizeChange = fn(old_size: usize, new_size: usize) -> ();
+pub type OnSizeChange = fn(old_size: usize, new_size: usize) -> ();
 
 #[derive(Clone)]
 pub struct DenseFileCacheOpts {
@@ -26,6 +25,7 @@ pub struct DenseFileCacheOpts {
 }
 
 impl DenseFileCacheOpts {
+    #[must_use]
     pub fn new(filename: PathBuf) -> Self {
         DenseFileCacheOpts {
             filename: Arc::new(filename),
@@ -38,6 +38,7 @@ impl DenseFileCacheOpts {
     }
 
     /// Allow data modification
+    #[must_use]
     pub fn write(mut self, write: bool) -> Self {
         if !write {
             todo!("Readonly cache is not supported yet")
@@ -47,12 +48,14 @@ impl DenseFileCacheOpts {
     }
 
     /// Set callback to report when cache size changes
+    #[must_use]
     pub fn on_size_change(mut self, on_size_change: Option<OnSizeChange>) -> Self {
         self.on_size_change = on_size_change;
         self
     }
 
     /// Automatically increase cache file size as needed. Ignored for read-only files.
+    #[must_use]
     pub fn autogrow(mut self, autogrow: bool) -> Self {
         if !autogrow {
             todo!("Constant cache size is not supported yet")
@@ -62,33 +65,35 @@ impl DenseFileCacheOpts {
     }
 
     /// Ensure cache file is at least this big. Ignored for read-only files.
+    #[must_use]
     pub fn init_size(mut self, init_size: usize) -> Self {
         self.init_size = init_size;
         self
     }
 
     /// When increasing file size, grow it in page size increments. Ignored for read-only files.
+    #[must_use]
     pub fn page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
     /// Open and initialize cache file.
-    pub fn open(self) -> Result<DenseFileCache> {
+    pub fn open(self) -> OsmNodeCacheResult<DenseFileCache> {
         DenseFileCache::new_opt(self)
     }
 }
 
 /// Increase the size of the file if needed, and create a memory map from it
-fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> Result<MmapMut> {
+fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> OsmNodeCacheResult<MmapMut> {
     if opts.page_size % size_of::<usize>() != 0 {
-        panic!(
-            "page_size={} is not a multiple of {}.",
-            opts.page_size,
-            size_of::<usize>()
-        )
+        return Err(OsmNodeCacheError::InvalidPageSize {
+            page_size: opts.page_size,
+            element_size: size_of::<usize>(),
+        });
     }
-    let file = crate::open_cache_file(opts.filename.as_ref())?;
+
+    let file = open_cache_file(opts.filename.as_ref())?;
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
@@ -128,17 +133,17 @@ struct CacheWriter<'a> {
 
 impl DenseFileCache {
     /// Open or create a file for caching
-    pub fn new(filename: PathBuf) -> Result<Self> {
+    pub fn new(filename: PathBuf) -> OsmNodeCacheResult<Self> {
         DenseFileCacheOpts::new(filename).open()
     }
 
     #[cfg(unix)]
-    pub fn advise(&self, advice: Advice) -> Result<()> {
+    pub fn advise(&self, advice: Advice) -> OsmNodeCacheResult<()> {
         self.memmap.read().unwrap().advise(advice)?;
         Ok(())
     }
 
-    fn new_opt(opts: DenseFileCacheOpts) -> Result<Self> {
+    fn new_opt(opts: DenseFileCacheOpts) -> OsmNodeCacheResult<Self> {
         let mmap = resize_and_memmap(0, &opts)?;
         Ok(Self {
             opts,
@@ -168,9 +173,11 @@ impl<'a> CacheWriter<'a> {
 
 impl<'a> Cache for CacheWriter<'a> {
     fn get(&self, index: usize) -> u64 {
-        if index >= self.len() {
-            panic!("Index {index} exceeds cache size {}", self.len())
-        }
+        assert!(
+            index < self.len(),
+            "Index {index} exceeds cache size {}",
+            self.len()
+        );
         self.raw_data[index].load(Ordering::Relaxed)
     }
 
@@ -178,7 +185,7 @@ impl<'a> Cache for CacheWriter<'a> {
     /// The existence of this object implies it already holds a read lock
     /// If needed, this fn will release the read lock, get a write lock to grow the file,
     /// and re-acquire the read lock.
-    /// Note that RwLock is a misnomer here:
+    /// Note that `RwLock` is a misnomer here:
     ///    "read" lock means we can write to memmap (OK in parallel)
     ///    "write" lock means we can destroy memmap, grow file, and re-create memmap (exclusive)
     /// It would be prohibitively expensive to acquire a read lock on each call.
@@ -190,7 +197,7 @@ impl<'a> Cache for CacheWriter<'a> {
             // one thread could get write lock, grow, and get the read lock, while some
             // other thread could be stuck waiting for the write lock even though the file
             // has already been grown.
-            self.mm_setter = Option::None;
+            self.mm_setter = None;
             {
                 let _pre_write_lock = self.parent.mutex.lock().unwrap();
                 if index >= self.len() {
@@ -217,7 +224,7 @@ mod tests {
     use rayon::iter::ParallelBridge;
     use rayon::iter::ParallelIterator;
 
-    use crate::tests::get_random_items;
+    use crate::traits::tests::get_random_items;
     use crate::*;
 
     #[test]
