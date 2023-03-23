@@ -1,64 +1,65 @@
+use dashmap::DashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
-use dashmap::DashMap;
-
-use crate::{open_cache_file, Cache, CacheStore};
+use crate::traits::{open_cache_file, Cache, CacheStore};
+use crate::OsmNodeCacheResult;
 
 #[derive(Clone, Default)]
 pub struct HashMapCache {
     data: Arc<DashMap<u64, u64>>,
 }
 
-fn open_for_read<P: AsRef<Path>>(filename: P) -> Result<BufReader<File>> {
+fn open_for_read<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<BufReader<File>> {
     Ok(BufReader::new(File::open(filename)?))
 }
 
-fn open_for_write<P: AsRef<Path>>(filename: P) -> Result<BufWriter<File>> {
+fn open_for_write<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<BufWriter<File>> {
     Ok(BufWriter::new(open_cache_file(filename)?))
 }
 
 impl HashMapCache {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             data: Arc::new(DashMap::with_capacity(capacity)),
         }
     }
 
-    pub fn from_json<P: AsRef<Path>>(filename: P) -> Result<Self> {
+    pub fn from_json<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<Self> {
         Ok(Self {
             data: Arc::new(serde_json::from_reader(open_for_read(filename)?)?),
         })
     }
 
-    pub fn from_bin<P: AsRef<Path>>(filename: P) -> Result<Self> {
+    pub fn from_bin<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<Self> {
         Ok(Self {
             data: Arc::new(bincode::deserialize_from(open_for_read(filename)?)?),
         })
     }
 
-    pub fn save_as_json<P: AsRef<Path>>(&self, filename: P) -> Result<()> {
+    pub fn save_as_json<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<()> {
         Ok(serde_json::to_writer(
             open_for_write(filename)?,
             self.data.as_ref(),
         )?)
     }
 
-    pub fn save_as_pretty_json<P: AsRef<Path>>(&self, filename: P) -> Result<()> {
+    pub fn save_as_pretty_json<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<()> {
         Ok(serde_json::to_writer_pretty(
             open_for_write(filename)?,
             self.data.as_ref(),
         )?)
     }
 
-    pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> Result<()> {
+    pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<()> {
         Ok(bincode::serialize_into(
             open_for_write(filename)?,
             self.data.as_ref(),
@@ -85,13 +86,14 @@ impl Cache for HashMapCache {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use rayon::iter::ParallelBridge;
     use rayon::iter::ParallelIterator;
 
     use crate::hashmap::HashMapCache;
-    use crate::tests::get_random_items;
-    use crate::*;
+    use crate::traits::tests::get_random_items;
+    use crate::traits::Cache;
 
     #[test]
     fn hashmap_test() {
@@ -161,7 +163,7 @@ mod tests {
         cache
     }
 
-    fn cleanup_test_file(filename: &Path) {
+    fn cleanup_test_file<P: AsRef<Path>>(filename: P) {
         if !cfg!(feature = "keeptestfiles") {
             let _ = fs::remove_file(filename);
         }
