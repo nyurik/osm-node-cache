@@ -1,6 +1,6 @@
 # osm-node-cache
 
-[![GitHub](https://img.shields.io/badge/github-nyurik/osmnodecache-8da0cb?logo=github)](https://github.com/nyurik/osm-node-cache)
+[![GitHub](https://img.shields.io/badge/github-osmnodecache-8da0cb?logo=github)](https://github.com/nyurik/osm-node-cache)
 [![crates.io version](https://img.shields.io/crates/v/osmnodecache.svg)](https://crates.io/crates/osmnodecache)
 [![docs.rs docs](https://docs.rs/osmnodecache/badge.svg)](https://docs.rs/osmnodecache)
 [![crates.io version](https://img.shields.io/crates/l/osmnodecache.svg)](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-APACHE)
