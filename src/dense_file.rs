@@ -1,9 +1,6 @@
 #[cfg(all(feature = "nightly", test))]
 extern crate test;
 
-use crate::traits::{open_cache_file, Cache, CacheStore};
-use crate::{OsmNodeCacheError, OsmNodeCacheResult};
-use memmap2::MmapMut;
 use std::mem::{size_of, transmute};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,6 +8,10 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 #[cfg(unix)]
 pub use memmap2::Advice;
+use memmap2::MmapMut;
+
+use crate::traits::{open_cache_file, Cache, CacheStore};
+use crate::{OsmNodeCacheError, OsmNodeCacheResult};
 
 pub type OnSizeChange = fn(old_size: usize, new_size: usize) -> ();
 
@@ -221,8 +222,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use rayon::iter::ParallelBridge;
-    use rayon::iter::ParallelIterator;
+    use rayon::iter::{ParallelBridge, ParallelIterator};
 
     use crate::traits::tests::get_random_items;
     use crate::*;
@@ -255,36 +255,6 @@ mod tests {
                     }
                 });
         }
-        let _ = fs::remove_file(test_file);
-    }
-}
-
-/// The benchmarks require nightly to run:
-///   $ cargo +nightly bench
-#[cfg(all(feature = "nightly", test))]
-mod bench {
-    use std::fs;
-    use std::path::PathBuf;
-
-    use crate::*;
-
-    use super::test::Bencher;
-
-    #[bench]
-    fn dense_bench(bench: &mut Bencher) {
-        let test_file = "./dense_file_perf.dat";
-        let _ = fs::remove_file(test_file);
-        let fc = DenseFileCacheOpts::new(PathBuf::from(test_file))
-            .page_size(1024 * 1024)
-            .open()
-            .unwrap();
-
-        let mut cache = fc.get_accessor();
-        bench.iter(|| {
-            for v in 0..1000 {
-                cache.set(v, v as u64);
-            }
-        });
         let _ = fs::remove_file(test_file);
     }
 }

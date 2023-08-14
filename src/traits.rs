@@ -1,6 +1,7 @@
-use crate::{OsmNodeCacheError, OsmNodeCacheResult};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
+
+use crate::{OsmNodeCacheError, OsmNodeCacheResult};
 
 const LAT_I32_RATE: f64 = i32::MAX as f64 / 90_f64;
 const I32_LAT_RATE: f64 = 1_f64 / LAT_I32_RATE;
@@ -84,14 +85,16 @@ pub fn open_cache_file<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<File> 
 
 #[cfg(test)]
 pub mod tests {
+    use std::panic;
+    use std::panic::{catch_unwind, UnwindSafe};
+
+    use rand::seq::SliceRandom;
+    use rand::thread_rng;
+
     use crate::traits::{
         i32_to_latitude, i32_to_longitude, i32s_to_u64, latitude_to_i32, longitude_to_i32,
         u64_to_i32s,
     };
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
-    use std::panic;
-    use std::panic::{catch_unwind, UnwindSafe};
 
     const EPSILON: f64 = f32::EPSILON as f64;
 
