@@ -1,13 +1,13 @@
 [package]
 name = "osmnodecache"
-version = "0.8.1"
+version = "0.8.2"
 description = "Flat file OSM node cache to store (latitude,longitude) pairs as indexed entries"
 authors = ["Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 repository = "https://github.com/nyurik/osm-node-cache"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["osm", "cache"]
-categories = ["caching"]
+categories = ["caching", "science::geo"]
 rust-version = "1.60.0"
 
 [dependencies]
