@@ -1,8 +1,9 @@
-use dashmap::DashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::sync::Arc;
+
+use dashmap::DashMap;
 
 use crate::traits::{open_cache_file, Cache, CacheStore};
 use crate::OsmNodeCacheResult;
@@ -88,8 +89,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use rayon::iter::ParallelBridge;
-    use rayon::iter::ParallelIterator;
+    use rayon::iter::{ParallelBridge, ParallelIterator};
 
     use crate::hashmap::HashMapCache;
     use crate::traits::tests::get_random_items;

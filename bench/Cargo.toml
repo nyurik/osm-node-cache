@@ -1,0 +1,16 @@
+[package]
+name = "bench"
+description = "Benchmarks to run with `cargo bench`"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+osmnodecache = { path = ".." }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "bench"
+harness = false

@@ -1,13 +1,13 @@
-#![cfg_attr(all(feature = "nightly", test), feature(test))]
-#![deny(clippy::all)]
+#![doc = include_str!("../README.md")]
 
-pub use crate::dense_file::{DenseFileCache, DenseFileCacheOpts};
-pub use crate::hashmap::HashMapCache;
 use std::path::PathBuf;
+
 use thiserror::Error;
 
 #[cfg(unix)]
 pub use crate::dense_file::Advice;
+pub use crate::dense_file::{DenseFileCache, DenseFileCacheOpts};
+pub use crate::hashmap::HashMapCache;
 
 mod dense_file;
 mod hashmap;
