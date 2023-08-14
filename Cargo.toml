@@ -1,6 +1,6 @@
 [package]
 name = "osmnodecache"
-version = "0.8.0"
+version = "0.8.1"
 description = "Flat file OSM node cache to store (latitude,longitude) pairs as indexed entries"
 authors = ["Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 repository = "https://github.com/nyurik/osm-node-cache"

@@ -1,6 +1,3 @@
-#[cfg(all(feature = "nightly", test))]
-extern crate test;
-
 use std::mem::{size_of, transmute};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
