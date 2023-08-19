@@ -19,6 +19,8 @@ pub struct DenseFileCacheOpts {
     autogrow: bool,
     init_size: usize,
     page_size: usize,
+    #[cfg(unix)]
+    advice: Advice,
     on_size_change: Option<OnSizeChange>,
 }
 
@@ -32,6 +34,8 @@ impl DenseFileCacheOpts {
             init_size: 1024 * 1024 * 1024, // 1 GB
             page_size: 1024 * 1024 * 1024, // 1 GB
             on_size_change: None,
+            #[cfg(unix)]
+            advice: Advice::Normal,
         }
     }
 
@@ -73,6 +77,12 @@ impl DenseFileCacheOpts {
     #[must_use]
     pub fn page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
+        self
+    }
+
+    #[must_use]
+    pub fn advise(mut self, advice: Advice) -> Self {
+        self.advice = advice;
         self
     }
 
@@ -143,11 +153,16 @@ impl DenseFileCache {
 
     fn new_opt(opts: DenseFileCacheOpts) -> OsmNodeCacheResult<Self> {
         let mmap = resize_and_memmap(0, &opts)?;
-        Ok(Self {
+        let cache = Self {
             opts,
             memmap: Arc::new(RwLock::new(mmap)),
             mutex: Arc::new(Mutex::new(())),
-        })
+        };
+        #[cfg(unix)]
+        if cache.opts.advice != Advice::Normal {
+            cache.advise(cache.opts.advice)?;
+        }
+        Ok(cache)
     }
 }
 
