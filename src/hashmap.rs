@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn hashmap_test() {
         let threads = 10;
-        let items = 100000;
+        let items = 100_000;
         let cache = HashMapCache::new();
         (0_usize..threads)
             .par_bridge()
@@ -111,14 +111,14 @@ mod tests {
             .par_bridge()
             .for_each_with(cache, |c, _thread_id| {
                 for v in get_random_items(items) {
-                    assert_eq!(v as u64, c.get(v))
+                    assert_eq!(v as u64, c.get(v));
                 }
             });
     }
 
     #[test]
     fn hashmap_file_json_pretty_test() {
-        let items = 100000;
+        let items = 100_000;
         let filename = Path::new("./hashmap_test.pretty.json");
         let cache = new_hashmap(items);
         let _ = fs::remove_file(filename);
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn hashmap_file_json_test() {
-        let items = 100000;
+        let items = 100_000;
         let filename = Path::new("./hashmap_test.json");
         let cache = new_hashmap(items);
         let _ = fs::remove_file(filename);
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn hashmap_file_bin_test() {
-        let items = 100000;
+        let items = 100_000;
         let filename = Path::new("./hashmap_test.bin");
         let cache = new_hashmap(items);
         let _ = fs::remove_file(filename);
@@ -151,7 +151,7 @@ mod tests {
 
     fn test_values(c: &dyn Cache, items: usize) {
         for v in 0..items {
-            assert_eq!(v as u64, c.get(v))
+            assert_eq!(v as u64, c.get(v));
         }
     }
 
@@ -164,7 +164,7 @@ mod tests {
     }
 
     fn cleanup_test_file<P: AsRef<Path>>(filename: P) {
-        if !cfg!(feature = "keeptestfiles") {
+        if option_env!("KEEP_TEST_FILES").is_none() {
             let _ = fs::remove_file(filename);
         }
     }
