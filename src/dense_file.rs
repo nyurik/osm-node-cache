@@ -105,23 +105,31 @@ fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> OsmNodeCacheRes
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
-    let pages = capacity / opts.page_size + (if capacity % opts.page_size == 0 { 0 } else { 1 });
+    let pages = capacity / opts.page_size + usize::from(capacity % opts.page_size != 0);
     let new_size = (pages * opts.page_size) as u64;
     if old_size < new_size {
         if let Some(value) = opts.on_size_change {
-            value(old_size as usize, new_size as usize);
+            value(to_64_usize(old_size), to_64_usize(new_size));
         }
         file.set_len(new_size)?;
     }
     Ok(unsafe { MmapMut::map_mut(&file)? })
 }
 
+fn to_64_usize(old_size: u64) -> usize {
+    usize::try_from(old_size).expect("Unable to convert large u64 to usize on this platform")
+}
+
 fn lock_and_link(memmap: &RwLock<MmapMut>) -> (Option<RwLockReadGuard<MmapMut>>, &[AtomicU64]) {
     let mm = memmap.read().unwrap();
     // ideally this should be as_mut(), but mut is not multithreaded
     let data_as_u8: &[u8] = mm.as_ref();
-    // Major hack -- the array actually contains [u8], but AtomicU64 appear to work and simplify things
-    let raw_data: &[AtomicU64] = unsafe { transmute(data_as_u8) };
+    let raw_data;
+    #[allow(clippy::transmute_ptr_to_ptr)]
+    {
+        // Major hack -- the array actually contains [u8], but AtomicU64 appear to work and simplify things
+        raw_data = unsafe { transmute::<&[u8], &[AtomicU64]>(data_as_u8) };
+    }
 
     (Some(mm), raw_data)
 }
@@ -145,6 +153,10 @@ impl DenseFileCache {
         DenseFileCacheOpts::new(filename).open()
     }
 
+    /// Set memory advice for the cache file
+    ///
+    /// # Panics
+    /// This call will panic if the file lock has been poisoned.
     #[cfg(unix)]
     pub fn advise(&self, advice: Advice) -> OsmNodeCacheResult<()> {
         self.memmap.read().unwrap().advise(advice)?;
@@ -177,14 +189,14 @@ impl CacheStore for DenseFileCache {
     }
 }
 
-impl<'a> CacheWriter<'a> {
+impl CacheWriter<'_> {
     fn len(&self) -> usize {
         // hack: len() is in bytes, not u64s
         self.raw_data.len() / size_of::<usize>()
     }
 }
 
-impl<'a> Cache for CacheWriter<'a> {
+impl Cache for CacheWriter<'_> {
     fn get(&self, index: usize) -> u64 {
         assert!(
             index < self.len(),
@@ -249,7 +261,7 @@ mod tests {
                 .open()
                 .unwrap();
             let threads = 10;
-            let items = 100000;
+            let items = 100_000;
             (0_usize..threads)
                 .par_bridge()
                 .for_each_with(fc.clone(), |fc, _thread_id| {
@@ -263,7 +275,7 @@ mod tests {
                 .for_each_with(fc, |fc, _thread_id| {
                     let cache = fc.get_accessor();
                     for v in get_random_items(items) {
-                        assert_eq!(v as u64, cache.get(v))
+                        assert_eq!(v as u64, cache.get(v));
                     }
                 });
         }

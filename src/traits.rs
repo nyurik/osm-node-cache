@@ -35,6 +35,7 @@ pub trait Cache {
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 fn latitude_to_i32(value: f64) -> i32 {
     if (-90_f64..=90_f64).contains(&value) {
         (value * LAT_I32_RATE) as i32
@@ -45,10 +46,11 @@ fn latitude_to_i32(value: f64) -> i32 {
 
 #[inline]
 fn i32_to_latitude(value: i32) -> f64 {
-    (value as f64) * I32_LAT_RATE
+    f64::from(value) * I32_LAT_RATE
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 fn longitude_to_i32(value: f64) -> i32 {
     if (-180_f64..=180_f64).contains(&value) {
         (value * LON_I32_RATE) as i32
@@ -60,17 +62,19 @@ fn longitude_to_i32(value: f64) -> i32 {
 
 #[inline]
 fn i32_to_longitude(value: i32) -> f64 {
-    (value as f64) * I32_LON_RATE
+    f64::from(value) * I32_LON_RATE
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 fn u64_to_i32s(value: u64) -> (i32, i32) {
     ((value >> 32) as i32, value as i32)
 }
 
 #[inline]
+#[expect(clippy::cast_sign_loss)]
 fn i32s_to_u64(high: i32, low: i32) -> u64 {
-    (high as u32 as u64) << 32 | (low as u32 as u64)
+    u64::from(high as u32) << 32 | u64::from(low as u32)
 }
 
 pub fn open_cache_file<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<File> {
@@ -78,6 +82,7 @@ pub fn open_cache_file<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<File> 
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(filename.as_ref())
         .map_err(|e| OsmNodeCacheError::InvalidCacheFile(filename.as_ref().to_path_buf(), e))?;
     Ok(file)
@@ -88,8 +93,8 @@ pub mod tests {
     use std::panic;
     use std::panic::{catch_unwind, UnwindSafe};
 
+    use rand::rng;
     use rand::seq::SliceRandom;
-    use rand::thread_rng;
 
     use crate::traits::{
         i32_to_latitude, i32_to_longitude, i32s_to_u64, latitude_to_i32, longitude_to_i32,
@@ -98,17 +103,12 @@ pub mod tests {
 
     const EPSILON: f64 = f32::EPSILON as f64;
 
-    fn eq(a: f64, b: f64) -> bool {
-        (a - b).abs() > EPSILON
-    }
-
     fn assert_floats(expected: f64, actual: f64) {
-        if eq(expected, actual) {
-            panic!(
-                "Assert failed: expected={expected}, actual={actual}, delta={}",
-                (expected - actual).abs()
-            );
-        }
+        let delta = (expected - actual).abs();
+        assert!(
+            delta < EPSILON,
+            "Assert failed: expected={expected}, actual={actual}, delta={delta}"
+        );
     }
 
     macro_rules! test_lat {
@@ -147,29 +147,29 @@ pub mod tests {
     #[test]
     fn test_latitude() {
         test_lat!(0, 0.0);
-        test_lat!(0, 0.00000001);
-        test_lat!(0, -0.00000001);
-        test_lat!(2, 0.0000001);
-        test_lat!(-2, -0.0000001);
-        test_lat!(23, 0.000001);
-        test_lat!(-23, -0.000001);
+        test_lat!(0, 0.000_000_01);
+        test_lat!(0, -0.000_000_01);
+        test_lat!(2, 0.000_000_1);
+        test_lat!(-2, -0.000_000_1);
+        test_lat!(23, 0.000_001);
+        test_lat!(-23, -0.000_001);
         test_lat!(238, 0.00001);
         test_lat!(-238, -0.00001);
         test_lat!(2386, 0.0001);
         test_lat!(-2386, -0.0001);
         test_lat!(23860, 0.001);
         test_lat!(-23860, -0.001);
-        test_lat!(238609, 0.01);
-        test_lat!(2386092, 0.1);
-        test_lat!(23860929, 1.0);
-        test_lat!(2147483408, 89.99999);
-        test_lat!(2147483623, 89.999999);
-        test_lat!(2147483644, 89.9999999);
-        test_lat!(2147483646, 89.99999999);
-        test_lat!(2147483646, 89.999999999);
-        test_lat!(2147483644, 90_f64 - EPSILON);
-        test_lat!(-2147483644, -90_f64 + EPSILON);
-        test_lat!(2147483647, 90.0);
+        test_lat!(238_609, 0.01);
+        test_lat!(2_386_092, 0.1);
+        test_lat!(23_860_929, 1.0);
+        test_lat!(2_147_483_408, 89.99999);
+        test_lat!(2_147_483_623, 89.999_999);
+        test_lat!(2_147_483_644, 89.999_999_9);
+        test_lat!(2_147_483_646, 89.999_999_99);
+        test_lat!(2_147_483_646, 89.999_999_999);
+        test_lat!(2_147_483_644, 90_f64 - EPSILON);
+        test_lat!(-2_147_483_644, -90_f64 + EPSILON);
+        test_lat!(2_147_483_647, 90.0);
 
         assert_panic(|| latitude_to_i32(90_f64 + EPSILON));
         assert_panic(|| latitude_to_i32(-90_f64 - EPSILON));
@@ -178,30 +178,30 @@ pub mod tests {
     #[test]
     fn test_longitude() {
         test_lon!(0, 0.0);
-        test_lon!(0, 0.00000001);
-        test_lon!(0, -0.00000001);
-        test_lon!(1, 0.0000001);
-        test_lon!(-1, -0.0000001);
-        test_lon!(23, 0.000002);
-        test_lon!(-23, -0.000002);
+        test_lon!(0, 0.000_000_01);
+        test_lon!(0, -0.000_000_01);
+        test_lon!(1, 0.000_000_1);
+        test_lon!(-1, -0.000_000_1);
+        test_lon!(23, 0.000_002);
+        test_lon!(-23, -0.000_002);
         test_lon!(119, 0.00001);
         test_lon!(-119, -0.00001);
         test_lon!(1193, 0.0001);
         test_lon!(-1193, -0.0001);
         test_lon!(11930, 0.001);
         test_lon!(-11930, -0.001);
-        test_lon!(119304, 0.01);
-        test_lon!(1193046, 0.1);
-        test_lon!(11930464, 1.0);
-        test_lon!(2147483527, 179.99999);
-        test_lon!(2147483635, 179.999999);
-        test_lon!(2147483645, 179.9999999);
-        test_lon!(2147483646, 179.99999999);
-        test_lon!(2147483646, 179.999999999);
-        test_lon!(2147483647, 180.0);
-        test_lon!(-2147483647, 180.00000001, -180.0);
-        test_lon!(-2147483646, 180.0000001, -180.0);
-        test_lon!(-1908874353, 200.0, -160.0);
+        test_lon!(119_304, 0.01);
+        test_lon!(1_193_046, 0.1);
+        test_lon!(11_930_464, 1.0);
+        test_lon!(2_147_483_527, 179.99999);
+        test_lon!(2_147_483_635, 179.999_999);
+        test_lon!(2_147_483_645, 179.999_999_9);
+        test_lon!(2_147_483_646, 179.999_999_99);
+        test_lon!(2_147_483_646, 179.999_999_999);
+        test_lon!(2_147_483_647, 180.0);
+        test_lon!(-2_147_483_647, 180.000_000_01, -180.0);
+        test_lon!(-2_147_483_646, 180.000_000_1, -180.0);
+        test_lon!(-1_908_874_353, 200.0, -160.0);
     }
 
     macro_rules! test_pack {
@@ -226,7 +226,7 @@ pub mod tests {
 
     pub(crate) fn get_random_items(items: usize) -> Vec<usize> {
         let mut vec: Vec<usize> = (0_usize..items).collect();
-        vec.shuffle(&mut thread_rng());
+        vec.shuffle(&mut rng());
         vec
     }
 }
