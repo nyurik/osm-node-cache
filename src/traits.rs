@@ -74,7 +74,7 @@ fn u64_to_i32s(value: u64) -> (i32, i32) {
 #[inline]
 #[expect(clippy::cast_sign_loss)]
 fn i32s_to_u64(high: i32, low: i32) -> u64 {
-    u64::from(high as u32) << 32 | u64::from(low as u32)
+    (u64::from(high as u32) << 32) | u64::from(low as u32)
 }
 
 pub fn open_cache_file<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<File> {

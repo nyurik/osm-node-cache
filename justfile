@@ -45,6 +45,7 @@ test-doc:
     cargo test --doc
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
+# Rint rustc and cargo versions
 rust-info:
     rustc --version
     cargo --version
