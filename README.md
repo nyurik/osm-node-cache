@@ -1,9 +1,9 @@
 # osm-node-cache
 
 [![GitHub](https://img.shields.io/badge/github-osmnodecache-8da0cb?logo=github)](https://github.com/nyurik/osm-node-cache)
-[![crates.io version](https://img.shields.io/crates/v/osmnodecache.svg)](https://crates.io/crates/osmnodecache)
-[![docs.rs docs](https://docs.rs/osmnodecache/badge.svg)](https://docs.rs/osmnodecache)
-[![crates.io version](https://img.shields.io/crates/l/osmnodecache.svg)](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-APACHE)
+[![crates.io version](https://img.shields.io/crates/v/osmnodecache)](https://crates.io/crates/osmnodecache)
+[![docs.rs](https://img.shields.io/docsrs/osmnodecache)](https://docs.rs/osmnodecache)
+[![license](https://img.shields.io/crates/l/osmnodecache)](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-APACHE)
 [![CI build](https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osm-node-cache/actions)
 [![Codecov](https://img.shields.io/codecov/c/github/nyurik/osm-node-cache)](https://app.codecov.io/gh/nyurik/osm-node-cache)
 
