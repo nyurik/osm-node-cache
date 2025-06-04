@@ -27,14 +27,17 @@ pub enum OsmNodeCacheError {
         element_size: usize,
     },
 
-    #[error("IO error: {0}")]
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    #[error("Serialization error: {0}")]
+    #[error(transparent)]
     Serde(#[from] serde_json::Error),
 
-    #[error("Binary serialization error: {0}")]
-    BinCode(#[from] bincode::Error),
+    #[error(transparent)]
+    BincodeEncode(#[from] bincode::error::EncodeError),
+
+    #[error(transparent)]
+    BincodeDecode(#[from] bincode::error::DecodeError),
 }
 
 pub type OsmNodeCacheResult<T> = Result<T, OsmNodeCacheError>;

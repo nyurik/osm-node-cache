@@ -42,7 +42,10 @@ impl HashMapCache {
 
     pub fn from_bin<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<Self> {
         Ok(Self {
-            data: Arc::new(bincode::deserialize_from(open_for_read(filename)?)?),
+            data: Arc::new(bincode::serde::decode_from_std_read(
+                &mut open_for_read(filename)?,
+                bincode::config::legacy(),
+            )?),
         })
     }
 
@@ -60,10 +63,11 @@ impl HashMapCache {
         )?)
     }
 
-    pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<()> {
-        Ok(bincode::serialize_into(
-            open_for_write(filename)?,
+    pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<usize> {
+        Ok(bincode::serde::encode_into_std_write(
             self.data.as_ref(),
+            &mut open_for_write(filename)?,
+            bincode::config::legacy(),
         )?)
     }
 }

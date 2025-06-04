@@ -4,13 +4,13 @@
 [![crates.io version](https://img.shields.io/crates/v/osmnodecache.svg)](https://crates.io/crates/osmnodecache)
 [![docs.rs docs](https://docs.rs/osmnodecache/badge.svg)](https://docs.rs/osmnodecache)
 [![crates.io version](https://img.shields.io/crates/l/osmnodecache.svg)](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-APACHE)
-[![CI build](https://github.com/nyurik/osm-node-cache/workflows/CI/badge.svg)](https://github.com/nyurik/osm-node-cache/actions)
+[![CI build](https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osm-node-cache/actions)
 [![Codecov](https://img.shields.io/codecov/c/github/nyurik/osm-node-cache)](https://app.codecov.io/gh/nyurik/osm-node-cache)
 
 Flat file node cache stores lat,lon coordinate pairs as `u64` values with their index being the position in the file. In
-other words - 0th u64 value is stored as the first 8 bytes, etc.
+other words -- 0th `u64` value is stored as the first eight bytes, etc.
 
-The library allows multithreaded access to the cache, and can dynamically grow the cache file.
+The library allows multithreaded access to the cache and can dynamically grow the cache file.
 
 ```rust,no_run
 // This example uses osmpbf crate

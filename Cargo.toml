@@ -1,6 +1,6 @@
 [package]
 name = "osmnodecache"
-version = "0.9.0"
+version = "0.10.0"
 description = "Flat file OSM node cache to store (latitude,longitude) pairs as indexed entries"
 authors = ["Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 repository = "https://github.com/nyurik/osm-node-cache"
@@ -8,13 +8,13 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["osm", "cache"]
 categories = ["caching", "science::geo"]
-rust-version = "1.81"
+rust-version = "1.85"
 
 [features]
 default = []
 
 [dependencies]
-bincode = "1"
+bincode = { version = "2", features = ["serde", "alloc"] }
 dashmap = { version = "6", features = ["serde"] }
 memmap2 = "0.9"
 serde = "1"
