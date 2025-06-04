@@ -14,7 +14,7 @@ rust-version = "1.81"
 default = []
 
 [dependencies]
-bincode = "1"
+bincode = { version = "2", features = ["serde", "alloc"] }
 dashmap = { version = "6", features = ["serde"] }
 memmap2 = "0.9"
 serde = "1"
