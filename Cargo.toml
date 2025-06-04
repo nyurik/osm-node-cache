@@ -8,7 +8,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["osm", "cache"]
 categories = ["caching", "science::geo"]
-rust-version = "1.81"
+rust-version = "1.85"
 
 [features]
 default = []
