@@ -63,13 +63,12 @@ impl HashMapCache {
         )?)
     }
 
-    pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<()> {
-        bincode::serde::encode_into_std_write(
+    pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<usize> {
+        Ok(bincode::serde::encode_into_std_write(
             self.data.as_ref(),
             &mut open_for_write(filename)?,
             bincode::config::legacy(),
-        )?;
-        Ok(())
+        )?)
     }
 }
 
