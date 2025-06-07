@@ -2,6 +2,7 @@
 
 [![GitHub repo](https://img.shields.io/badge/github-osmnodecache-8da0cb?logo=github)](https://github.com/nyurik/osm-node-cache)
 [![crates.io version](https://img.shields.io/crates/v/osmnodecache)](https://crates.io/crates/osmnodecache)
+[![crate usage](https://img.shields.io/crates/d/osmnodecache)](https://crates.io/crates/osmnodecache)
 [![docs.rs status](https://img.shields.io/docsrs/osmnodecache)](https://docs.rs/osmnodecache)
 [![crates.io license](https://img.shields.io/crates/l/osmnodecache)](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-APACHE)
 [![CI build status](https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osm-node-cache/actions)
