@@ -9,7 +9,7 @@ publish = false
 osmnodecache = { path = ".." }
 
 [dev-dependencies]
-criterion = "0.6"
+criterion = "0.7"
 
 [[bench]]
 name = "bench"
