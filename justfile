@@ -71,7 +71,7 @@ env-info:
 fmt:
     #!/usr/bin/env bash
     set -euo pipefail
-    if rustup component list --toolchain nightly | grep rustfmt &> /dev/null; then
+    if (rustup toolchain list | grep nightly && rustup component list --toolchain nightly | grep rustfmt) &> /dev/null; then
         echo 'Reformatting Rust code using nightly Rust fmt to sort imports'
         cargo +nightly fmt --all -- --config imports_granularity=Module,group_imports=StdExternalCrate
     else
@@ -79,9 +79,13 @@ fmt:
         cargo fmt --all
     fi
 
+# Reformat all Cargo.toml files using cargo-sort
+fmt-toml *args:  (cargo-install 'cargo-sort')
+    cargo sort --workspace --grouped {{args}}
+
 # Get any package's field from the metadata
 get-crate-field field package=main_crate:  (assert-cmd 'jq')
-    cargo metadata --format-version 1 | jq -e -r '.packages | map(select(.name == "{{package}}")) | first | .{{field}} | select(. != null)'
+    cargo metadata --format-version 1 | jq -e -r '.packages | map(select(.name == "{{package}}")) | first | .{{field}} // error("Field \"{{field}}\" is missing in Cargo.toml for package {{package}}")'
 
 # Get the minimum supported Rust version (MSRV) for the crate
 get-msrv package=main_crate:  (get-crate-field 'rust_version' package)
@@ -106,7 +110,7 @@ test:
 test-doc:  (docs '')
 
 # Test code formatting
-test-fmt:
+test-fmt: && (fmt-toml '--check' '--check-format')
     cargo fmt --all -- --check
 
 # Find unused dependencies. Install it with `cargo install cargo-udeps`
