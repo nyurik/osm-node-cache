@@ -120,7 +120,7 @@ fn to_64_usize(old_size: u64) -> usize {
     usize::try_from(old_size).expect("Unable to convert large u64 to usize on this platform")
 }
 
-fn lock_and_link(memmap: &RwLock<MmapMut>) -> (Option<RwLockReadGuard<MmapMut>>, &[AtomicU64]) {
+fn lock_and_link(memmap: &RwLock<MmapMut>) -> (Option<RwLockReadGuard<'_, MmapMut>>, &[AtomicU64]) {
     let mm = memmap.read().unwrap();
     // ideally this should be as_mut(), but mut is not multithreaded
     let data_as_u8: &[u8] = mm.as_ref();
