@@ -21,6 +21,7 @@ serde_json = "1"
 thiserror = "2"
 
 [dev-dependencies]
+osmpbf = "0.3"  # Used in a doc test
 rand = "0.9"
 rayon = "1"
 
