@@ -17,12 +17,10 @@ default = []
 bincode = { version = "2", features = ["serde", "alloc"] }
 dashmap = { version = "6", features = ["serde"] }
 memmap2 = "0.9"
-serde = "1"
 serde_json = "1"
 thiserror = "2"
 
 [dev-dependencies]
-osmpbf = "0.3"
 rand = "0.9"
 rayon = "1"
 
@@ -39,6 +37,11 @@ default-members = ["."]
 unused_qualifications = "warn"
 
 [workspace.lints.clippy]
+# Restrictions
+panic_in_result_fn = "warn"
+# TODO: todo = "warn"
+# TODO: unwrap_used = "warn"
+# Pedantics without being too noisy
 cargo = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 missing_errors_doc = "allow"
