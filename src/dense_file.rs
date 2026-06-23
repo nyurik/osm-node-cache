@@ -94,7 +94,7 @@ impl DenseFileCacheOpts {
 
 /// Increase the size of the file if needed, and create a memory map from it
 fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> OsmNodeCacheResult<MmapMut> {
-    if opts.page_size % size_of::<usize>() != 0 {
+    if !opts.page_size.is_multiple_of(size_of::<usize>()) {
         return Err(OsmNodeCacheError::InvalidPageSize {
             page_size: opts.page_size,
             element_size: size_of::<usize>(),
@@ -105,7 +105,7 @@ fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> OsmNodeCacheRes
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
-    let pages = capacity / opts.page_size + usize::from(capacity % opts.page_size != 0);
+    let pages = capacity / opts.page_size + usize::from(!capacity.is_multiple_of(opts.page_size));
     let new_size = (pages * opts.page_size) as u64;
     if old_size < new_size {
         if let Some(value) = opts.on_size_change {
