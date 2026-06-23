@@ -34,10 +34,10 @@ pub enum OsmNodeCacheError {
     Serde(#[from] serde_json::Error),
 
     #[error(transparent)]
-    BincodeEncode(#[from] bincode::error::EncodeError),
+    BincodeEncode(#[from] bincode_next::error::EncodeError),
 
     #[error(transparent)]
-    BincodeDecode(#[from] bincode::error::DecodeError),
+    BincodeDecode(#[from] bincode_next::error::DecodeError),
 }
 
 pub type OsmNodeCacheResult<T> = Result<T, OsmNodeCacheError>;
