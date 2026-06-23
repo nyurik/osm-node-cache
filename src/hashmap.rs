@@ -42,9 +42,9 @@ impl HashMapCache {
 
     pub fn from_bin<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<Self> {
         Ok(Self {
-            data: Arc::new(bincode::serde::decode_from_std_read(
+            data: Arc::new(bincode_next::serde::decode_from_std_read(
                 &mut open_for_read(filename)?,
-                bincode::config::legacy(),
+                bincode_next::config::legacy(),
             )?),
         })
     }
@@ -64,10 +64,10 @@ impl HashMapCache {
     }
 
     pub fn save_as_bin<P: AsRef<Path>>(&self, filename: P) -> OsmNodeCacheResult<usize> {
-        Ok(bincode::serde::encode_into_std_write(
+        Ok(bincode_next::serde::encode_into_std_write(
             self.data.as_ref(),
             &mut open_for_write(filename)?,
-            bincode::config::legacy(),
+            bincode_next::config::legacy(),
         )?)
     }
 }
@@ -150,6 +150,44 @@ mod tests {
         let _ = fs::remove_file(filename);
         cache.save_as_bin(filename).unwrap();
         test_values(&HashMapCache::from_bin(filename).unwrap(), items);
+        cleanup_test_file(filename);
+    }
+
+    #[test]
+    fn hashmap_file_bin_reads_bincode_legacy_bytes() {
+        let filename = Path::new("./hashmap_test.bincode_legacy.bin");
+        let _ = fs::remove_file(filename);
+        fs::write(
+            filename,
+            [
+                1_u64.to_le_bytes(),
+                42_u64.to_le_bytes(),
+                7_u64.to_le_bytes(),
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let cache = HashMapCache::from_bin(filename).unwrap();
+        assert_eq!(cache.get(42), 7);
+        cleanup_test_file(filename);
+    }
+
+    #[test]
+    fn hashmap_file_bin_writes_bincode_legacy_bytes() {
+        let filename = Path::new("./hashmap_test.bincode_next.bin");
+        let mut cache = HashMapCache::with_capacity(1);
+        cache.set(42, 7);
+        let _ = fs::remove_file(filename);
+        cache.save_as_bin(filename).unwrap();
+        assert_eq!(
+            fs::read(filename).unwrap(),
+            [
+                1_u64.to_le_bytes(),
+                42_u64.to_le_bytes(),
+                7_u64.to_le_bytes(),
+            ]
+            .concat()
+        );
         cleanup_test_file(filename);
     }
 
