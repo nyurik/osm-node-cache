@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2](https://github.com/nyurik/osm-node-cache/compare/v0.10.1...v0.10.2) - 2026-06-23
+
+### Other
+
+- update to manintained bincode ([#38](https://github.com/nyurik/osm-node-cache/pull/38))
+- update proj framework ([#36](https://github.com/nyurik/osm-node-cache/pull/36))
+- add .editorconfig
+- minor justfile adjustments
+- Bump actions/checkout from 5 to 6 in the all-actions-version-updates group ([#32](https://github.com/nyurik/osm-node-cache/pull/32))
+- minor justfile adjustments
+
 ## [0.10.1](https://github.com/nyurik/osm-node-cache/compare/v0.10.0...v0.10.1) - 2025-10-01
 
 ### Other
