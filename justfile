@@ -173,7 +173,7 @@ assert-git-is-clean:
 cargo-install $COMMAND $INSTALL_CMD='' *args='':
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v $COMMAND > /dev/null; then
+CARGO_BUILD_WARNINGS
         echo "$COMMAND could not be found. Installing..."
         if ! command -v cargo-binstall > /dev/null; then
             set -x
