@@ -39,6 +39,7 @@ unused_qualifications = "warn"
 
 [workspace.lints.clippy]
 # Restrictions
+disallowed_methods = "forbid"
 panic_in_result_fn = "warn"
 # TODO: todo = "warn"
 # TODO: unwrap_used = "warn"
