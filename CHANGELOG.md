@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/nyurik/osm-node-cache/compare/v0.10.2...v0.10.3) - 2026-07-14
+
+### Other
+
+- fix justfile cargo binstall
+- let rust fmt indent .rs files
+- disallow mem leaking in code
+- fix unset in justfile
+- ignore CARGO_BUILD_WARNINGS in cargo-install
+- use Rust 1.97 cargo warnings
+
 ## [0.10.2](https://github.com/nyurik/osm-node-cache/compare/v0.10.1...v0.10.2) - 2026-06-23
 
 ### Other
