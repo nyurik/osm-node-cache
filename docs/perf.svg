@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="612" viewBox="0 0 920 612" role="img" aria-label="The native paged file against redb: size, build, way resolving, lookups and commits">
+<style>
+  .surface { fill: #fcfcfb; }
+  .heading { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 17px; font-weight: 600; }
+  .title { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600; }
+  .note { fill: #52514e; font-family: system-ui, sans-serif; font-size: 12px; }
+  .label { fill: #52514e; font-family: system-ui, sans-serif; font-size: 12px; }
+  .value { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 12px; }
+  .axis { stroke: #c3c2b7; stroke-width: 1; }
+  .s0 { fill: #2a78d6; }
+  .s1 { fill: #eb6834; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .heading, .title, .value { fill: #f0efec; }
+    .note, .label { fill: #c3c2b7; }
+    .axis { stroke: #52514e; }
+    .s0 { fill: #3987e5; }
+    .s1 { fill: #d95926; }
+  }
+</style>
+<rect class="surface" width="920" height="612" rx="8"/>
+<text class="heading" x="16" y="30">native paged file and redb</text>
+<rect class="s0" x="16" y="44" width="12" height="12" rx="3"/>
+<text class="label" x="34" y="54">native</text>
+<rect class="s1" x="100" y="44" width="12" height="12" rx="3"/>
+<text class="label" x="118" y="54">redb</text>
+<text class="note" x="190" y="54">laptop: 16 threads, 62 GB RAM, SSD; speeds with the store in memory, the better of two runs</text>
+<text class="title" x="16" y="88">Size on disk</text>
+<text class="note" x="16" y="106">bytes per node; lower is better</text>
+<text class="label" x="16" y="140">District of Columbia</text>
+<path class="s0" d="M156.0,122.0 h234.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-234.0 z"/>
+<text class="value" x="399.0" y="133">8.69</text>
+<path class="s1" d="M156.0,137.0 h151.8 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-151.8 z"/>
+<text class="value" x="316.8" y="148">5.69</text>
+<text class="label" x="16" y="194">Europe</text>
+<path class="s0" d="M156.0,176.0 h138.6 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-138.6 z"/>
+<text class="value" x="303.6" y="187">5.21</text>
+<path class="s1" d="M156.0,191.0 h155.4 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-155.4 z"/>
+<text class="value" x="320.4" y="202">5.82</text>
+<text class="label" x="16" y="248">Planet</text>
+<path class="s0" d="M156.0,230.0 h133.8 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-133.8 z"/>
+<text class="value" x="298.8" y="241">5.03</text>
+<path class="s1" d="M156.0,245.0 h152.9 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-152.9 z"/>
+<text class="value" x="317.9" y="256">5.73</text>
+<line class="axis" x1="156" y1="118" x2="156" y2="262"/>
+<text class="title" x="474" y="88">Build from the PBF file</text>
+<text class="note" x="474" y="106">M nodes/s; higher is better</text>
+<text class="label" x="474" y="140">District of Columbia</text>
+<path class="s0" d="M614.0,122.0 h96.2 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-96.2 z"/>
+<text class="value" x="719.2" y="133">9.7</text>
+<path class="s1" d="M614.0,137.0 h77.6 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-77.6 z"/>
+<text class="value" x="700.6" y="148">7.9</text>
+<text class="label" x="474" y="194">Europe, 1.84 B nodes</text>
+<path class="s0" d="M614.0,176.0 h234.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-234.0 z"/>
+<text class="value" x="857.0" y="187">23.0</text>
+<path class="s1" d="M614.0,191.0 h138.1 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-138.1 z"/>
+<text class="value" x="761.1" y="202">13.8</text>
+<line class="axis" x1="614" y1="118" x2="614" y2="208"/>
+<text class="title" x="16" y="302">Resolve the nodes of all ways</text>
+<text class="note" x="16" y="320">M node refs/s, with PBF decoding; higher is better</text>
+<text class="label" x="16" y="354">District of Columbia</text>
+<path class="s0" d="M156.0,336.0 h223.3 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-223.3 z"/>
+<text class="value" x="388.3" y="347">13.3</text>
+<path class="s1" d="M156.0,351.0 h152.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-152.0 z"/>
+<text class="value" x="317.0" y="362">9.1</text>
+<text class="label" x="16" y="408">Europe, 1.84 B nodes</text>
+<path class="s0" d="M156.0,390.0 h234.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-234.0 z"/>
+<text class="value" x="399.0" y="401">14.0</text>
+<path class="s1" d="M156.0,405.0 h146.3 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-146.3 z"/>
+<text class="value" x="311.3" y="416">8.8</text>
+<line class="axis" x1="156" y1="332" x2="156" y2="422"/>
+<text class="title" x="474" y="302">Lookups in way order</text>
+<text class="note" x="474" y="320">M/s on 16 threads; higher is better</text>
+<text class="label" x="474" y="354">District of Columbia</text>
+<path class="s0" d="M614.0,336.0 h234.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-234.0 z"/>
+<text class="value" x="857.0" y="347">60.5</text>
+<path class="s1" d="M614.0,351.0 h81.4 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-81.4 z"/>
+<text class="value" x="704.4" y="362">21.7</text>
+<text class="label" x="474" y="408">Europe, 1.84 B nodes</text>
+<path class="s0" d="M614.0,390.0 h189.5 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-189.5 z"/>
+<text class="value" x="812.5" y="401">49.2</text>
+<path class="s1" d="M614.0,405.0 h87.3 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-87.3 z"/>
+<text class="value" x="710.3" y="416">23.2</text>
+<line class="axis" x1="614" y1="332" x2="614" y2="422"/>
+<text class="title" x="16" y="462">Lookups in random order</text>
+<text class="note" x="16" y="480">M/s on 16 threads; higher is better</text>
+<text class="label" x="16" y="514">District of Columbia</text>
+<path class="s0" d="M156.0,496.0 h234.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-234.0 z"/>
+<text class="value" x="399.0" y="507">20.2</text>
+<path class="s1" d="M156.0,511.0 h92.6 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-92.6 z"/>
+<text class="value" x="257.6" y="522">8.2</text>
+<text class="label" x="16" y="568">Europe, 1.84 B nodes</text>
+<path class="s0" d="M156.0,550.0 h118.5 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-118.5 z"/>
+<text class="value" x="283.5" y="561">10.4</text>
+<path class="s1" d="M156.0,565.0 h52.6 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-52.6 z"/>
+<text class="value" x="217.6" y="576">4.8</text>
+<line class="axis" x1="156" y1="492" x2="156" y2="582"/>
+<text class="title" x="474" y="462">Commit 2,000 edits</text>
+<text class="note" x="474" y="480">ms, median; lower is better</text>
+<text class="label" x="474" y="514">District of Columbia</text>
+<path class="s0" d="M614.0,496.0 h105.3 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-105.3 z"/>
+<text class="value" x="728.3" y="507">37</text>
+<path class="s1" d="M614.0,511.0 h20.2 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-20.2 z"/>
+<text class="value" x="643.2" y="522">8</text>
+<text class="label" x="474" y="568">Europe, 1.84 B nodes</text>
+<path class="s0" d="M614.0,550.0 h234.0 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-234.0 z"/>
+<text class="value" x="857.0" y="561">81</text>
+<path class="s1" d="M614.0,565.0 h49.2 a4,4 0 0 1 4,4 v5.0 a4,4 0 0 1 -4,4 h-49.2 z"/>
+<text class="value" x="672.2" y="576">18</text>
+<line class="axis" x1="614" y1="492" x2="614" y2="582"/>
+</svg>

@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="676" viewBox="0 0 980 676" role="img" aria-label="How a lookup and a change work in each store: the native store finds a page through an in-memory directory and reads it straight from the memory-mapped file; the redb store checks pending changes in memory, then reads a value of four blocks from a B-tree. Both decode the same block encoding into a reader that keeps four recent blocks.">
+<style>
+  .bg { fill: #fcfcfb; }
+  .box { fill: #f0efec; stroke: #c3c2b7; stroke-width: 1; }
+  .seg { fill: #fcfcfb; stroke: #c3c2b7; stroke-width: 1; }
+  .ink { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 13px; font-weight: normal; }
+  .head { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600; }
+  .title { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 17px; font-weight: 600; }
+  .muted { fill: #52514e; font-family: system-ui, sans-serif; font-size: 12px; font-weight: normal; }
+  .small { fill: #52514e; font-family: system-ui, sans-serif; font-size: 11px; font-weight: normal; }
+  .line { stroke: #8a897f; stroke-width: 1.5; fill: none; }
+  .thin { stroke: #c3c2b7; stroke-width: 1; fill: none; stroke-dasharray: 3 3; }
+  .tip { fill: #8a897f; }
+  .native { fill: #2a78d6; }
+  .redb { fill: #eb6834; }
+  .native-line { stroke: #2a78d6; stroke-width: 2; fill: none; }
+  .redb-line { stroke: #eb6834; stroke-width: 2; fill: none; }
+  .native-box { fill: #2a78d6; fill-opacity: 0.12; stroke: #2a78d6; stroke-width: 1.5; }
+  .redb-box { fill: #eb6834; fill-opacity: 0.12; stroke: #eb6834; stroke-width: 1.5; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19; }
+    .box { fill: #262624; stroke: #52514e; }
+    .seg { fill: #1a1a19; stroke: #52514e; }
+    .ink, .head, .title { fill: #f0efec; }
+    .muted, .small { fill: #c3c2b7; }
+    .line { stroke: #8a897f; }
+    .thin { stroke: #52514e; }
+    .native { fill: #3987e5; }
+    .redb { fill: #d95926; }
+    .native-line { stroke: #3987e5; }
+    .redb-line { stroke: #d95926; }
+    .native-box { fill: #3987e5; stroke: #3987e5; }
+    .redb-box { fill: #d95926; stroke: #d95926; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="tip" d="M0,0 L10,5 L0,10 z"/>
+  </marker>
+</defs>
+<rect class="bg" width="980" height="676" rx="8"/>
+<text class="title" x="24" y="34">How each store looks up a node, and keeps a change</text>
+
+<!-- column headings -->
+<rect class="native" x="24" y="56" width="12" height="12" rx="3"/>
+<text class="head" x="44" y="67">native: PagedFileCache</text>
+<text class="muted" x="44" y="85">one memory-mapped file of 4 KiB pages</text>
+<rect class="redb" x="504" y="56" width="12" height="12" rx="3"/>
+<text class="head" x="524" y="67">redb: KvNodeStore&lt;RedbBackend&gt;</text>
+<text class="muted" x="524" y="85">a copy-on-write B-tree database file</text>
+
+<!-- row 1: node id -->
+<rect class="box" x="164" y="104" width="172" height="34" rx="6"/>
+<text class="ink" x="250" y="126" text-anchor="middle">node ID</text>
+<rect class="box" x="644" y="104" width="172" height="34" rx="6"/>
+<text class="ink" x="730" y="126" text-anchor="middle">node ID</text>
+
+<line class="line" x1="250" y1="138" x2="250" y2="174" marker-end="url(#arrow)"/>
+<text class="muted" x="262" y="161">÷ 64 = block number</text>
+<line class="line" x1="730" y1="138" x2="730" y2="174" marker-end="url(#arrow)"/>
+<text class="muted" x="742" y="161">÷ 256 = group of 4 blocks</text>
+
+<!-- row 2: directory / pending -->
+<rect class="native-box" x="104" y="176" width="292" height="44" rx="6"/>
+<text class="ink" x="250" y="195" text-anchor="middle">directory in RAM</text>
+<text class="small" x="250" y="211" text-anchor="middle">first block of each page → page number</text>
+<rect class="redb-box" x="584" y="176" width="292" height="44" rx="6"/>
+<text class="ink" x="730" y="195" text-anchor="middle">changes not yet committed, in RAM</text>
+<text class="small" x="730" y="211" text-anchor="middle">checked first; a group found here is used as is</text>
+
+<line class="line" x1="250" y1="220" x2="250" y2="258" marker-end="url(#arrow)"/>
+<text class="muted" x="262" y="244">page 4: a pointer into the mapping, no copy</text>
+<line class="line" x1="730" y1="220" x2="730" y2="258" marker-end="url(#arrow)"/>
+<text class="muted" x="742" y="244">else get(group)</text>
+
+<!-- row 3 native: the file as a strip of pages -->
+<text class="small" x="64" y="272">data file: pages in ID order, split pages added at the end</text>
+<rect class="seg" x="64" y="278" width="36" height="28"/><text class="small" x="82" y="296" text-anchor="middle">hdr</text>
+<rect class="seg" x="100" y="278" width="36" height="28"/><text class="small" x="118" y="296" text-anchor="middle">1</text>
+<rect class="seg" x="136" y="278" width="36" height="28"/><text class="small" x="154" y="296" text-anchor="middle">2</text>
+<rect class="seg" x="172" y="278" width="36" height="28"/><text class="small" x="190" y="296" text-anchor="middle">3</text>
+<rect class="native-box" x="208" y="278" width="36" height="28"/><text class="ink" x="226" y="297" text-anchor="middle">4</text>
+<rect class="seg" x="244" y="278" width="36" height="28"/><text class="small" x="262" y="296" text-anchor="middle">5</text>
+<rect class="seg" x="280" y="278" width="36" height="28"/><text class="small" x="298" y="296" text-anchor="middle">6</text>
+<rect class="seg" x="316" y="278" width="36" height="28"/><text class="small" x="334" y="296" text-anchor="middle">…</text>
+<rect class="seg" x="352" y="278" width="84" height="28" stroke-dasharray="3 3"/><text class="small" x="394" y="296" text-anchor="middle">split pages</text>
+
+<!-- zoom of page 4 -->
+<line class="thin" x1="208" y1="306" x2="44" y2="368"/>
+<line class="thin" x1="244" y1="306" x2="456" y2="368"/>
+<text class="small" x="44" y="362">page 4: a table of its blocks, then the blocks; 3% left free</text>
+<rect class="seg" x="44" y="368" width="64" height="34"/><text class="small" x="76" y="389" text-anchor="middle">header</text>
+<rect class="seg" x="108" y="368" width="88" height="34"/><text class="small" x="152" y="389" text-anchor="middle">block table</text>
+<rect class="native-box" x="196" y="368" width="64" height="34"/><text class="small" x="228" y="389" text-anchor="middle">block</text>
+<rect class="seg" x="260" y="368" width="64" height="34"/><text class="small" x="292" y="389" text-anchor="middle">block</text>
+<rect class="seg" x="324" y="368" width="88" height="34"/><text class="small" x="368" y="389" text-anchor="middle">… ~60 more</text>
+<rect class="seg" x="412" y="368" width="44" height="34" stroke-dasharray="3 3"/><text class="small" x="434" y="389" text-anchor="middle">3% free</text>
+
+<!-- row 3 redb: the B-tree -->
+<text class="small" x="544" y="272">B-tree in redb's cache; a leaf maps a group number to a value</text>
+<rect class="seg" x="700" y="278" width="60" height="22" rx="3"/><text class="small" x="730" y="293" text-anchor="middle">root</text>
+<line class="thin" x1="715" y1="300" x2="634" y2="318"/>
+<line class="redb-line" x1="745" y1="300" x2="826" y2="318"/>
+<rect class="seg" x="604" y="318" width="60" height="22" rx="3"/><text class="small" x="634" y="333" text-anchor="middle">branch</text>
+<rect class="seg" x="796" y="318" width="60" height="22" rx="3"/><text class="small" x="826" y="333" text-anchor="middle">branch</text>
+<line class="thin" x1="634" y1="340" x2="604" y2="352"/>
+<line class="thin" x1="634" y1="340" x2="664" y2="352"/>
+<line class="thin" x1="826" y1="340" x2="796" y2="352"/>
+<line class="redb-line" x1="826" y1="340" x2="856" y2="352"/>
+<rect class="seg" x="584" y="352" width="40" height="16" rx="3"/>
+<rect class="seg" x="644" y="352" width="40" height="16" rx="3"/>
+<rect class="seg" x="776" y="352" width="40" height="16" rx="3"/>
+<rect class="redb-box" x="836" y="352" width="40" height="16" rx="3"/>
+<text class="small" x="544" y="390">value, about 1 KiB: the same block encoding, copied out</text>
+
+<!-- zoom of the value -->
+<line class="thin" x1="856" y1="368" x2="876" y2="396"/>
+<rect class="seg" x="544" y="396" width="64" height="34"/><text class="small" x="576" y="417" text-anchor="middle">header</text>
+<rect class="seg" x="608" y="396" width="64" height="34"/><text class="small" x="640" y="417" text-anchor="middle">table</text>
+<rect class="redb-box" x="672" y="396" width="51" height="34"/><text class="small" x="697" y="417" text-anchor="middle">block</text>
+<rect class="seg" x="723" y="396" width="51" height="34"/><text class="small" x="748" y="417" text-anchor="middle">block</text>
+<rect class="seg" x="774" y="396" width="51" height="34"/><text class="small" x="799" y="417" text-anchor="middle">block</text>
+<rect class="seg" x="825" y="396" width="51" height="34"/><text class="small" x="850" y="417" text-anchor="middle">block</text>
+
+<!-- row 4: both decode into the reader -->
+<line class="native-line" x1="228" y1="402" x2="228" y2="466" marker-end="url(#arrow)"/>
+<line class="redb-line" x1="697" y1="430" x2="697" y2="466" marker-end="url(#arrow)"/>
+<rect class="box" x="104" y="468" width="772" height="44" rx="6"/>
+<text class="ink" x="490" y="487" text-anchor="middle">decode the block: present IDs from its mask, then each location as a step from the last</text>
+<text class="small" x="490" y="503" text-anchor="middle">a reader per thread keeps its 4 latest blocks decoded, so most of a way's nodes need no decoding</text>
+<line class="line" x1="490" y1="512" x2="490" y2="536" marker-end="url(#arrow)"/>
+<rect class="box" x="404" y="538" width="172" height="32" rx="6"/>
+<text class="ink" x="490" y="559" text-anchor="middle">lat, lon</text>
+
+<!-- changes -->
+<text class="head" x="24" y="604">Changes</text>
+<text class="ink" x="44" y="628">set / remove re-encode the page in place; a full page</text>
+<text class="ink" x="44" y="646">moves its upper blocks to a new page at the end</text>
+<text class="muted" x="44" y="666">commit: sync the pages and .dir file. A killed process loses nothing; a power loss may.</text>
+<text class="ink" x="524" y="628">set / remove edit the decoded group in RAM</text>
+<text class="ink" x="524" y="646">commit: all changed groups and the stamp in one transaction</text>
+<text class="muted" x="524" y="666">After any crash, the store opens at the last commit.</text>
+</svg>

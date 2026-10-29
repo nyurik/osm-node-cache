@@ -77,28 +77,34 @@ fn i32s_to_u64(high: i32, low: i32) -> u64 {
     (u64::from(high as u32) << 32) | u64::from(low as u32)
 }
 
-pub fn open_cache_file<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<File> {
-    let file = OpenOptions::new()
+/// Opens `path` to read and write, creating it if `create` and emptying it if `truncate`.
+pub(crate) fn open_cache_file(
+    path: &Path,
+    create: bool,
+    truncate: bool,
+) -> OsmNodeCacheResult<File> {
+    OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true)
-        .truncate(false)
-        .open(filename.as_ref())
-        .map_err(|e| OsmNodeCacheError::InvalidCacheFile(filename.as_ref().to_path_buf(), e))?;
-    Ok(file)
+        .create(create)
+        .truncate(truncate)
+        .open(path)
+        .map_err(|e| OsmNodeCacheError::InvalidCacheFile(path.to_path_buf(), e))
 }
 
 #[cfg(test)]
 pub mod tests {
-    use std::panic;
-    use std::panic::{catch_unwind, UnwindSafe};
+    use std::panic::{self, catch_unwind, UnwindSafe};
+    use std::path::PathBuf;
+    use std::{env, fs, process};
 
     use rand::rng;
     use rand::seq::SliceRandom;
+    use rayon::prelude::*;
 
     use crate::traits::{
         i32_to_latitude, i32_to_longitude, i32s_to_u64, latitude_to_i32, longitude_to_i32,
-        u64_to_i32s,
+        u64_to_i32s, CacheStore,
     };
 
     const EPSILON: f64 = f32::EPSILON as f64;
@@ -224,8 +230,54 @@ pub mod tests {
         test_pack!(i32::MIN, i32::MAX);
     }
 
-    pub(crate) fn get_random_items(items: usize) -> Vec<usize> {
-        let mut vec: Vec<usize> = (0_usize..items).collect();
+    /// A path in the temp directory, removed when dropped with the paged cache's directory file or
+    /// a store's directory, unless `KEEP_TEST_FILES` is set at build time.
+    pub(crate) struct TestFile(pub PathBuf);
+
+    impl TestFile {
+        pub(crate) fn new(name: &str) -> Self {
+            let file = Self(env::temp_dir().join(format!("osmnodecache-{}-{name}", process::id())));
+            file.remove();
+            file
+        }
+
+        fn remove(&self) {
+            let _ = fs::remove_file(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
+            let mut dir = self.0.clone().into_os_string();
+            dir.push(".dir");
+            let _ = fs::remove_file(dir);
+        }
+    }
+
+    impl Drop for TestFile {
+        fn drop(&mut self) {
+            if option_env!("KEEP_TEST_FILES").is_none() {
+                self.remove();
+            }
+        }
+    }
+
+    /// Sets values from many threads at once, each in its own random order, then checks them the
+    /// same way.
+    pub(crate) fn check_parallel(store: &(impl CacheStore + Sync)) {
+        let (threads, items) = (10, 100_000_usize);
+        (0..threads).into_par_iter().for_each(|_| {
+            let mut cache = store.get_accessor();
+            for v in random_order(items) {
+                cache.set(v, v as u64);
+            }
+        });
+        (0..threads).into_par_iter().for_each(|_| {
+            let cache = store.get_accessor();
+            for v in random_order(items) {
+                assert_eq!(v as u64, cache.get(v));
+            }
+        });
+    }
+
+    fn random_order(items: usize) -> Vec<usize> {
+        let mut vec: Vec<usize> = (0..items).collect();
         vec.shuffle(&mut rng());
         vec
     }

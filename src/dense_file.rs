@@ -101,7 +101,7 @@ fn resize_and_memmap(index: usize, opts: &DenseFileCacheOpts) -> OsmNodeCacheRes
         });
     }
 
-    let file = open_cache_file(opts.filename.as_ref())?;
+    let file = open_cache_file(&opts.filename, true, false)?;
     let old_size = file.metadata().unwrap().len();
 
     let capacity = (index + 1) * size_of::<usize>();
@@ -243,42 +243,18 @@ impl Cache for CacheWriter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
-    use rayon::iter::{ParallelBridge, ParallelIterator};
-
-    use crate::traits::tests::get_random_items;
-    use crate::*;
+    use crate::traits::tests::{check_parallel, TestFile};
+    use crate::DenseFileCacheOpts;
 
     #[test]
     fn dense_file() {
-        let test_file = "./dense_file_test.dat";
-        let _ = fs::remove_file(test_file);
-        {
-            let fc = DenseFileCacheOpts::new(PathBuf::from(test_file))
+        let f = TestFile::new("dense");
+        // a tiny page size makes the threads grow the file all the time
+        check_parallel(
+            &DenseFileCacheOpts::new(f.0.clone())
                 .page_size(8)
                 .open()
-                .unwrap();
-            let threads = 10;
-            let items = 100_000;
-            (0_usize..threads)
-                .par_bridge()
-                .for_each_with(fc.clone(), |fc, _thread_id| {
-                    let mut cache = fc.get_accessor();
-                    for v in get_random_items(items) {
-                        cache.set(v, v as u64);
-                    }
-                });
-            (0_usize..threads)
-                .par_bridge()
-                .for_each_with(fc, |fc, _thread_id| {
-                    let cache = fc.get_accessor();
-                    for v in get_random_items(items) {
-                        assert_eq!(v as u64, cache.get(v));
-                    }
-                });
-        }
-        let _ = fs::remove_file(test_file);
+                .unwrap(),
+        );
     }
 }

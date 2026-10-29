@@ -18,7 +18,11 @@ fn open_for_read<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<BufReader<Fi
 }
 
 fn open_for_write<P: AsRef<Path>>(filename: P) -> OsmNodeCacheResult<BufWriter<File>> {
-    Ok(BufWriter::new(open_cache_file(filename)?))
+    Ok(BufWriter::new(open_cache_file(
+        filename.as_ref(),
+        true,
+        true,
+    )?))
 }
 
 impl HashMapCache {
@@ -93,111 +97,16 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use rayon::iter::{ParallelBridge, ParallelIterator};
-
     use crate::hashmap::HashMapCache;
-    use crate::traits::tests::get_random_items;
+    use crate::traits::tests::{check_parallel, TestFile};
     use crate::traits::Cache;
+    use crate::OsmNodeCacheResult;
 
-    #[test]
-    fn hashmap_test() {
-        let threads = 10;
-        let items = 100_000;
-        let cache = HashMapCache::new();
-        (0_usize..threads)
-            .par_bridge()
-            .for_each_with(cache.clone(), |c, _thread_id| {
-                for v in get_random_items(items) {
-                    c.set(v, v as u64);
-                }
-            });
-        (0_usize..threads)
-            .par_bridge()
-            .for_each_with(cache, |c, _thread_id| {
-                for v in get_random_items(items) {
-                    assert_eq!(v as u64, c.get(v));
-                }
-            });
-    }
+    type Save = fn(&HashMapCache, &Path) -> OsmNodeCacheResult<()>;
+    type Load = fn(&Path) -> OsmNodeCacheResult<HashMapCache>;
 
-    #[test]
-    fn hashmap_file_json_pretty_test() {
-        let items = 100_000;
-        let filename = Path::new("./hashmap_test.pretty.json");
-        let cache = new_hashmap(items);
-        let _ = fs::remove_file(filename);
-        cache.save_as_pretty_json(filename).unwrap();
-        test_values(&HashMapCache::from_json(filename).unwrap(), items);
-        cleanup_test_file(filename);
-    }
-
-    #[test]
-    fn hashmap_file_json_test() {
-        let items = 100_000;
-        let filename = Path::new("./hashmap_test.json");
-        let cache = new_hashmap(items);
-        let _ = fs::remove_file(filename);
-        cache.save_as_json(filename).unwrap();
-        test_values(&HashMapCache::from_json(filename).unwrap(), items);
-        cleanup_test_file(filename);
-    }
-
-    #[test]
-    fn hashmap_file_bin_test() {
-        let items = 100_000;
-        let filename = Path::new("./hashmap_test.bin");
-        let cache = new_hashmap(items);
-        let _ = fs::remove_file(filename);
-        cache.save_as_bin(filename).unwrap();
-        test_values(&HashMapCache::from_bin(filename).unwrap(), items);
-        cleanup_test_file(filename);
-    }
-
-    #[test]
-    fn hashmap_file_bin_reads_bincode_legacy_bytes() {
-        let filename = Path::new("./hashmap_test.bincode_legacy.bin");
-        let _ = fs::remove_file(filename);
-        fs::write(
-            filename,
-            [
-                1_u64.to_le_bytes(),
-                42_u64.to_le_bytes(),
-                7_u64.to_le_bytes(),
-            ]
-            .concat(),
-        )
-        .unwrap();
-        let cache = HashMapCache::from_bin(filename).unwrap();
-        assert_eq!(cache.get(42), 7);
-        cleanup_test_file(filename);
-    }
-
-    #[test]
-    fn hashmap_file_bin_writes_bincode_legacy_bytes() {
-        let filename = Path::new("./hashmap_test.bincode_next.bin");
-        let mut cache = HashMapCache::with_capacity(1);
-        cache.set(42, 7);
-        let _ = fs::remove_file(filename);
-        cache.save_as_bin(filename).unwrap();
-        assert_eq!(
-            fs::read(filename).unwrap(),
-            [
-                1_u64.to_le_bytes(),
-                42_u64.to_le_bytes(),
-                7_u64.to_le_bytes(),
-            ]
-            .concat()
-        );
-        cleanup_test_file(filename);
-    }
-
-    fn test_values(c: &dyn Cache, items: usize) {
-        for v in 0..items {
-            assert_eq!(v as u64, c.get(v));
-        }
-    }
-
-    fn new_hashmap(items: usize) -> HashMapCache {
+    /// A cache of `0..items`, each value its own key
+    fn filled(items: usize) -> HashMapCache {
         let mut cache = HashMapCache::with_capacity(items);
         for v in 0..items {
             cache.set(v, v as u64);
@@ -205,19 +114,61 @@ mod tests {
         cache
     }
 
-    fn cleanup_test_file<P: AsRef<Path>>(filename: P) {
-        if option_env!("KEEP_TEST_FILES").is_none() {
-            let _ = fs::remove_file(filename);
-        }
+    #[test]
+    fn hashmap() {
+        check_parallel(&HashMapCache::new());
     }
 
     #[test]
-    fn clone_test() {
+    fn clone_shares_data() {
         let mut cache = HashMapCache::new();
         let mut clone = cache.clone();
         cache.set(11, 42);
         clone.set(12, 43);
-        assert_eq!(cache.get(11), 42);
-        assert_eq!(clone.get(12), 43);
+        assert_eq!(clone.get(11), 42);
+        assert_eq!(cache.get(12), 43);
+    }
+
+    #[test]
+    fn saves_and_loads_files() {
+        let formats: [(&str, Save, Load); 3] = [
+            (
+                "json",
+                |c, p| c.save_as_json(p),
+                |p| HashMapCache::from_json(p),
+            ),
+            (
+                "pretty.json",
+                |c, p| c.save_as_pretty_json(p),
+                |p| HashMapCache::from_json(p),
+            ),
+            (
+                "bin",
+                |c, p| c.save_as_bin(p).map(drop),
+                |p| HashMapCache::from_bin(p),
+            ),
+        ];
+        for (ext, save, load) in formats {
+            let f = TestFile::new(&format!("hashmap.{ext}"));
+            for items in [100_000, 10] {
+                // the second, smaller save replaces all of the first
+                save(&filled(items), &f.0).unwrap();
+                let cache = load(&f.0).unwrap();
+                assert!((0..items).all(|v| cache.get(v) == v as u64), "{ext}");
+                assert_eq!(cache.get(items), 0, "{ext}");
+            }
+        }
+    }
+
+    #[test]
+    fn bin_is_bincode_legacy() {
+        let f = TestFile::new("hashmap.legacy.bin");
+        let bytes = [1_u64, 42, 7].map(u64::to_le_bytes).concat();
+        let mut cache = HashMapCache::with_capacity(1);
+        cache.set(42, 7);
+        cache.save_as_bin(&f.0).unwrap();
+        assert_eq!(fs::read(&f.0).unwrap(), bytes);
+        fs::write(&f.0, &bytes).unwrap();
+        assert_eq!(HashMapCache::from_bin(&f.0).unwrap().get(42), 7);
     }
 }
