@@ -224,6 +224,22 @@ Every run went at the volume's 125 MiB/s (131 MB/s), counting reads and writes t
 GB and wrote 56 GB, and its resolve read the 56 GB store and the rest of the PBF file, 31 GB. On a slow disk, the store that writes
 the fewest bytes loads fastest, and redb's load slows the least, as more of its time is spent encoding.
 
+### On a local NVMe disk
+
+An m8gd.4xlarge, the same as the host but with an 885 GB NVMe instance-store disk, with the PBF files and the stores on
+that disk:
+
+|                                                    | `PagedStore`   | `RedbStore`   | `DenseStore`  |
+|----------------------------------------------------|---------------:|--------------:|--------------:|
+| North America: bulk load                           | 17 s           | 101 s         | 141 s         |
+| The planet: bulk load                              | 69 s           | 349 s         | 119 s         |
+| The planet: resolve all ways, with none of the store in memory at first | 85 s: 27.5 s to read the store in, then 57 s | | |
+
+Importing the planet, from the PBF file to every way's node locations, takes 2.5 minutes. The paged load is no longer
+disk-bound: 59 s of its 69 s are spent in the store. Resolving after the preload goes as fast as on EBS, as the lookups
+run in memory, and redb's load, bound by its encoding, gains nothing. An instance-store disk is lost when the instance
+stops, so it suits a store that can be rebuilt, with the PBF file kept on EBS or S3 and copied to it first.
+
 ### What made it faster
 
 The first runs of these stores, with the [`osmpbf`](https://crates.io/crates/osmpbf) crate reading the PBF file:
