@@ -19,17 +19,17 @@ changing a type. They trade lookup speed, size, and the cost and safety of chang
 
 | Store         | Feature           | Kept in                                             | Disk size, North America / planet                                                                                                 | Lookups in random order | Commit 2,000 changes | After a crash                              |
 |---------------|-------------------|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|-------------------------|----------------------|--------------------------------------------|
-| `PagedStore`  | `paged` (default) | 4 KiB pages of delta-coded blocks, memory-mapped    | 13.7 GB / 55.6 GB: about 5 bytes per node                                                                                         | 26 M/s                  | 23 ms                | the last commit, also after a power loss   |
-| `RedbStore`   | `redb`            | the same blocks, 4 per value in a redb B-tree       | 20.7 GB / 75.7 GB: about 7 to 8 bytes per node                                                                                    | 9.1 M/s                 | 54 ms                | the last commit, also after a power loss   |
-| `DenseStore`  | `dense`           | 8 bytes per ID, at the ID's position, memory-mapped | 64.3 GB / 106.7 GB: a sparse file of 8 bytes × the highest node ID; its holes, the ID ranges with no nodes, may use no disk space | 1,245 M/s               | 14 ms                | the last commit, and some changes after it |
-| `MemoryStore` | `memory`          | a hash map in RAM, with no file                     | none; 20 to 39 bytes per node of RAM instead                                                                                      | 424 M/s                 | none needed          | nothing: it has no file                    |
+| `PagedStore`  | `paged` (default) | 4 KiB pages of delta-coded blocks, memory-mapped    | 13.7 GB / 55.6 GB: about 5 bytes per node                                                                                         | 24 M/s                  | 10 ms                | the last commit, also after a power loss   |
+| `RedbStore`   | `redb`            | the same blocks, 4 per value in a redb B-tree       | 20.7 GB / 75.7 GB: about 7 to 8 bytes per node                                                                                    | 8.0 M/s                 | 12 ms                | the last commit, also after a power loss   |
+| `DenseStore`  | `dense`           | 8 bytes per ID, at the ID's position, memory-mapped | 64.3 GB / 106.7 GB: a sparse file of 8 bytes × the highest node ID; its holes, the ID ranges with no nodes, may use no disk space | 1,131 M/s               | 3 ms                 | the last commit, and some changes after it |
+| `MemoryStore` | `memory`          | a hash map in RAM, with no file                     | none; 20 to 39 bytes per node of RAM instead                                                                                      | 358 M/s                 | none needed          | nothing: it has no file                    |
 
-The disk sizes are of whole extracts. The lookups and commits were measured with each store in memory, on North America's
-nodes up to ID 3 billion; the [performance](#performance) section has the details.
+The disk sizes are of whole extracts. The lookups and commits were measured on a local NVMe disk, with each store in
+memory, on North America's nodes up to ID 3 billion; the [performance](#performance) section has the details.
 
-* `PagedStore`, the default, is the smallest for large data and the fastest to load: the planet in 115 s, into 55.6 GB.
+* `PagedStore`, the default, is the smallest for large data and the fastest to load: the planet in 69 s, into 55.6 GB.
   Its lookups are fast as long as its file, about 5 bytes per node, fits in memory, which makes it the only store that
-  resolves the planet's ways on a 64 GiB host at memory speed: 55 s, once the store is in memory.
+  resolves the planet's ways on a 64 GiB host at memory speed: 57 s, once the store is in memory.
 * `DenseStore` has by far the fastest lookups, one memory read each, but its file is huge: 8 bytes for every ID up to
   the highest one stored, 107 GB for the planet. Extracts have nodes with IDs all the way up, so their files are as
   long; the parts with no nodes take no disk space on most file systems, but an extract still takes far more than in
@@ -162,169 +162,124 @@ fn way_geometry(store: &impl NodeRead, refs: &[u64]) -> Vec<Location> {
 What made the most difference for the planet, in the [performance](#performance) runs:
 
 * **Read the PBF file in big reads, with direct I/O** (`O_DIRECT` on Linux). Through the page cache, the OS reads ahead
-  only 128 KiB at a time by default, which on a network disk keeps too few reads in flight: one reader got 360 MB/s,
-  a third of what the disk gives (1.1 GB/s with direct reads of 8 MiB). Direct reads also keep the 95 GB file from
-  pushing the store out of memory.
+  only 128 KiB at a time by default, which on a network disk keeps too few reads in flight. Direct reads also keep the
+  95 GB file from pushing the store out of memory.
 * **Decode only what the store needs** from the PBF file: node IDs and locations, and way refs. The `osmpbf` crate
-  decodes all of each block, and took 93 s for the planet's nodes on 16 cores, against 61 s, at the disk's speed, for
-  `examples/pbf_eval`'s decoder of just those fields.
+  decodes all of each block; `examples/pbf_eval` has a decoder of just those fields.
 * **Push nodes in batches** of a million or so with `BulkLoad::push_batch`: the paged and redb stores check and encode
   big batches on all cores.
 * **Keep one reader per thread** (`NodeRead::reader`) for all of a thread's lookups: it keeps up to 4,096 decoded blocks
   (2 MiB), and making one has a cost.
 * **Read the store into memory before resolving**, if it fits but is not there, as after a restart: `NodeRead::preload`
-  reads it in big reads on all cores: 52 s for the planet's 55.6 GB `PagedStore`, at the disk's speed. Resolving the
-  planet's ways that way took 107 s in all, starting with none of the store in memory; reading it a page at a time on
-  first use, with the older reader and PBF decoder, took 29.5 minutes. Preload right after a load too: most of the
-  store was still in memory, and reading the rest took 5 s, but without it resolving took 142 s instead of 60 s.
-* **Give the memory back after the load.** glibc's allocator kept 12.7 GB that the PBF decoding had freed, with 75 MB
-  in use, which left too little memory for the planet's store; `malloc_trim(0)` returned it to the OS.
+  reads it in big reads on all cores, 27.5 s for the planet's 55.6 GB `PagedStore`. Preload right after a load too:
+  the OS may have dropped parts of the store from memory, and reading them back a page at a time, on first use, is much
+  slower.
+* **Give the memory back after the load.** glibc's allocator can keep much of the memory that the PBF decoding freed,
+  which leaves too little for the store; `malloc_trim(0)` returns it to the OS.
 
 ## Performance
 
 ![The four stores compared: size on disk, bulk load, resolving the nodes of all ways, lookups and commits](docs/perf.svg)
 
-Measured with `examples/pbf_eval/measure.sh` on an AWS m8g.4xlarge (16 Graviton4 cores, 64 GiB of memory), with the PBF
-files and the stores on a gp3 EBS volume provisioned for 16,000 IOPS and 1,000 MB/s, using District of Columbia from
-Geofabrik (2026-10-27), and North America and the planet cut from the planet of 2026-10-19. Whole extracts were read
-with direct I/O. Lookups and commits were measured with each store in memory: District of Columbia, and the nodes of
-North America up to ID 3 billion (14 GB as a dense store), each run twice, the better run shown.
+Measured with `examples/pbf_eval/measure.sh` on an AWS m8gd.4xlarge (16 Graviton4 cores, 64 GiB of memory), with the
+PBF files and the stores on its local 885 GB NVMe disk, using District of Columbia from Geofabrik (2026-10-27), and
+North America and the planet cut from the planet of 2026-10-19. Whole extracts were read with direct I/O. Lookups and
+commits were measured with each store in memory: District of Columbia, and the nodes of North America up to ID 3 billion
+(14 GB as a dense store), each run twice, the better run shown. An instance's local disk is lost when the instance
+stops, so it suits a store that can be rebuilt, with the PBF file kept elsewhere and copied to it first.
 
 ### The planet
 
 10.9 billion nodes, and 1.23 billion ways with 13.0 billion node refs:
 
-|                                                | `PagedStore`                                 | `RedbStore`          | `DenseStore`          |
-|------------------------------------------------|----------------------------------------------|----------------------|-----------------------|
-| On disk                                        | 55.6 GB, 5.08 bytes per node                 | 75.7 GB, 6.91        | 106.7 GB, 9.74        |
-| Bulk load from the PBF file                    | 115 s                                        | 326 s                | 164 s                 |
-| Resolve all ways, with none of the store in memory at first | 107 s: 52 s to read the store in, then 55 s | larger than memory | larger than memory |
-| Load, then resolve all ways, in one run        | 176 s: 116 s, then 5 s to read the rest of the store in, then 55 s | | |
+|                                                             | `PagedStore`                                 | `RedbStore`        | `DenseStore`       |
+|-------------------------------------------------------------|----------------------------------------------|--------------------|--------------------|
+| On disk                                                     | 55.6 GB, 5.08 bytes per node                 | 75.7 GB, 6.91      | 106.7 GB, 9.74     |
+| Bulk load from the PBF file                                 | 69 s                                         | 349 s              | 119 s              |
+| Resolve all ways, with none of the store in memory at first | 84 s: 27.5 s to read the store in, then 57 s | larger than memory | larger than memory |
 
-* **The paged store's planet load is disk-bound**: it reads 65 GB of PBF blobs and writes 56 GB on one volume that gives
-  1 GB/s for both. The dense store writes 107 GB, as the planet's node IDs leave few gaps.
-* **Only the paged store fits in the host's memory**, so only it resolves the planet's ways at memory speed: 237 million
-  refs a second once it is in memory, 47 ns per lookup on each of 16 threads. Importing the planet, from the PBF file to
-  every way's node locations, takes 3 minutes. Resolving with the 107 GB dense store went
-  at the disk's speed for random reads, about 1 million lookups a second, and as fast on 64 threads as on 16: the disk's
-  16,000 reads a second are the limit, not how many are in flight. An earlier redb run, before these changes, read 82%
-  of the planet file in 72 minutes before it was stopped.
-
-### On a gp3 volume at its default speed
-
-The same host, with the PBF files and the stores on a second gp3 volume at its default 3,000 IOPS and 125 MB/s:
-
-|                                                    | `PagedStore`   | `RedbStore`   | `DenseStore`  |
-|----------------------------------------------------|---------------:|--------------:|--------------:|
-| North America: bulk load                           | 221 s          | 278 s         | 854 s         |
-| The planet: bulk load                              | 932 s          | 1,094 s       | 1,321 s       |
-| The planet: resolve all ways, with none of the store in memory at first | 663 s | | |
-
-Every run went at the volume's 125 MiB/s (131 MB/s), counting reads and writes together: the paged planet load read 65
-GB and wrote 56 GB, and its resolve read the 56 GB store and the rest of the PBF file, 31 GB. On a slow disk, the store that writes
-the fewest bytes loads fastest, and redb's load slows the least, as more of its time is spent encoding.
-
-### On a local NVMe disk
-
-An m8gd.4xlarge, the same as the host but with an 885 GB NVMe instance-store disk, with the PBF files and the stores on
-that disk:
-
-|                                                    | `PagedStore`   | `RedbStore`   | `DenseStore`  |
-|----------------------------------------------------|---------------:|--------------:|--------------:|
-| North America: bulk load                           | 17 s           | 101 s         | 141 s         |
-| The planet: bulk load                              | 69 s           | 349 s         | 119 s         |
-| The planet: resolve all ways, with none of the store in memory at first | 85 s: 27.5 s to read the store in, then 57 s | | |
-
-Importing the planet, from the PBF file to every way's node locations, takes 2.5 minutes. The paged load is no longer
-disk-bound: 59 s of its 69 s are spent in the store. Resolving after the preload goes as fast as on EBS, as the lookups
-run in memory, and redb's load, bound by its encoding, gains nothing. An instance-store disk is lost when the instance
-stops, so it suits a store that can be rebuilt, with the PBF file kept on EBS or S3 and copied to it first.
+* **Importing the planet** with the paged store, from the PBF file to every way's node locations, takes 2.5 minutes.
+* **The paged load is bound by the store, not the disk**: 59 s of its 69 s are spent encoding and writing it. The
+  redb load is bound by its encoding, and the dense store writes the most, 107 GB, as the planet's node IDs leave few
+  gaps.
+* **Only the paged store fits in the host's memory**, so only it resolves the planet's ways at memory speed: 231
+  million refs a second once it is in memory, 49 ns per lookup on each of 16 threads.
 
 ### What made it faster
 
-The first runs of these stores, with the [`osmpbf`](https://crates.io/crates/osmpbf) crate reading the PBF file:
+Since the first runs of these stores, which read the PBF file with the [`osmpbf`](https://crates.io/crates/osmpbf)
+crate:
 
-|                                                  | Before     | Now        | What changed                                                         |
-|--------------------------------------------------|------------|------------|----------------------------------------------------------------------|
-| Planet, `PagedStore` bulk load                   | 314 s      | 115 s      | the PBF file read with direct I/O, and decoded for just the needed fields |
-| Planet, resolve all ways with `PagedStore`       | 29.5 min   | 107 s      | the store read into memory first, the PBF file kept out of it, and a bigger reader cache |
-| Planet, `RedbStore` bulk load                    | 489 s      | 326 s      | groups encoded on all cores                                          |
-| North America nodes to ID 3 B, `PagedStore` bulk load | 8.9 s | 4.9 s      | the decoder, and checks and block boundaries on all cores            |
-| The same, resolve all ways with `PagedStore`     | 28.8 s     | 10.4 s     | the decoder, and a reader cache of 4,096 blocks instead of 4         |
-| The same, resolve all ways with `RedbStore`      | 52.6 s     | 16.3 s     | the same                                                             |
-| The same, `DenseStore` bulk load                 | 31.4 s     | 23.5 s     | the decoder, values written a million IDs at a time, and checkpoints kept on another thread |
+* the PBF file is read with direct I/O, and decoded for just the needed fields, decompressed with zlib-rs;
+* the store is read into memory before resolving, and the PBF file kept out of the page cache;
+* a reader keeps 4,096 decoded blocks instead of 4, direct-mapped and allocated zeroed, so a new reader costs next to
+  nothing;
+* the paged and redb stores check and encode batches on all cores, and keep their load checkpoints on another thread;
+* the dense store writes values a million IDs at a time, writes changes to the file instead of through its memory map,
+  and leaves the gaps between IDs as holes.
 
 Some findings along the way:
 
-* **Reading through the page cache was the first limit.** The data volume's 128 KiB of read-ahead kept one reader to
-  360 MB/s; direct reads of 8 MiB got 1.05 GB/s. Asking the OS to read ahead (`POSIX_FADV_WILLNEED`) did not help.
-* **Decoding the PBF file**: the planet's nodes took 93 s with `osmpbf`, and 61 s, as fast as the disk read them, with a
-  decoder of just node IDs, locations and way refs. Decompressing with zlib-rs was 12% faster than with zlib-ng, from
-  memory.
-* **The reader cache**, measured with callgrind on District of Columbia: resolving its ways took 2.36 billion
-  instructions with the paged store's old cache of 4 blocks, and 0.86 billion with 4,096; 4.29 and 1.18 billion with
-  redb. The cache is direct-mapped and allocated zeroed, so a new reader costs next to nothing.
 * **Writing a memory-mapped file that the page cache holds in large folios** (XFS does, for big writes) dirties whole
-  folios, so a dense store commit after a bulk load wrote far more than it changed: 177 ms instead of 14 ms. The dense
-  store now writes changes to the file, and maps it only to read.
+  folios, so a dense store commit after a bulk load wrote far more than it changed. The dense store now writes changes
+  to the file, and maps it only to read.
 * **Writing past the end of a file on XFS** has it keep blocks after it, which take disk space once the file grows past
   them: the dense store grows its file first, as it did through the memory map.
-* **Not worth it**: groups of 8 or 16 blocks per redb value made the file 4 to 6% smaller and loads 70% slower;
-  4 or 16 times as many groups per redb transaction loaded no faster;
-  compacting the redb file after a load saved nothing and took 135 s for North America; entropy coding (rANS) would make
-  the paged store about 8% smaller and its lookups slower.
+* **Not worth it**: more blocks per redb value made the file a little smaller and loads much slower; more groups per
+  redb transaction loaded no faster; compacting the redb file after a load saved nothing; entropy coding (rANS) would
+  make the paged store a little smaller and its lookups slower.
 
 ### Async
 
-An async API would not make these stores faster. Loading is limited by the disk's throughput, and the checkpoints are
-already made durable on another thread. With the store in memory, a lookup takes 20 to 50 ns, much less than an async
-task switch. With a store larger than memory, the disk's random reads are the limit: 64 threads waiting on them
-resolved no faster than 16. It would let an async program look up nodes without blocking its runtime's threads on the
-disk, as a reader with positioned reads could, trying the page cache first (`preadv2` with `RWF_NOWAIT`), instead of a
-memory map; that is worth adding when such a program needs it.
+An async API would not make these stores faster. Loading is limited by encoding and the disk, and the checkpoints are
+already made durable on another thread. With the store in memory, a lookup takes tens of nanoseconds, much less than an
+async task switch. With a store larger than memory, the disk's random reads are the limit. It would let an async
+program look up nodes without blocking its runtime's threads on the disk, as a reader with positioned reads could,
+trying the page cache first (`preadv2` with `RWF_NOWAIT`), instead of a memory map; that is worth adding when such a
+program needs it.
 
 Whole extracts:
 
 |  | Nodes | On disk | Bytes per node | Bulk load | Load peak memory | Resolve all ways |
 |---|---:|---:|---:|---:|---:|---:|
-| District of Columbia, `PagedStore` | 1,958,977 | 10 MB | 4.90 | 59 ms | 0.1 GB |  |
-| District of Columbia, `RedbStore` | 1,958,977 | 19 MB | 9.51 | 154 ms | 0.1 GB |  |
-| District of Columbia, `DenseStore` | 1,958,977 | 167 MB | 85.35 | 999 ms | 0.2 GB |  |
-| District of Columbia, `MemoryStore` | 1,958,977 | none (71 MB in memory) | 36.40 in memory | 96 ms | 0.1 GB |  |
-| North America, `PagedStore` | 2,631,813,110 | 13.7 GB | 5.20 | 26.8 s | 14.0 GB |  |
-| North America, `RedbStore` | 2,631,813,110 | 20.7 GB | 7.88 | 105 s | 18.5 GB |  |
-| North America, `DenseStore` | 2,631,813,110 | 64.3 GB | 24.43 | 160 s | – |  |
-| Planet, `PagedStore` | 10,949,467,954 | 55.6 GB | 5.08 | 115 s | 62.9 GB | 107 s, 122.1 M refs/s (52.1 s of it reading the store into memory) |
-| Planet, `RedbStore` | 10,949,467,954 | 75.7 GB | 6.91 | 326 s | 34.1 GB |  |
-| Planet, `DenseStore` | 10,949,467,954 | 106.7 GB | 9.74 | 164 s | 15.3 GB |  |
+| District of Columbia, `PagedStore` | 1,958,977 | 10 MB | 4.90 | 42 ms | 0.1 GB |  |
+| District of Columbia, `RedbStore` | 1,958,977 | 19 MB | 9.51 | 146 ms | 0.1 GB |  |
+| District of Columbia, `DenseStore` | 1,958,977 | 167 MB | 85.35 | 871 ms | 0.2 GB |  |
+| District of Columbia, `MemoryStore` | 1,958,977 | none (71 MB in memory) | 36.40 in memory | 102 ms | 0.1 GB |  |
+| North America, `PagedStore` | 2,631,813,110 | 13.7 GB | 5.20 | 17.2 s | 0.6 GB |  |
+| North America, `RedbStore` | 2,631,813,110 | 20.7 GB | 7.88 | 101 s | 18.5 GB |  |
+| North America, `DenseStore` | 2,631,813,110 | 64.3 GB | 24.43 | 141 s | 0.7 GB |  |
+| Planet, `PagedStore` | 10,949,467,954 | 55.6 GB | 5.08 | 68.7 s | 15.5 GB | 84.1 s, 155.1 M refs/s (27.5 s of it reading the store into memory) |
+| Planet, `RedbStore` | 10,949,467,954 | 75.7 GB | 6.91 | 349 s | 33.7 GB |  |
+| Planet, `DenseStore` | 10,949,467,954 | 106.7 GB | 9.74 | 119 s | 15.3 GB |  |
 
 District of Columbia: 1,958,977 nodes, 2,507,044 way node refs. The better of two runs, and how far apart they were:
 
 |  | `PagedStore` | `RedbStore` | `DenseStore` | `MemoryStore` |
 |---|---:|---:|---:|---:|
-| Bulk load | 59 ms, 33.2 M/s (±5%) | 154 ms, 12.7 M/s (±82%) | 999 ms, 2.0 M/s (±9%) | 96 ms, 20.4 M/s (±3%) |
-| Resolve all ways | 16 ms, 156.7 M/s (±12%) | 22 ms, 114.0 M/s (±18%) | 17 ms, 147.5 M/s (±0%) | 18 ms, 139.3 M/s (±0%) |
-| Verify every node | 46 ms, 43 M/s (±4%) | 56 ms, 35 M/s (±4%) | 42 ms, 47 M/s (±21%) | 132 ms, 15 M/s (±1%) |
-| Lookups in way order, 16 threads | 535.5 M/s (±0%) | 234.3 M/s (±6%) | 2464.2 M/s (±11%) | 811.1 M/s (±2%) |
-| Lookups in way order, 1 thread | 19 ns (±0%) | 33 ns (±6%) | 11 ns (±0%) | 15 ns (±7%) |
-| Lookups in random order, 16 threads | 56.3 M/s (±0%) | 20.4 M/s (±0%) | 1285.3 M/s (±4%) | 808.6 M/s (±3%) |
-| Lookups in random order, 1 thread | 242 ns (±0%) | 440 ns (±2%) | 8 ns (±12%) | 16 ns (±0%) |
-| Commit 2,000 changes, median | 22 ms (±0%) | 15 ms (±0%) | 20 ms (±1%) | 0 ms (±0%) |
-| Commit 2,000 changes, 99th percentile | 33 ms (±1%) | 32 ms (±0%) | 34 ms (±5%) | 0 ms (±0%) |
+| Bulk load | 42 ms, 46.6 M/s (±31%) | 146 ms, 13.4 M/s (±6%) | 871 ms, 2.2 M/s (±1%) | 102 ms, 19.2 M/s (±6%) |
+| Resolve all ways | 16 ms, 156.7 M/s (±12%) | 23 ms, 109.0 M/s (±4%) | 15 ms, 167.1 M/s (±7%) | 18 ms, 139.3 M/s (±6%) |
+| Verify every node | 44 ms, 45 M/s (±9%) | 58 ms, 34 M/s (±3%) | 44 ms, 45 M/s (±14%) | 137 ms, 14 M/s (±4%) |
+| Lookups in way order, 16 threads | 583.3 M/s (±16%) | 224.2 M/s (±1%) | 2186.9 M/s (±8%) | 757.6 M/s (±2%) |
+| Lookups in way order, 1 thread | 20 ns (±10%) | 39 ns (±0%) | 12 ns (±0%) | 17 ns (±6%) |
+| Lookups in random order, 16 threads | 53.8 M/s (±4%) | 18.2 M/s (±1%) | 1372.8 M/s (±1%) | 741.0 M/s (±3%) |
+| Lookups in random order, 1 thread | 256 ns (±18%) | 528 ns (±11%) | 10 ns (±0%) | 17 ns (±6%) |
+| Commit 2,000 changes, median | 9 ms (±3%) | 4 ms (±0%) | 2 ms (±0%) | 0 ms (±0%) |
+| Commit 2,000 changes, 99th percentile | 13 ms (±5%) | 6 ms (±3%) | 4 ms (±15%) | 0 ms (±0%) |
 
 North America, the nodes up to ID 3,000,000,000: 618,849,582 nodes, 706,551,105 way node refs. The better of two runs, and how far apart they were:
 
 |  | `PagedStore` | `RedbStore` | `DenseStore` | `MemoryStore` |
 |---|---:|---:|---:|---:|
-| Bulk load | 4.9 s, 127.6 M/s (±1%) | 26.8 s, 23.1 M/s (±8%) | 23.5 s, 26.3 M/s (±20%) | 55.8 s, 11.1 M/s (±0%) |
-| Resolve all ways | 10.4 s, 67.6 M/s (±0%) | 16.3 s, 43.3 M/s (±3%) | 8.3 s, 84.9 M/s (±530%) | 10.5 s, 67.2 M/s (±0%) |
-| Verify every node | 8.4 s, 74 M/s (±1%) | 12.7 s, 49 M/s (±1%) | 4.2 s, 148 M/s (±0%) | 74.6 s, 8 M/s (±1%) |
-| Lookups in way order, 16 threads | 322.1 M/s (±1%) | 97.2 M/s (±3%) | 1936.7 M/s (±5%) | 426.8 M/s (±2%) |
-| Lookups in way order, 1 thread | 29 ns (±0%) | 58 ns (±0%) | 11 ns (±0%) | 39 ns (±5%) |
-| Lookups in random order, 16 threads | 26.4 M/s (±0%) | 9.1 M/s (±1%) | 1244.9 M/s (±0%) | 423.8 M/s (±5%) |
-| Lookups in random order, 1 thread | 649 ns (±4%) | 1503 ns (±1%) | 13 ns (±0%) | 42 ns (±2%) |
-| Commit 2,000 changes, median | 23 ms (±0%) | 54 ms (±0%) | 14 ms (±1%) | 0 ms (±0%) |
-| Commit 2,000 changes, 99th percentile | 38 ms (±4%) | 75 ms (±2%) | 32 ms (±2%) | 0 ms (±0%) |
+| Bulk load | 4.9 s, 126.0 M/s (±12%) | 27.1 s, 22.8 M/s (±11%) | 22.6 s, 27.4 M/s (±0%) | 61.5 s, 10.1 M/s (±3%) |
+| Resolve all ways | 10.2 s, 69.4 M/s (±46%) | 17.5 s, 40.3 M/s (±1%) | 7.8 s, 90.9 M/s (±0%) | 10.1 s, 70.2 M/s (±1%) |
+| Verify every node | 8.4 s, 74 M/s (±0%) | 12.9 s, 48 M/s (±1%) | 4.2 s, 148 M/s (±0%) | 78.2 s, 8 M/s (±0%) |
+| Lookups in way order, 16 threads | 301.6 M/s (±2%) | 84.8 M/s (±7%) | 1867.0 M/s (±2%) | 369.1 M/s (±9%) |
+| Lookups in way order, 1 thread | 31 ns (±0%) | 63 ns (±0%) | 12 ns (±0%) | 48 ns (±6%) |
+| Lookups in random order, 16 threads | 24.2 M/s (±1%) | 8.0 M/s (±1%) | 1131.3 M/s (±2%) | 357.7 M/s (±4%) |
+| Lookups in random order, 1 thread | 805 ns (±1%) | 1878 ns (±2%) | 16 ns (±0%) | 47 ns (±4%) |
+| Commit 2,000 changes, median | 10 ms (±5%) | 12 ms (±3%) | 3 ms (±4%) | 0 ms (±0%) |
+| Commit 2,000 changes, 99th percentile | 15 ms (±57%) | 16 ms (±86%) | 4 ms (±11%) | 0 ms (±0%) |
 
 "Load peak memory" counts the pages of a memory-mapped file that were in memory; the OS drops them when it needs room.
 

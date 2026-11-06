@@ -10,6 +10,13 @@ keywords = ["osm", "cache"]
 categories = ["caching", "science::geo"]
 rust-version = "1.90"
 
+[package.metadata.docs.rs]
+all-features = true
+
+[[example]]
+name = "pbf_eval"
+required-features = ["paged"]
+
 [features]
 default = ["paged"]
 # PagedStore: compressed pages in one memory-mapped file; the smallest and fastest store for large data
@@ -32,17 +39,10 @@ thiserror = "2"
 anyhow = "1"
 flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
 libc = "0.2"
-zlib-rs = "0.6"
 osmpbf = { version = "0.3", default-features = false, features = ["zlib-ng"] } # Used in a doc test and examples
 rand = "0.10"
 rayon = "1"
-
-[[example]]
-name = "pbf_eval"
-required-features = ["paged"]
-
-[package.metadata.docs.rs]
-all-features = true
+zlib-rs = "0.6"
 
 [lints]
 workspace = true
