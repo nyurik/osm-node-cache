@@ -210,6 +210,20 @@ North America up to ID 3 billion (14 GB as a dense store), each run twice, the b
   16,000 reads a second are the limit, not how many are in flight. An earlier redb run, before these changes, read 82%
   of the planet file in 72 minutes before it was stopped.
 
+### On a gp3 volume at its default speed
+
+The same host, with the PBF files and the stores on a second gp3 volume at its default 3,000 IOPS and 125 MB/s:
+
+|                                                    | `PagedStore`   | `RedbStore`   | `DenseStore`  |
+|----------------------------------------------------|---------------:|--------------:|--------------:|
+| North America: bulk load                           | 221 s          | 278 s         | 854 s         |
+| The planet: bulk load                              | 932 s          | 1,094 s       | 1,321 s       |
+| The planet: resolve all ways, with none of the store in memory at first | 663 s | | |
+
+Every run went at the volume's 125 MiB/s (131 MB/s), counting reads and writes together: the paged planet load read 65
+GB and wrote 56 GB, and its resolve read the 56 GB store and the rest of the PBF file, 31 GB. On a slow disk, the store that writes
+the fewest bytes loads fastest, and redb's load slows the least, as more of its time is spent encoding.
+
 ### What made it faster
 
 The first runs of these stores, with the [`osmpbf`](https://crates.io/crates/osmpbf) crate reading the PBF file:
