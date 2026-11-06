@@ -11,11 +11,11 @@
   .line { stroke: #8a897f; stroke-width: 1.5; fill: none; }
   .thin { stroke: #c3c2b7; stroke-width: 1; fill: none; stroke-dasharray: 3 3; }
   .tip { fill: #8a897f; }
-  .native { fill: #2a78d6; }
+  .paged { fill: #2a78d6; }
   .redb { fill: #eb6834; }
-  .native-line { stroke: #2a78d6; stroke-width: 2; fill: none; }
+  .paged-line { stroke: #2a78d6; stroke-width: 2; fill: none; }
   .redb-line { stroke: #eb6834; stroke-width: 2; fill: none; }
-  .native-box { fill: #2a78d6; fill-opacity: 0.12; stroke: #2a78d6; stroke-width: 1.5; }
+  .paged-box { fill: #2a78d6; fill-opacity: 0.12; stroke: #2a78d6; stroke-width: 1.5; }
   .redb-box { fill: #eb6834; fill-opacity: 0.12; stroke: #eb6834; stroke-width: 1.5; }
   .dense { fill: #1baf7a; }
   .memory { fill: #eda100; }
@@ -32,11 +32,11 @@
     .muted, .small { fill: #c3c2b7; }
     .line { stroke: #8a897f; }
     .thin { stroke: #52514e; }
-    .native { fill: #3987e5; }
+    .paged { fill: #3987e5; }
     .redb { fill: #d95926; }
-    .native-line { stroke: #3987e5; }
+    .paged-line { stroke: #3987e5; }
     .redb-line { stroke: #d95926; }
-    .native-box { fill: #3987e5; stroke: #3987e5; }
+    .paged-box { fill: #3987e5; stroke: #3987e5; }
     .redb-box { fill: #d95926; stroke: #d95926; }
     .dense { fill: #199e70; }
     .memory { fill: #c98500; }
@@ -56,7 +56,7 @@
 <text class="title" x="24" y="34">How each store looks up a node, and keeps a change</text>
 
 <!-- column headings -->
-<rect class="native" x="24" y="56" width="12" height="12" rx="3"/>
+<rect class="paged" x="24" y="56" width="12" height="12" rx="3"/>
 <text class="head" x="44" y="67">PagedStore</text>
 <text class="muted" x="44" y="85">a file of 4 KiB pages, read through a memory map</text>
 <rect class="redb" x="504" y="56" width="12" height="12" rx="3"/>
@@ -75,7 +75,7 @@
 <text class="muted" x="742" y="161">÷ 256 = group of 4 blocks</text>
 
 <!-- row 2: directory / pending -->
-<rect class="native-box" x="104" y="176" width="292" height="44" rx="6"/>
+<rect class="paged-box" x="104" y="176" width="292" height="44" rx="6"/>
 <text class="ink" x="250" y="195" text-anchor="middle">directory in RAM</text>
 <text class="small" x="250" y="211" text-anchor="middle">first block of each page → page; kept in &lt;file&gt;.dir</text>
 <rect class="redb-box" x="584" y="176" width="292" height="44" rx="6"/>
@@ -88,13 +88,13 @@
 <line class="line" x1="730" y1="220" x2="730" y2="258" marker-end="url(#arrow)"/>
 <text class="muted" x="742" y="244">else get(group)</text>
 
-<!-- row 3 native: the file as a strip of pages -->
+<!-- row 3 paged: the file as a strip of pages -->
 <text class="small" x="64" y="272">data file: pages in ID order, split pages added at the end</text>
 <rect class="seg" x="64" y="278" width="36" height="28"/><text class="small" x="82" y="296" text-anchor="middle">hdr</text>
 <rect class="seg" x="100" y="278" width="36" height="28"/><text class="small" x="118" y="296" text-anchor="middle">1</text>
 <rect class="seg" x="136" y="278" width="36" height="28"/><text class="small" x="154" y="296" text-anchor="middle">2</text>
 <rect class="seg" x="172" y="278" width="36" height="28"/><text class="small" x="190" y="296" text-anchor="middle">3</text>
-<rect class="native-box" x="208" y="278" width="36" height="28"/><text class="ink" x="226" y="297" text-anchor="middle">4</text>
+<rect class="paged-box" x="208" y="278" width="36" height="28"/><text class="ink" x="226" y="297" text-anchor="middle">4</text>
 <rect class="seg" x="244" y="278" width="36" height="28"/><text class="small" x="262" y="296" text-anchor="middle">5</text>
 <rect class="seg" x="280" y="278" width="36" height="28"/><text class="small" x="298" y="296" text-anchor="middle">6</text>
 <rect class="seg" x="316" y="278" width="36" height="28"/><text class="small" x="334" y="296" text-anchor="middle">…</text>
@@ -106,7 +106,7 @@
 <text class="small" x="44" y="362">page 4: a table of its blocks, then the blocks; 3% left free</text>
 <rect class="seg" x="44" y="368" width="64" height="34"/><text class="small" x="76" y="383" text-anchor="middle">header</text><text class="small" x="76" y="396" text-anchor="middle">+ CRC</text>
 <rect class="seg" x="108" y="368" width="88" height="34"/><text class="small" x="152" y="389" text-anchor="middle">block table</text>
-<rect class="native-box" x="196" y="368" width="64" height="34"/><text class="small" x="228" y="389" text-anchor="middle">block</text>
+<rect class="paged-box" x="196" y="368" width="64" height="34"/><text class="small" x="228" y="389" text-anchor="middle">block</text>
 <rect class="seg" x="260" y="368" width="64" height="34"/><text class="small" x="292" y="389" text-anchor="middle">block</text>
 <rect class="seg" x="324" y="368" width="88" height="34"/><text class="small" x="368" y="389" text-anchor="middle">… ~60 more</text>
 <rect class="seg" x="412" y="368" width="44" height="34" stroke-dasharray="3 3"/><text class="small" x="434" y="389" text-anchor="middle">3% free</text>
@@ -138,7 +138,7 @@
 <rect class="seg" x="825" y="396" width="51" height="34"/><text class="small" x="850" y="417" text-anchor="middle">block</text>
 
 <!-- row 4: both decode into the reader -->
-<line class="native-line" x1="228" y1="402" x2="228" y2="466" marker-end="url(#arrow)"/>
+<line class="paged-line" x1="228" y1="402" x2="228" y2="466" marker-end="url(#arrow)"/>
 <line class="redb-line" x1="697" y1="430" x2="697" y2="466" marker-end="url(#arrow)"/>
 <rect class="box" x="104" y="468" width="772" height="44" rx="6"/>
 <text class="ink" x="490" y="487" text-anchor="middle">decode the block: present IDs from its mask, then each location as a step from the last</text>
