@@ -10,7 +10,8 @@ name = "bench"
 harness = false
 
 [dependencies]
-osmnodecache = { path = ".." }
+osmnodecache = { path = "..", features = ["paged", "redb", "dense", "memory"] }
 
 [dev-dependencies]
 criterion = "0.8"
+rand = "0.10"

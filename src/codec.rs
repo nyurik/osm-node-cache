@@ -6,17 +6,20 @@
 //! from the previous one: bit-packed, as varints, or as plain integers, whichever is smallest.
 //!
 //! A page is a run of blocks in ID order, starting with a table of its blocks, so a lookup goes
-//! straight to its block.
+//! straight to its block. Its header has a CRC-32 of the page, to find damaged pages.
 
 pub(crate) const BLOCK_SHIFT: u32 = 6;
 pub(crate) const BLOCK_LEN: usize = 1 << BLOCK_SHIFT;
 /// Blocks a reader keeps decoded
-const READER_SLOTS: usize = 4;
+/// Blocks a reader keeps decoded: 2 MiB, which a way's nodes seldom go beyond
+const READER_SLOTS: usize = 4096;
 
-/// first block (u64), bytes used (u16), block count (u16), base location (2 × i32)
-pub(crate) const PAGE_HEADER: usize = 20;
-/// per block: its number above the page's first block (u16), and where it ends (u16)
-pub(crate) const ENTRY: usize = 4;
+/// first block (u64), bytes used (u16), block count (u16), base location (2 × i32), CRC-32 of the
+/// page with this field zero (u32)
+pub(crate) const PAGE_HEADER: usize = 24;
+const CRC_AT: usize = 20;
+/// per block: its number above the page's first block (u32), and where it ends (u16)
+pub(crate) const ENTRY: usize = 6;
 
 pub(crate) const MASK_FULL: u8 = 0;
 pub(crate) const MASK_RUN: u8 = 1;
@@ -27,6 +30,7 @@ pub(crate) const CODEC_PACKED: u8 = 2;
 
 /// A node location in 1e-7 degrees, as stored in OSM PBF files.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(C)]
 pub struct Location {
     pub lat: i32,
     pub lon: i32,
@@ -42,6 +46,13 @@ impl Location {
     #[must_use]
     pub fn new(lat: i32, lon: i32) -> Self {
         Self { lat, lon }
+    }
+
+    /// Whether the location is within ±90° latitude and ±180° longitude, as stores require.
+    #[must_use]
+    pub fn is_valid(self) -> bool {
+        (-900_000_000..=900_000_000).contains(&self.lat)
+            && (-1_800_000_000..=1_800_000_000).contains(&self.lon)
     }
 
     /// Rounds degrees to the nearest 1e-7 degree.
@@ -150,16 +161,35 @@ pub(crate) fn set_page_header(page: &mut [u8], first_block: u64, n_blocks: usize
 
 /// Block `i`'s number above its page's first block, and where it ends
 #[inline]
-pub(crate) fn entry(page: &[u8], i: usize) -> (u16, usize) {
+pub(crate) fn entry(page: &[u8], i: usize) -> (u32, usize) {
     let at = PAGE_HEADER + ENTRY * i;
-    (u16_at(page, at), usize::from(u16_at(page, at + 2)))
+    (u32_at(page, at), usize::from(u16_at(page, at + 4)))
 }
 
-pub(crate) fn set_entry(page: &mut [u8], i: usize, rel: u16, end: usize) {
+pub(crate) fn set_entry(page: &mut [u8], i: usize, rel: u32, end: usize) {
     let at = PAGE_HEADER + ENTRY * i;
     let end = u16::try_from(end).expect("page too large");
-    page[at..at + 2].copy_from_slice(&rel.to_le_bytes());
-    page[at + 2..at + 4].copy_from_slice(&end.to_le_bytes());
+    page[at..at + 4].copy_from_slice(&rel.to_le_bytes());
+    page[at + 4..at + 6].copy_from_slice(&end.to_le_bytes());
+}
+
+/// The CRC-32 a page stores, and the one its bytes have.
+#[cfg(feature = "paged")]
+pub(crate) fn page_crcs(page: &[u8]) -> (u32, u32) {
+    let used = usize::from(u16_at(page, 8)).clamp(PAGE_HEADER, page.len());
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&page[..CRC_AT]);
+    hasher.update(&[0; 4]);
+    hasher.update(&page[CRC_AT + 4..used]);
+    (u32_at(page, CRC_AT), hasher.finalize())
+}
+
+/// Stores the CRC-32 of an encoded page in its header.
+#[cfg(feature = "paged")]
+pub(crate) fn set_page_crc(page: &mut [u8]) {
+    page[CRC_AT..CRC_AT + 4].fill(0);
+    let crc = crc32fast::hash(page);
+    page[CRC_AT..CRC_AT + 4].copy_from_slice(&crc.to_le_bytes());
 }
 
 pub(crate) fn zigzag(v: i64) -> u64 {
@@ -267,8 +297,43 @@ pub(crate) fn as_run(mask: u64) -> Option<(u8, u8)> {
     (mask >> start >> count == 0 && count < 64).then_some((start as u8, count as u8))
 }
 
-#[expect(clippy::cast_possible_truncation)]
+/// Encodes a block whose page's base location is `base`.
 pub(crate) fn encode_block(out: &mut Vec<u8>, b: &Block, base: Location) {
+    encode_parts(out, b, Some(step(base, b.locs[0])));
+}
+
+/// Encodes a block without its first location, which is a step from its page's base: the kind and
+/// mask, then the steps. Returns where the steps start, for [`pack_block`]. Encoding blocks this
+/// way needs no page, so it can run on many threads.
+pub(crate) fn encode_detached(out: &mut Vec<u8>, b: &Block) -> usize {
+    encode_parts(out, b, None)
+}
+
+/// Appends a block from [`encode_detached`] to a page whose base location is `base`.
+pub(crate) fn pack_block(
+    out: &mut Vec<u8>,
+    detached: &[u8],
+    steps: usize,
+    first: Location,
+    base: Location,
+) {
+    out.extend_from_slice(&detached[..steps]);
+    let (dlat, dlon) = step(base, first);
+    write_varint(out, dlat);
+    write_varint(out, dlon);
+    out.extend_from_slice(&detached[steps..]);
+}
+
+/// The size of a block from [`encode_detached`] in a page whose base location is `base`.
+pub(crate) fn packed_len(detached_len: usize, first: Location, base: Location) -> usize {
+    let (dlat, dlon) = step(base, first);
+    detached_len + varint_len(dlat) + varint_len(dlon)
+}
+
+/// Encodes the kind and mask, the first location's step if given, and the other steps. Returns
+/// where the step of the first location is, or would be.
+#[expect(clippy::cast_possible_truncation)]
+fn encode_parts(out: &mut Vec<u8>, b: &Block, first: Option<(u64, u64)>) -> usize {
     let mut buf = [(0, 0); BLOCK_LEN - 1];
     let steps = &mut buf[..b.locs.len() - 1];
     for (s, w) in steps.iter_mut().zip(b.locs.windows(2)) {
@@ -291,6 +356,7 @@ pub(crate) fn encode_block(out: &mut Vec<u8>, b: &Block, base: Location) {
         CODEC_PACKED
     };
 
+    let start = out.len();
     let kind = codec << 2;
     if b.mask == u64::MAX {
         out.push(MASK_FULL | kind);
@@ -300,9 +366,11 @@ pub(crate) fn encode_block(out: &mut Vec<u8>, b: &Block, base: Location) {
         out.push(MASK_BITS | kind);
         out.extend_from_slice(&b.mask.to_le_bytes());
     }
-    let (dlat, dlon) = step(base, b.locs[0]);
-    write_varint(out, dlat);
-    write_varint(out, dlon);
+    let head = out.len() - start;
+    if let Some((dlat, dlon)) = first {
+        write_varint(out, dlat);
+        write_varint(out, dlon);
+    }
     match codec {
         CODEC_RAW => {
             for l in &b.locs[1..] {
@@ -332,6 +400,7 @@ pub(crate) fn encode_block(out: &mut Vec<u8>, b: &Block, base: Location) {
             w.finish();
         }
     }
+    head
 }
 
 /// A block's header, read from its page.
@@ -349,12 +418,12 @@ pub(crate) struct Head {
 #[inline]
 pub(crate) fn find_in_page(page: &[u8], num: u64) -> Option<Head> {
     let h = page_header(page);
-    let rel = u16::try_from(num.checked_sub(h.first_block)?).ok()?;
+    let rel = u32::try_from(num.checked_sub(h.first_block)?).ok()?;
     let table = page[PAGE_HEADER..PAGE_HEADER + ENTRY * h.n_blocks]
         .as_chunks::<ENTRY>()
         .0;
     let i = table
-        .binary_search_by_key(&rel, |e| u16::from_le_bytes([e[0], e[1]]))
+        .binary_search_by_key(&rel, |e| u32::from_le_bytes([e[0], e[1], e[2], e[3]]))
         .ok()?;
     Some(read_block(page, &h, i))
 }
@@ -463,63 +532,58 @@ pub(crate) fn decode_page(page: &[u8]) -> (u64, Vec<Block>) {
     (h.first_block, blocks)
 }
 
-/// Encodes a page; its blocks must be within `u16::MAX` of `first_block`.
+/// Encodes a page; its blocks must be within `u32::MAX` of `first_block`, as node IDs up to
+/// [`crate::MAX_NODE_ID`] are.
 pub(crate) fn encode_page(first_block: u64, blocks: &[Block], out: &mut Vec<u8>) {
     out.clear();
     out.resize(PAGE_HEADER + ENTRY * blocks.len(), 0);
     let base = blocks.first().map_or_else(Location::default, |b| b.locs[0]);
     for (i, b) in blocks.iter().enumerate() {
         encode_block(out, b, base);
-        let rel = u16::try_from(b.num - first_block).expect("block too far above its page's first");
+        let rel = u32::try_from(b.num - first_block).expect("block too far above its page's first");
         let end = out.len();
         set_entry(out, i, rel, end);
     }
     set_page_header(out, first_block, blocks.len(), base);
 }
 
-/// Where to split blocks that overflow a page into two halves of about equal size
-pub(crate) fn split_point(blocks: &[Block]) -> usize {
-    let mut tmp = Vec::new();
-    let sizes: Vec<usize> = blocks
-        .iter()
-        .map(|b| {
-            tmp.clear();
-            encode_block(&mut tmp, b, blocks[0].locs[0]);
-            tmp.len() + ENTRY
-        })
-        .collect();
-    let half = sizes.iter().sum::<usize>() / 2;
-    let mut sum = 0;
-    let k = sizes.iter().position(|&s| {
-        sum += s;
-        sum >= half
-    });
-    k.unwrap_or(0).clamp(1, blocks.len() - 1)
+/// Reads locations for one thread, keeping blocks it read decoded, as a way's nodes are mostly in a
+/// few blocks: block `num` in slot `num % READER_SLOTS`, so finding it is one comparison.
+pub(crate) struct Slots {
+    /// each slot's block number plus 1, or 0 for none
+    nums: Box<[u64]>,
+    masks: Box<[u64]>,
+    locs: Box<[[Location; BLOCK_LEN]]>,
 }
 
-/// Reads locations for one thread, keeping the last few blocks it read decoded, as a way's nodes
-/// are mostly in the same few blocks.
-pub(crate) struct Slots {
-    nums: [u64; READER_SLOTS],
-    masks: [u64; READER_SLOTS],
-    locs: [[Location; BLOCK_LEN]; READER_SLOTS],
-    next: usize,
+/// `n` zeroed values, allocated so that the OS gives memory only to the parts that are used
+fn zeroed<T: Copy>(n: usize) -> Box<[T]> {
+    let layout = std::alloc::Layout::array::<T>(n).unwrap();
+    assert!(layout.size() > 0);
+    // SAFETY: the layout is not empty; only used for integers and `Location`s, which are valid
+    // all zero, and the slice is freed as a `Box<[T]>` of the same layout
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout).cast::<T>();
+        if p.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        Box::from_raw(std::ptr::slice_from_raw_parts_mut(p, n))
+    }
 }
 
 impl Default for Slots {
     fn default() -> Self {
         Self {
-            nums: [u64::MAX; READER_SLOTS],
-            masks: [0; READER_SLOTS],
-            locs: [[Location::default(); BLOCK_LEN]; READER_SLOTS],
-            next: 0,
+            nums: zeroed(READER_SLOTS),
+            masks: zeroed(READER_SLOTS),
+            locs: zeroed(READER_SLOTS),
         }
     }
 }
 
 impl Slots {
-    /// The location of node `id`. A block not kept is decoded into the oldest slot by `load`,
-    /// which returns the block's mask (0 if it is not stored).
+    /// The location of node `id`. A block not kept is decoded into its slot by `load`, which
+    /// returns the block's mask (0 if it is not stored).
     #[inline]
     pub(crate) fn get(
         &mut self,
@@ -527,13 +591,12 @@ impl Slots {
         load: impl FnOnce(u64, &mut [Location; BLOCK_LEN]) -> u64,
     ) -> Option<Location> {
         let (num, bit) = block_of(id);
-        let slot = self.nums.iter().position(|&n| n == num).unwrap_or_else(|| {
-            let slot = self.next;
-            self.next = (slot + 1) % READER_SLOTS;
-            self.nums[slot] = num;
+        #[expect(clippy::cast_possible_truncation)]
+        let slot = num as usize % READER_SLOTS;
+        if self.nums[slot] != num + 1 {
+            self.nums[slot] = num + 1;
             self.masks[slot] = load(num, &mut self.locs[slot]);
-            slot
-        });
+        }
         let mask = self.masks[slot];
         (mask & bit != 0).then(|| self.locs[slot][rank(mask, bit)])
     }
