@@ -665,6 +665,36 @@ pub(crate) mod tests {
         check(&S::open_read_only(&f.0).unwrap(), &expected);
     }
 
+    /// A dropped load keeps only the nodes up to its last checkpoint, before and after reopening.
+    #[cfg(any(feature = "paged", feature = "redb"))]
+    fn drops_a_load_after_its_checkpoint<S: FileStore>(name: &str) {
+        let f = TestFile::new(name);
+        let expected = nodes(&mut StdRng::seed_from_u64(5), 40_000);
+        let all: Vec<(u64, Location)> = expected.iter().map(|(&k, &v)| (k, v)).collect();
+        let mut store = S::open(&f.0).unwrap();
+        let mut load = store.bulk_load().unwrap();
+        load.push_batch(&all).unwrap();
+        drop(load);
+        let state = store.load_state();
+        let LoadState::Loading {
+            last_id: Some(last),
+        } = state
+        else {
+            panic!("a dropped load is unfinished: {state:?}");
+        };
+        let kept: BTreeMap<u64, Location> =
+            expected.range(..=last).map(|(&k, &v)| (k, v)).collect();
+        assert!(
+            kept.len() < all.len(),
+            "the load went past its last checkpoint: kept {} of {}",
+            kept.len(),
+            all.len()
+        );
+        check(&store, &kept);
+        drop(store);
+        check(&S::open(&f.0).unwrap(), &kept);
+    }
+
     fn metadata<S: TestStore>(name: &str) {
         let (mut store, f) = S::create(name);
         store
@@ -722,6 +752,7 @@ pub(crate) mod tests {
             rejects_other_files,
             rejects_bad_nodes,
             resumes_a_load,
+            drops_a_load_after_its_checkpoint,
             metadata
         );
     }
@@ -738,6 +769,7 @@ pub(crate) mod tests {
             rejects_other_files,
             rejects_bad_nodes,
             resumes_a_load,
+            drops_a_load_after_its_checkpoint,
             metadata
         );
     }

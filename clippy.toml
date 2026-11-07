@@ -8,3 +8,6 @@ disallowed-methods = [
     "std::boxed::Box::leak",
     "std::vec::Vec::leak",
 ]
+
+# Words in docs that are not code, so they need no backticks
+doc-valid-idents = ["NVMe", ".."]

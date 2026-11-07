@@ -146,14 +146,20 @@ impl Meta {
                 expected: VERSION,
             });
         }
+        let corrupt = || Error::Corrupt {
+            path: path.to_path_buf(),
+            reason: "invalid store metadata".to_string(),
+        };
+        // the fixed fields, then the named values
+        if m.len() < METADATA_AT {
+            return Err(corrupt());
+        }
         let shift = u32_at(m, 12);
-        let metadata = m.get(METADATA_AT..).and_then(Metadata::decode);
-        let (Some(metadata), true) = (metadata, (BLOCK_SHIFT..=BLOCK_SHIFT + 6).contains(&shift))
-        else {
-            return Err(Error::Corrupt {
-                path: path.to_path_buf(),
-                reason: "invalid store metadata".to_string(),
-            });
+        let (Some(metadata), true) = (
+            Metadata::decode(&m[METADATA_AT..]),
+            (BLOCK_SHIFT..=BLOCK_SHIFT + 6).contains(&shift),
+        ) else {
+            return Err(corrupt());
         };
         let meta = Self {
             shift,
@@ -465,6 +471,7 @@ impl<B: KvBackend> NodeStore for KvStore<B, ReadWrite> {
             used: 0,
             values: Vec::with_capacity(BATCH),
             since_checkpoint: 0,
+            unsaved: Vec::new(),
         })
     }
 }
@@ -526,6 +533,8 @@ pub struct KvLoader<'a, B: KvBackend> {
     /// encoded groups not yet written
     values: Vec<(u64, Vec<u8>)>,
     since_checkpoint: usize,
+    /// groups written since the last checkpoint, which a dropped load removes
+    unsaved: Vec<u64>,
 }
 
 impl<B: KvBackend> KvLoader<'_, B> {
@@ -578,11 +587,26 @@ impl<B: KvBackend> KvLoader<'_, B> {
             values.push((META, Some(&meta_bytes)));
         }
         self.store.kv.commit(&values, durable)?;
-        self.values.clear();
         if durable {
+            self.unsaved.clear();
             self.store.meta = meta;
+        } else {
+            self.unsaved.extend(self.values.iter().map(|&(key, _)| key));
         }
+        self.values.clear();
         Ok(())
+    }
+}
+
+impl<B: KvBackend> Drop for KvLoader<'_, B> {
+    /// Removes the groups written since the last checkpoint, so the store holds only the nodes up
+    /// to it, as a reopened store would after a crash.
+    fn drop(&mut self) {
+        if !self.unsaved.is_empty() {
+            let removed: Vec<_> = self.unsaved.iter().map(|&key| (key, None)).collect();
+            // an error leaves them, and resuming the load writes them again
+            let _ = self.store.kv.commit(&removed, true);
+        }
     }
 }
 
@@ -749,4 +773,34 @@ impl<B: KvBackend> BulkLoad for KvLoader<'_, B> {
 #[cfg(feature = "redb")]
 pub(crate) fn backend_err(e: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Error {
     Error::Backend(e.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{Meta, BLOCK_SHIFT};
+    use crate::{Error, LoadState, Metadata};
+
+    /// A reserved value cut short anywhere is an error, not a panic.
+    #[test]
+    fn rejects_truncated_metadata() {
+        let meta = Meta {
+            shift: BLOCK_SHIFT + 2,
+            stamp: 7,
+            state: LoadState::Loading { last_id: Some(9) },
+        };
+        let mut metadata = Metadata::default();
+        metadata.set("source", b"planet.osm.pbf").unwrap();
+        let m = meta.encode(&metadata);
+        let path = Path::new("store.redb");
+        assert_eq!(Meta::decode(&m, path).unwrap(), (meta, metadata));
+        for len in 0..m.len() {
+            let res = Meta::decode(&m[..len], path);
+            assert!(
+                matches!(res, Err(Error::NotAStore(_) | Error::Corrupt { .. })),
+                "{len} bytes: {res:?}"
+            );
+        }
+    }
 }

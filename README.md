@@ -11,7 +11,7 @@
 A store of OpenStreetMap node locations by node ID, for tools that read a PBF file's nodes first and then need their
 locations to build ways: an importer, a renderer, a router. A store is loaded once from a planet file or an extract, and
 then kept up to date with replication diffs, which move, delete and add nodes.
-,
+
 ## Choosing a store
 
 Four stores, each behind its own feature, implement the same traits, so code written against them switches stores by
