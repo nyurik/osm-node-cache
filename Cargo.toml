@@ -1,6 +1,6 @@
 [package]
 name = "osmnodecache"
-version = "0.10.2"
+version = "0.11.0"
 description = "OSM node ID to location stores for importing and updating OpenStreetMap data, from a city to the planet"
 authors = ["Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 repository = "https://github.com/nyurik/osm-node-cache"
