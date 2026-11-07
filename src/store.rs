@@ -220,28 +220,38 @@ pub trait NodeStore: NodeRead {
 }
 
 /// Opening a store kept in a file, which every store but the memory store is.
+///
+/// [`FileStore::open`] and [`FileStore::open_read_only`] check what they read to open the store,
+/// such as its header, and damage there is an error. They do not check the node data, which would
+/// read the whole file: damage in it, as after a disk error, shows only when the damaged part is
+/// read, as wrong locations or a panic. [`FileStore::open_and_fix`] checks the data too, where the
+/// store keeps a way to: `PagedStore` reads every page and checks its CRC-32.
 pub trait FileStore: NodeStore {
     type Opts: Default;
     /// The type [`FileStore::open_read_only`] returns.
     type ReadOnly: NodeRead;
 
     /// Opens the store at `path` to read and write, creating it if it is missing. Rolls back a
-    /// commit interrupted by a crash; anything else wrong with the store is an error.
+    /// commit interrupted by a crash; other damage it finds is an error. It does not check the node
+    /// data, as the [`FileStore`] documentation says.
     fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with(path, &Self::Opts::default())
     }
 
     fn open_with(path: impl AsRef<Path>, opts: &Self::Opts) -> Result<Self>;
 
-    /// Opens the store as [`FileStore::open`] does, and repairs what it can of a damaged store.
+    /// Opens the store as [`FileStore::open`] does, checks its node data too where the store keeps a
+    /// way to, and repairs what it can of a damaged store. `PagedStore` reads every page for it,
+    /// which takes as long as reading the whole file.
     fn open_and_fix(path: impl AsRef<Path>) -> Result<(Self, FixReport)> {
         Self::open_and_fix_with(path, &Self::Opts::default())
     }
 
     fn open_and_fix_with(path: impl AsRef<Path>, opts: &Self::Opts) -> Result<(Self, FixReport)>;
 
-    /// Opens an existing store to read only, sharing it with other readers. A store with an
-    /// interrupted commit is an error, as rolling it back needs writing.
+    /// Opens an existing store to read only, sharing it with other readers, checking it as
+    /// [`FileStore::open`] does. A store with an interrupted commit is an error, as rolling it back
+    /// needs writing.
     fn open_read_only(path: impl AsRef<Path>) -> Result<Self::ReadOnly> {
         Self::open_read_only_with(path, &Self::Opts::default())
     }

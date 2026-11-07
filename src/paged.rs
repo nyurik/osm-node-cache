@@ -12,6 +12,9 @@
 //! - `<path>.undo`: the old contents of the pages a commit changes, written before it changes them,
 //!   so that opening the store after a crash during the commit rolls it back.
 //!
+//! Opening the store checks the header copies, the directory and the undo file, but not the pages,
+//! which would read the whole file. [`crate::FileStore::open_and_fix`] checks every page's CRC-32.
+//!
 //! The file is read through a read-only memory map and written with positioned writes. Changes to
 //! committed pages are held in memory until a commit. New pages go to the file at once, as nothing
 //! committed refers to them until the header does.

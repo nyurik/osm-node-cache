@@ -124,8 +124,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The stores kept in a file open with the `FileStore` trait's functions. A store opened to read only is a
-`PagedStore<ReadOnly>`, which has no methods that change it. Opening with `open_and_fix` rebuilds a lost directory file,
-and drops pages whose CRC is wrong, reporting the node IDs they held:
+`PagedStore<ReadOnly>`, which has no methods that change it. Opening checks the header and the directory, but not the
+pages, which would read the whole file: a damaged page shows only when it is read, as wrong locations or a panic.
+Opening with `open_and_fix` also reads every page, for a store that may be damaged, as after a disk error. It rebuilds a
+lost directory file, and drops pages whose CRC is wrong, reporting the node IDs they held:
 
 ```rust,no_run
 use osmnodecache::prelude::*;
