@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="724" viewBox="0 0 920 724" role="img" aria-label="The four stores compared: size, bulk load, way resolving, lookups and commits">
+<style>
+  .surface { fill: #fcfcfb; }
+  .heading { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 17px; font-weight: 600; }
+  .title { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600; }
+  .note { fill: #52514e; font-family: system-ui, sans-serif; font-size: 12px; }
+  .label { fill: #52514e; font-family: system-ui, sans-serif; font-size: 12px; }
+  .value { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 11px; }
+  .axis { stroke: #c3c2b7; stroke-width: 1; }
+  .s0 { fill: #2a78d6; } .s1 { fill: #eb6834; } .s2 { fill: #1baf7a; } .s3 { fill: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .heading, .title, .value { fill: #f0efec; }
+    .note, .label { fill: #c3c2b7; }
+    .axis { stroke: #52514e; }
+    .s0 { fill: #3987e5; } .s1 { fill: #d95926; } .s2 { fill: #199e70; } .s3 { fill: #c98500; }
+  }
+</style>
+<rect class="surface" width="920" height="724" rx="8"/>
+<text class="heading" x="16" y="30">osmnodecache stores</text>
+<rect class="s0" x="16" y="44" width="12" height="12" rx="3"/>
+<text class="label" x="34" y="54">PagedStore</text>
+<rect class="s1" x="128" y="44" width="12" height="12" rx="3"/>
+<text class="label" x="146" y="54">RedbStore</text>
+<rect class="s2" x="232" y="44" width="12" height="12" rx="3"/>
+<text class="label" x="250" y="54">DenseStore</text>
+<rect class="s3" x="344" y="44" width="12" height="12" rx="3"/>
+<text class="label" x="362" y="54">MemoryStore</text>
+<text class="note" x="470" y="54">16 vCPU, 64 GiB; speeds with the store in memory, better of two runs</text>
+<text class="title" x="16" y="88">Size on disk</text>
+<text class="note" x="16" y="106">bytes per node; lower is better</text>
+<text class="label" x="16" y="149.0">District of Columbia</text>
+<path class="s0" d="M166.0,122.0 h10.4 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-10.4 z"/>
+<text class="value" x="183.4" y="131">4.9</text>
+<path class="s1" d="M166.0,134.0 h23.1 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-23.1 z"/>
+<text class="value" x="196.1" y="143">9.5</text>
+<path class="s2" d="M166.0,146.0 h231.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-231.0 z"/>
+<text class="value" x="404.0" y="155">85.4</text>
+<text class="note" x="170" y="167" style="font-size:10px">no file; 36.4 bytes per node in memory</text>
+<text class="label" x="16" y="219.0">North America</text>
+<path class="s0" d="M166.0,192.0 h11.3 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-11.3 z"/>
+<text class="value" x="184.3" y="201">5.2</text>
+<path class="s1" d="M166.0,204.0 h18.6 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-18.6 z"/>
+<text class="value" x="191.6" y="213">7.9</text>
+<path class="s2" d="M166.0,216.0 h64.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-64.0 z"/>
+<text class="value" x="237.0" y="225">24.4</text>
+<text class="note" x="170" y="237" style="font-size:10px">–</text>
+<text class="label" x="16" y="289.0">Planet</text>
+<path class="s0" d="M166.0,262.0 h10.9 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-10.9 z"/>
+<text class="value" x="183.9" y="271">5.1</text>
+<path class="s1" d="M166.0,274.0 h15.9 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-15.9 z"/>
+<text class="value" x="188.9" y="283">6.9</text>
+<path class="s2" d="M166.0,286.0 h23.7 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-23.7 z"/>
+<text class="value" x="196.7" y="295">9.7</text>
+<text class="note" x="170" y="307" style="font-size:10px">–</text>
+<line class="axis" x1="166" y1="118" x2="166" y2="314"/>
+<text class="title" x="474" y="88">Bulk load from the PBF file</text>
+<text class="note" x="474" y="106">M nodes/s; higher is better</text>
+<text class="label" x="474" y="149.0">District of Columbia</text>
+<path class="s0" d="M624.0,122.0 h83.6 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-83.6 z"/>
+<text class="value" x="714.6" y="131">46.6</text>
+<path class="s1" d="M624.0,134.0 h21.9 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-21.9 z"/>
+<text class="value" x="652.9" y="143">13.4</text>
+<path class="s2" d="M624.0,146.0 h2.1 a2.0882470472179815,2.0882470472179815 0 0 1 2.0882470472179815,2.0882470472179815 v5.8 a2.0882470472179815,2.0882470472179815 0 0 1 -2.0882470472179815,2.0882470472179815 h-2.1 z"/>
+<text class="value" x="632.2" y="155">2.2</text>
+<path class="s3" d="M624.0,158.0 h32.7 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-32.7 z"/>
+<text class="value" x="663.7" y="167">19.2</text>
+<text class="label" x="474" y="219.0">North America, IDs to 3 B</text>
+<path class="s0" d="M624.0,192.0 h231.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-231.0 z"/>
+<text class="value" x="862.0" y="201">126.0</text>
+<path class="s1" d="M624.0,204.0 h39.4 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-39.4 z"/>
+<text class="value" x="670.4" y="213">22.8</text>
+<path class="s2" d="M624.0,216.0 h47.9 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-47.9 z"/>
+<text class="value" x="678.9" y="225">27.4</text>
+<path class="s3" d="M624.0,228.0 h15.7 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-15.7 z"/>
+<text class="value" x="646.7" y="237">10.1</text>
+<line class="axis" x1="624" y1="118" x2="624" y2="244"/>
+<text class="title" x="16" y="350">Resolve the nodes of all ways</text>
+<text class="note" x="16" y="368">M node refs/s, PBF decoding included; higher is better</text>
+<text class="label" x="16" y="411.0">District of Columbia</text>
+<path class="s0" d="M166.0,384.0 h216.4 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-216.4 z"/>
+<text class="value" x="389.4" y="393">156.7</text>
+<path class="s1" d="M166.0,396.0 h149.6 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-149.6 z"/>
+<text class="value" x="322.6" y="405">109.0</text>
+<path class="s2" d="M166.0,408.0 h231.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-231.0 z"/>
+<text class="value" x="404.0" y="417">167.1</text>
+<path class="s3" d="M166.0,420.0 h192.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-192.0 z"/>
+<text class="value" x="365.0" y="429">139.3</text>
+<text class="label" x="16" y="481.0">North America, IDs to 3 B</text>
+<path class="s0" d="M166.0,454.0 h94.2 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-94.2 z"/>
+<text class="value" x="267.2" y="463">69.4</text>
+<path class="s1" d="M166.0,466.0 h53.4 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-53.4 z"/>
+<text class="value" x="226.4" y="475">40.3</text>
+<path class="s2" d="M166.0,478.0 h124.3 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-124.3 z"/>
+<text class="value" x="297.3" y="487">90.9</text>
+<path class="s3" d="M166.0,490.0 h95.3 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-95.3 z"/>
+<text class="value" x="268.3" y="499">70.2</text>
+<line class="axis" x1="166" y1="380" x2="166" y2="506"/>
+<text class="title" x="474" y="350">Lookups in way order</text>
+<text class="note" x="474" y="368">M/s on 16 threads; higher is better</text>
+<text class="label" x="474" y="411.0">District of Columbia</text>
+<path class="s0" d="M624.0,384.0 h59.4 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-59.4 z"/>
+<text class="value" x="690.4" y="393">583</text>
+<path class="s1" d="M624.0,396.0 h21.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-21.0 z"/>
+<text class="value" x="652.0" y="405">224</text>
+<path class="s2" d="M624.0,408.0 h231.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-231.0 z"/>
+<text class="value" x="862.0" y="417">2187</text>
+<path class="s3" d="M624.0,420.0 h78.1 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-78.1 z"/>
+<text class="value" x="709.1" y="429">758</text>
+<text class="label" x="474" y="481.0">North America, IDs to 3 B</text>
+<path class="s0" d="M624.0,454.0 h29.3 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-29.3 z"/>
+<text class="value" x="660.3" y="463">302</text>
+<path class="s1" d="M624.0,466.0 h6.1 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-6.1 z"/>
+<text class="value" x="637.1" y="475">85</text>
+<path class="s2" d="M624.0,478.0 h196.8 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-196.8 z"/>
+<text class="value" x="827.8" y="487">1867</text>
+<path class="s3" d="M624.0,490.0 h36.5 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-36.5 z"/>
+<text class="value" x="667.5" y="499">369</text>
+<line class="axis" x1="624" y1="380" x2="624" y2="506"/>
+<text class="title" x="16" y="542">Lookups in random order</text>
+<text class="note" x="16" y="560">M/s on 16 threads; higher is better</text>
+<text class="label" x="16" y="603.0">District of Columbia</text>
+<path class="s0" d="M166.0,576.0 h6.2 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-6.2 z"/>
+<text class="value" x="179.2" y="585">54</text>
+<path class="s1" d="M166.0,588.0 h1.6 a1.5511363636363638,1.5511363636363638 0 0 1 1.5511363636363638,1.5511363636363638 v6.9 a1.5511363636363638,1.5511363636363638 0 0 1 -1.5511363636363638,1.5511363636363638 h-1.6 z"/>
+<text class="value" x="173.1" y="597">18</text>
+<path class="s2" d="M166.0,600.0 h231.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-231.0 z"/>
+<text class="value" x="404.0" y="609">1373</text>
+<path class="s3" d="M166.0,612.0 h123.3 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-123.3 z"/>
+<text class="value" x="296.3" y="621">741</text>
+<text class="label" x="16" y="673.0">North America, IDs to 3 B</text>
+<path class="s0" d="M166.0,646.0 h2.1 a2.0625,2.0625 0 0 1 2.0625,2.0625 v5.9 a2.0625,2.0625 0 0 1 -2.0625,2.0625 h-2.1 z"/>
+<text class="value" x="174.1" y="655">24</text>
+<path class="s1" d="M166.0,658.0 h1.0 a1.0,1.0 0 0 1 1.0,1.0 v8.0 a1.0,1.0 0 0 1 -1.0,1.0 h-1.0 z"/>
+<text class="value" x="172.0" y="667">8</text>
+<path class="s2" d="M166.0,670.0 h189.8 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-189.8 z"/>
+<text class="value" x="362.8" y="679">1131</text>
+<path class="s3" d="M166.0,682.0 h58.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-58.0 z"/>
+<text class="value" x="231.0" y="691">358</text>
+<line class="axis" x1="166" y1="572" x2="166" y2="698"/>
+<text class="title" x="474" y="542">Commit 2,000 changes</text>
+<text class="note" x="474" y="560">ms, median; lower is better</text>
+<text class="label" x="474" y="603.0">District of Columbia</text>
+<path class="s0" d="M624.0,576.0 h181.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-181.0 z"/>
+<text class="value" x="812.0" y="585">9</text>
+<path class="s1" d="M624.0,588.0 h87.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-87.0 z"/>
+<text class="value" x="718.0" y="597">4</text>
+<path class="s2" d="M624.0,600.0 h45.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-45.0 z"/>
+<text class="value" x="676.0" y="609">2</text>
+<path class="s3" d="M624.0,612.0 h1.0 a1.0000000000000002,1.0000000000000002 0 0 1 1.0000000000000002,1.0000000000000002 v8.0 a1.0000000000000002,1.0000000000000002 0 0 1 -1.0000000000000002,1.0000000000000002 h-1.0 z"/>
+<text class="value" x="630.0" y="621">0</text>
+<text class="label" x="474" y="673.0">North America, IDs to 3 B</text>
+<path class="s0" d="M624.0,646.0 h195.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-195.0 z"/>
+<text class="value" x="826.0" y="655">10</text>
+<path class="s1" d="M624.0,658.0 h231.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-231.0 z"/>
+<text class="value" x="862.0" y="667">12</text>
+<path class="s2" d="M624.0,670.0 h51.0 a3,3 0 0 1 3,3 v4.0 a3,3 0 0 1 -3,3 h-51.0 z"/>
+<text class="value" x="682.0" y="679">3</text>
+<path class="s3" d="M624.0,682.0 h2.0 a2.0000000000000004,2.0000000000000004 0 0 1 2.0000000000000004,2.0000000000000004 v6.0 a2.0000000000000004,2.0000000000000004 0 0 1 -2.0000000000000004,2.0000000000000004 h-2.0 z"/>
+<text class="value" x="632.0" y="691">0</text>
+<line class="axis" x1="624" y1="572" x2="624" y2="698"/>
+</svg>
