@@ -186,7 +186,7 @@ impl Header {
     fn read(page: &[u8], file_len: u64, path: &Path) -> Result<(Self, Metadata)> {
         let corrupt = |reason: &str| Error::Corrupt {
             path: path.to_path_buf(),
-            reason: reason.to_string(),
+            reason: reason.to_owned(),
         };
         if !page.starts_with(MAGIC_PREFIX) && !page[SLOT..].starts_with(MAGIC_PREFIX) {
             return Err(Error::NotAStore(path.to_path_buf()));
@@ -356,7 +356,7 @@ impl<M: Mode> PagedStore<M> {
             return Err(if page.starts_with(MAGIC_PREFIX) {
                 Error::Corrupt {
                     path: path.to_path_buf(),
-                    reason: "the file is shorter than its header".to_string(),
+                    reason: "the file is shorter than its header".to_owned(),
                 }
             } else {
                 Error::NotAStore(path.to_path_buf())
@@ -1005,7 +1005,7 @@ fn read_dir(dir_path: &Path, header: &Header) -> Result<Vec<(u64, u32)>, String>
         std::fs::read(dir_path).map_err(|e| format!("cannot read the directory file: {e}"))?;
     let n = usize::try_from(header.dir_len).unwrap();
     if !bytes.starts_with(DIR_MAGIC) || bytes.len() < DIR_MAGIC.len() + DIR_ENTRY * n {
-        return Err("the directory file is damaged or shorter than its header says".to_string());
+        return Err("the directory file is damaged or shorter than its header says".to_owned());
     }
     let entries: Vec<(u64, u32)> = bytes[DIR_MAGIC.len()..][..DIR_ENTRY * n]
         .as_chunks::<DIR_ENTRY>()
@@ -1029,7 +1029,7 @@ fn read_dir(dir_path: &Path, header: &Header) -> Result<Vec<(u64, u32)>, String>
             .last()
             .is_some_and(|&s| s > MAX_NODE_ID >> BLOCK_SHIFT)
     {
-        return Err("the directory file does not match the pages".to_string());
+        return Err("the directory file does not match the pages".to_owned());
     }
     Ok(entries)
 }

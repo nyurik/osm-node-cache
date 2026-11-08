@@ -111,7 +111,7 @@ impl FileBackend for osmnodecache::RedbStore {
 #[cfg(feature = "dense")]
 impl FileBackend for osmnodecache::DenseStore {
     fn opts(_fill: f64) -> Self::Opts {
-        osmnodecache::DenseOpts::default()
+        osmnodecache::DenseOpts
     }
 }
 

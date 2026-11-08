@@ -156,16 +156,16 @@ mod tests {
     #[test]
     fn rejects_bad_varints() {
         // ends inside a varint
-        assert!(all(&[0x80]).is_err());
-        assert!(all(&[0x01, 0x80]).is_err());
+        all(&[0x80]).unwrap_err();
+        all(&[0x01, 0x80]).unwrap_err();
         // eleven bytes
         let mut eleven = vec![0xff; 10];
         eleven.push(0x01);
-        assert!(all(&eleven).is_err());
+        all(&eleven).unwrap_err();
         // a tenth byte with more than the top bit
         let mut ten = vec![0xff; 9];
         ten.push(0x02);
-        assert!(all(&ten).is_err());
+        all(&ten).unwrap_err();
         let mut ok = vec![0xff; 9];
         ok.push(0x01);
         assert_eq!(all(&ok).unwrap(), [u64::MAX]);

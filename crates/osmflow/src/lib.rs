@@ -12,6 +12,8 @@ mod error;
     clippy::enum_variant_names,
     clippy::upper_case_acronyms,
     clippy::pedantic,
+    clippy::nursery,
+    clippy::restriction,
     clippy::cargo,
     unused_qualifications,
     missing_docs,

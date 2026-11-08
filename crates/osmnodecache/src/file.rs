@@ -36,6 +36,10 @@ pub(crate) fn open_rw(path: &Path) -> Result<(File, bool)> {
 }
 
 /// Opens an existing `path` to read, and locks it against writers.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "every other I/O error is passed on"
+)]
 pub(crate) fn open_ro(path: &Path) -> Result<File> {
     let file = File::open(path).map_err(|e| match e.kind() {
         io::ErrorKind::NotFound => Error::NotFound(path.to_path_buf()),

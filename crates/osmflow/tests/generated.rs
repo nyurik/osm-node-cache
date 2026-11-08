@@ -47,13 +47,13 @@ impl Pb {
         self
     }
 
-    fn msg(&mut self, field: u32, m: &Pb) -> &mut Self {
+    fn msg(&mut self, field: u32, m: &Self) -> &mut Self {
         self.bytes(field, &m.0)
     }
 
     /// A packed array of varints.
     fn packed(&mut self, field: u32, values: &[u64]) -> &mut Self {
-        let mut p = Pb::default();
+        let mut p = Self::default();
         for &v in values {
             p.varint(v);
         }

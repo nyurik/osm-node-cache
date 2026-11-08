@@ -148,7 +148,7 @@ impl Meta {
         }
         let corrupt = || Error::Corrupt {
             path: path.to_path_buf(),
-            reason: "invalid store metadata".to_string(),
+            reason: "invalid store metadata".to_owned(),
         };
         // the fixed fields, then the named values
         if m.len() < METADATA_AT {

@@ -39,7 +39,7 @@ const PAGE_IDS: u64 = PAGE_SIZE as u64 / 8;
 
 /// Options for [`DenseStore`]; it has none yet.
 #[derive(Clone, Debug, Default)]
-pub struct DenseOpts {}
+pub struct DenseOpts;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Header {
@@ -105,7 +105,7 @@ impl Header {
             .max_by_key(|(h, _)| h.generation)
             .ok_or_else(|| Error::Corrupt {
                 path: path.to_path_buf(),
-                reason: "both copies of the header are damaged".to_string(),
+                reason: "both copies of the header are damaged".to_owned(),
             })
     }
 

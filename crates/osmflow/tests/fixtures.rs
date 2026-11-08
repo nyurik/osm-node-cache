@@ -101,6 +101,7 @@ fn check_osmpbf(path: &Path, lines: &[String]) -> usize {
     dropped
 }
 
+#[allow(clippy::panic, reason = "a test helper fails the test")]
 fn assert_lines_eq(ours: &[String], other: &[String], name: &str) {
     if ours == other {
         return;
