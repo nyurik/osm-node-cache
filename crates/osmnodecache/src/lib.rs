@@ -16,8 +16,8 @@ pub use crate::memory::{MemoryLoader, MemoryReader, MemoryStore};
 #[cfg(feature = "paged")]
 pub use crate::paged::{PagedLoader, PagedOpts, PagedReader, PagedStats, PagedStore};
 pub use crate::store::{
-    BulkLoad, FileStore, FixReport, LoadState, Metadata, Mode, NodeRead, NodeReader, NodeStore,
-    ReadOnly, ReadWrite, MAX_METADATA_BYTES,
+    BulkLoad, FileStore, FixReport, LoadState, MAX_METADATA_BYTES, Metadata, Mode, NodeRead,
+    NodeReader, NodeStore, ReadOnly, ReadWrite,
 };
 
 // the key-value stores use only part of it

@@ -1,0 +1,12 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("0.44.1"), source: None
+# bbox: None
+# replication: None None None
+# 1 nodes, 0 ways, 0 relations, hash 9b0bfa3841a5a5fa
+n2 v-1 dV c-1 t0 i-1 u T x10010000000 y50000000000

@@ -29,15 +29,16 @@ use memmap2::Mmap;
 use rayon::prelude::*;
 
 use crate::codec::{
-    block_of, decode_page, encode_block, encode_detached, encode_page, find_in_page, pack_block,
-    packed_len, page_crcs, page_header, rank, read_block, set_entry, set_page_crc, set_page_header,
-    u32_at, u64_at, Block, Head, Location, Slots, BLOCK_LEN, BLOCK_SHIFT, ENTRY, PAGE_HEADER,
+    BLOCK_LEN, BLOCK_SHIFT, Block, ENTRY, Head, Location, PAGE_HEADER, Slots, block_of,
+    decode_page, encode_block, encode_detached, encode_page, find_in_page, pack_block, packed_len,
+    page_crcs, page_header, rank, read_block, set_entry, set_page_crc, set_page_header, u32_at,
+    u64_at,
 };
-use crate::file::{crc, open_ro, open_rw, read_at, sidecar, sync_dir, write_at, At as _};
+use crate::file::{At as _, crc, open_ro, open_rw, read_at, sidecar, sync_dir, write_at};
 use crate::store::{check, check_order, check_resumed};
 use crate::{
-    BulkLoad, Error, FileStore, FixReport, LoadState, Metadata, Mode, NodeRead, NodeReader,
-    NodeStore, ReadOnly, ReadWrite, Result, MAX_NODE_ID,
+    BulkLoad, Error, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead,
+    NodeReader, NodeStore, ReadOnly, ReadWrite, Result,
 };
 
 const PAGE_SIZE: usize = 4096;
@@ -405,7 +406,7 @@ impl<M: Mode> PagedStore<M> {
                 return Err(Error::NeedsFix {
                     path: path.to_path_buf(),
                     reason,
-                })
+                });
             }
         };
         if !report.is_clean() {
@@ -499,11 +500,11 @@ impl<M: Mode> PagedStore<M> {
     #[inline]
     fn find_block(&self, num: u64) -> Option<Found<'_>> {
         let p = self.dir.pages[self.dir.find(num)?];
-        if !self.changed.is_empty() {
-            if let Some((_, blocks)) = self.changed.get(&p) {
-                let i = blocks.binary_search_by_key(&num, |b| b.num).ok()?;
-                return Some(Found::Changed(&blocks[i]));
-            }
+        if !self.changed.is_empty()
+            && let Some((_, blocks)) = self.changed.get(&p)
+        {
+            let i = blocks.binary_search_by_key(&num, |b| b.num).ok()?;
+            return Some(Found::Changed(&blocks[i]));
         }
         let page = self.page(p);
         Some(Found::Page(page, find_in_page(page, num)?))

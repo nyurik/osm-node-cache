@@ -1,0 +1,16 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("osmium/1.19.0"), source: None
+# bbox: None
+# replication: None None None
+# 5 nodes, 0 ways, 0 relations, hash d9c666d27ac93a38
+n1 v1 dV c1 t1356998400000 i1 utest T x1100000000 y1100000000
+n2 v1 dV c1 t1356998400000 i1 utest T x1100000000 y1100000000
+n3 v1 dV c1 t1356998400000 i1 utest Thighway=residential,source=testdata x1100000000 y1100000000
+n4 v1 dV c1 t1356998400000 i1 utest Tfoo=,=bar x1100000000 y1100000000
+n5 v1 dV c1 t1356998400000 i1 utest T= x1100000000 y1100000000

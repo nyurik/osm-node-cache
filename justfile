@@ -38,7 +38,7 @@ ci-coverage: env-info && \
     mkdir -p {{quote(parent_directory(coverage_lcov))}}
 
 # Run all tests as expected by CI
-ci-test: env-info test-fmt clippy test test-doc && assert-git-is-clean
+ci-test: env-info codegen-check test-fmt clippy test test-doc && assert-git-is-clean
 
 # Compile default features with minimal dependencies on the configured MSRV
 ci-test-msrv:
@@ -70,6 +70,13 @@ _coverage *report_args:  (cargo-install 'cargo-llvm-cov')
 # Build and open code documentation
 docs *args='--open':
     DOCS_RS=1 cargo doc --no-deps {{args}} --workspace --all-features
+
+# Regenerate osmflow's protobuf code from its .proto files (needs protoc)
+update-generated:
+    cargo run -p osmflow --example codegen
+
+# Regenerate osmflow's protobuf code, and fail if the checked-in code changes
+codegen-check: update-generated assert-git-is-clean
 
 # Print environment info
 env-info:

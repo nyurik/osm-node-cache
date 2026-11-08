@@ -1,0 +1,77 @@
+/** A read projection of OSM-binary's fileformat.proto and osmformat.proto.
+
+Copyright (c) 2010 Scott A. Crosby <scott@sacrosby.com>, and the OpenStreetMap developers (the original messages).
+MIT License: see LICENSE-OSM-binary in this directory.
+
+The messages and field numbers are those of the original files, with these differences, which make decoding fast:
+
+- every packed array is declared `[packed = true]` and generated with buffa's `packed_views`, so its view is a
+  `PackedView`: the packed bytes, checked and borrowed from the input, decoded as they are read, with no `Vec`. An
+  array split into several fields, or written unpacked (one varint per value, which the format allows), is decoded
+  into the view instead;
+- plain nodes, ways and relations, and the nested `DenseInfo`, are declared `bytes`: osmflow decodes each object's
+  fields itself, straight into its columns, which saves the allocations of a view per object, and only when that
+  object type is selected;
+- every field is `optional`, and fields osmflow does not read (the blob index data, the changesets group) are left
+  out, so they are skipped unread.
+
+Plain objects are decoded by osmflow's own field reader, which takes packed, split and unpacked arrays too.
+*/
+
+syntax = "proto2";
+
+package osmflow_raw;
+
+message Blob {
+  optional int32 raw_size = 2;
+  oneof data {
+    bytes raw = 1;
+    bytes zlib_data = 3;
+    bytes lzma_data = 4;
+    bytes OBSOLETE_bzip2_data = 5;
+    bytes lz4_data = 6;
+    bytes zstd_data = 7;
+  }
+}
+
+message BlobHeader {
+  optional bytes type = 1;
+  optional int32 datasize = 3;
+}
+
+message PrimitiveBlock {
+  optional StringTable stringtable = 1;
+  repeated PrimitiveGroup primitivegroup = 2;
+  optional int32 granularity = 17;
+  optional int32 date_granularity = 18;
+  optional int64 lat_offset = 19;
+  optional int64 lon_offset = 20;
+}
+
+message StringTable {
+  repeated bytes s = 1;
+}
+
+message PrimitiveGroup {
+  repeated bytes nodes = 1;     // Node
+  optional DenseNodes dense = 2;
+  repeated bytes ways = 3;      // Way
+  repeated bytes relations = 4; // Relation
+}
+
+message DenseInfo {
+  repeated int32 version = 1 [packed = true];
+  repeated sint64 timestamp = 2 [packed = true]; // delta coded
+  repeated sint64 changeset = 3 [packed = true]; // delta coded
+  repeated sint32 uid = 4 [packed = true];       // delta coded
+  repeated sint32 user_sid = 5 [packed = true];  // delta coded
+  repeated bool visible = 6 [packed = true];
+}
+
+message DenseNodes {
+  repeated sint64 id = 1 [packed = true];        // delta coded
+  optional bytes denseinfo = 5;                  // DenseInfo
+  repeated sint64 lat = 8 [packed = true];       // delta coded
+  repeated sint64 lon = 9 [packed = true];       // delta coded
+  repeated int32 keys_vals = 10 [packed = true];
+}

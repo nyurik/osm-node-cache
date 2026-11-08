@@ -1,0 +1,18 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("osmium/1.19.0"), source: None
+# bbox: None
+# replication: None None None
+# 4 nodes, 2 ways, 1 relations, hash 5adb17813d7b9a10
+n5816 v1 dV c1 t1259186353000 i1 ufred T x-108000000000 y12000000000
+n5822 v1 dV c1 t1259186353000 i1 ufred T x-108000000000 y18000000000
+n6362 v1 dV c1 t1259186353000 i1 ufred T x-102000000000 y18000000000
+n6356 v1 dV c1 t1259186353000 i1 ufred T x-102000000000 y12000000000
+w9772 v1 dV c1 t1259186353000 i1 ufred Ttestcase=4800 N5822,6362,6356,5816,5822
+w9774 v1 dV c1 t1259186353000 i1 ufred Ttestcase=4800 N6271,6091,6090,6180,6178,6088,6087,6267,6271
+r9775 v1 dV c1 t1259186353000 i1 ufred Ttype=multipolygon Mw9772@outer,w9774@inner

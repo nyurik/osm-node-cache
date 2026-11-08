@@ -1,0 +1,13 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: LocationsOnWays
+# writing program: Some("osmium/1.11.1"), source: None
+# bbox: None
+# replication: None None None
+# 0 nodes, 1 ways, 1 relations, hash 4a102dd611d16111
+w107 v1 dV c0 t1049522831000 i17 utestuser Tbuilding=yes,name=triangle N105,106,108,105 L11628401700/52122403100,11625644600/52119923500,11631019200/52119899100,11628401700/52122403100
+r120 v1 dV c0 t1049522832000 i17 utestuser Trel_key=rel_value Mw107@test_role

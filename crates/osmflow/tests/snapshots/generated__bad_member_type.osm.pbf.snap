@@ -1,0 +1,6 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+osmflow error: blob 1 at byte 66: relation member type 7 is not 0 (node), 1 (way) or 2 (relation)
+osmpbf panics

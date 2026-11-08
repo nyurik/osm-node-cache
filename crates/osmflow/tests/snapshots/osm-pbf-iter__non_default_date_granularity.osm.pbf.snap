@@ -1,0 +1,12 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: OsmSchema-V0.6
+# optional: 
+# writing program: Some("rust-osm-pbf-iter test fixture"), source: None
+# bbox: None
+# replication: None None None
+# 0 nodes, 1 ways, 0 relations, hash a280a430e235c0d4
+w1 v1 dV c1 t60000 i1 utest_user Thighway=residential N100

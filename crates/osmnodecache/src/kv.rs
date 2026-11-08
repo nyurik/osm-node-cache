@@ -11,8 +11,8 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use crate::codec::{
-    block_of, decode_page, encode_page, find_in_page, rank, u32_at, u64_at, Block, Location, Slots,
-    BLOCK_LEN, BLOCK_SHIFT,
+    BLOCK_LEN, BLOCK_SHIFT, Block, Location, Slots, block_of, decode_page, encode_page,
+    find_in_page, rank, u32_at, u64_at,
 };
 use crate::store::{check, check_order, check_resumed};
 use crate::{
@@ -779,7 +779,7 @@ pub(crate) fn backend_err(e: impl Into<Box<dyn std::error::Error + Send + Sync>>
 mod tests {
     use std::path::Path;
 
-    use super::{Meta, BLOCK_SHIFT};
+    use super::{BLOCK_SHIFT, Meta};
     use crate::{Error, LoadState, Metadata};
 
     /// A reserved value cut short anywhere is an error, not a panic.

@@ -8,6 +8,7 @@ Rust crates for OpenStreetMap data.
 | Crate                                 | Description                                                                                                   |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------|
 | [`osmnodecache`](crates/osmnodecache) | OSM node ID to location stores for importing and updating OpenStreetMap data, from a city to the planet       |
+| [`osmflow`](crates/osmflow)           | Fast, parallel reading of OpenStreetMap PBF files, from a city extract to the planet                          |
 
 ## Development
 

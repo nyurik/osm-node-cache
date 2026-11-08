@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 
 use crate::codec::u16_at;
-use crate::{Error, Location, Result, MAX_NODE_ID};
+use crate::{Error, Location, MAX_NODE_ID, Result};
 
 /// The most bytes [`Metadata`] may take, encoded: 2 for the entry count, and per entry 1 for the
 /// key's length, the key, 2 for the value's length, and the value.
@@ -336,7 +336,7 @@ pub(crate) mod tests {
     use super::{BulkLoad as _, NodeRead, NodeReader as _, NodeStore};
     #[cfg(any(feature = "paged", feature = "redb", feature = "dense"))]
     use crate::file::tests::TestFile;
-    use crate::{Error, LoadState, Location, Metadata, MAX_METADATA_BYTES, MAX_NODE_ID};
+    use crate::{Error, LoadState, Location, MAX_METADATA_BYTES, MAX_NODE_ID, Metadata};
 
     /// IDs mostly in runs, with gaps of all sizes, and locations a short step apart.
     pub(crate) fn nodes(rng: &mut StdRng, count: usize) -> BTreeMap<u64, Location> {

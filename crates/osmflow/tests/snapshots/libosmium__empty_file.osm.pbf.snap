@@ -1,0 +1,6 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+osmflow error: the file is empty
+osmpbf reads 0 objects

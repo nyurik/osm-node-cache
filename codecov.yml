@@ -1,6 +1,10 @@
 codecov:
   require_ci_to_pass: false
 
+ignore:
+  - "crates/osmflow/src/generated/**"
+  - "crates/osmflow/examples/codegen.rs"
+
 coverage:
   status:
     patch: off

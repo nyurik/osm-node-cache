@@ -9,7 +9,7 @@ use ::redb::{
     TableDefinition, TableError,
 };
 
-use super::{backend_err, KvBackend, KvStore};
+use super::{KvBackend, KvStore, backend_err};
 use crate::file::At as _;
 use crate::{Error, ReadWrite, Result};
 
