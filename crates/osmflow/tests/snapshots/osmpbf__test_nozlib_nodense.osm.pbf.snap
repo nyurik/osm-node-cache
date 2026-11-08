@@ -1,0 +1,16 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: OsmSchema-V0.6
+# optional: 
+# writing program: Some("0.43.1"), source: None
+# bbox: None
+# replication: None None None
+# 3 nodes, 1 ways, 1 relations, hash 0c2527709eca9a54
+n105 v1 dV c0 t1049522828000 i17 utestuser T x11628401700 y52122403100
+n106 v1 dV c0 t1049522829000 i17 utestuser T x11625644600 y52119923500
+n108 v1 dV c0 t1049522830000 i17 utestuser T x11631019200 y52119899100
+w107 v1 dV c0 t1049522831000 i17 utestuser Tbuilding=yes,name=triangle N105,106,108,105
+r120 v1 dV c0 t1049522832000 i17 utestuser Trel_key=rel_value Mw107@test_role

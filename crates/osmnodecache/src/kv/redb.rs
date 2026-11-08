@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use ::redb::{
-    Database, DatabaseError, Durability, ReadOnlyDatabase, ReadOnlyTable, ReadableDatabase,
+    Database, DatabaseError, Durability, ReadOnlyDatabase, ReadOnlyTable, ReadableDatabase as _,
     TableDefinition, TableError,
 };
 
-use super::{backend_err, KvBackend, KvStore};
+use super::{KvBackend, KvStore, backend_err};
 use crate::file::At as _;
 use crate::{Error, ReadWrite, Result};
 
@@ -65,6 +65,10 @@ impl RedbBackend {
     }
 
     /// Opens the table of the last commit, for reading.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "every other redb error is passed on"
+    )]
     fn read_table(db: &Db, path: &Path) -> Result<ReadOnlyTable<u64, &'static [u8]>> {
         let txn = match db {
             Db::ReadWrite(db) => db.begin_read(),
@@ -80,6 +84,10 @@ impl RedbBackend {
     }
 
     /// The error for a database that cannot be opened.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "every other redb error is passed on"
+    )]
     fn open_err(e: DatabaseError, path: &Path) -> Error {
         match e {
             DatabaseError::DatabaseAlreadyOpen => Error::Locked(path.to_path_buf()),

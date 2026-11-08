@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use osmnodecache::prelude::*;
 use osmnodecache::{DenseStore, Location, MemoryStore, PagedStore, RedbStore};
 use rand::rngs::StdRng;

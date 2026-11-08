@@ -1,0 +1,7 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 53
+expression: snapshot
+---
+osmflow error: blob 1 at byte 78: dense node tags do not match the nodes: the number of tag lists is not the number of nodes
+osmpbf reads 3 objects

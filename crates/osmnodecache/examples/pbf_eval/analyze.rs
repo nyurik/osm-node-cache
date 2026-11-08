@@ -12,7 +12,7 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::pbf::{for_each_node, Node};
+use crate::pbf::{Node, for_each_node};
 
 const FILL: f64 = 0.97;
 /// Nodes gathered before their blocks are measured in parallel

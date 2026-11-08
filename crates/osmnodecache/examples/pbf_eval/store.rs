@@ -308,7 +308,7 @@ pub fn bench(
         .map(|c| {
             let mut reader = store.reader();
             c.iter()
-                .filter(|&(&id, &loc)| reader.get(id) != loc)
+                .filter(|&&(&id, &loc)| reader.get(id) != loc)
                 .count()
         })
         .sum::<usize>();

@@ -1,0 +1,7 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+osmflow error: blob 0 at byte 0: blob is compressed with lz4, which osmflow does not support
+osmpbf fails too: blob is missing fields 'raw' and 'zlib_data'

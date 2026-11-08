@@ -1,0 +1,14 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 52
+expression: snapshot
+---
+# required: 
+# optional: 
+# writing program: None, source: None
+# bbox: None
+# replication: None None None
+# 3 nodes, 0 ways, 0 relations, hash b7aa4c1c8b67bee0
+n11 v-1 dV c0 t0 i0 u T x8500000000 y4500000000
+n21 v-1 dV c0 t0 i0 u T x2000000000 y1000000000
+n22 v-1 dV c0 t0 i0 u T x4000000000 y3000000000

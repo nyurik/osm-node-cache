@@ -1,4 +1,5 @@
 allow-mixed-uninlined-format-args = false
+allow-panic-in-tests = true
 allow-unwrap-in-tests = true
 avoid-breaking-exported-api = false
 

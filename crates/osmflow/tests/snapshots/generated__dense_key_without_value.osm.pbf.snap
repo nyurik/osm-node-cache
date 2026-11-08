@@ -1,0 +1,6 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+osmflow error: blob 1 at byte 78: dense node tags do not match the nodes: a key has no value
+osmpbf reads 1 objects

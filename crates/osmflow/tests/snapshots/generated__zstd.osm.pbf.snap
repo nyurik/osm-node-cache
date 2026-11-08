@@ -1,0 +1,7 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 53
+expression: snapshot
+---
+osmflow error: blob 1 at byte 66: blob is compressed with zstd, which osmflow does not support
+osmpbf fails too: blob is missing fields 'raw' and 'zlib_data'

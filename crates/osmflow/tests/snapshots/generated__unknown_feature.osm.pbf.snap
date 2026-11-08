@@ -1,0 +1,7 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 53
+expression: snapshot
+---
+osmflow error: the file requires the feature "Sort.Teleport", which osmflow does not support
+osmpbf reads 0 objects

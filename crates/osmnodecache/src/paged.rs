@@ -29,15 +29,16 @@ use memmap2::Mmap;
 use rayon::prelude::*;
 
 use crate::codec::{
-    block_of, decode_page, encode_block, encode_detached, encode_page, find_in_page, pack_block,
-    packed_len, page_crcs, page_header, rank, read_block, set_entry, set_page_crc, set_page_header,
-    u32_at, u64_at, Block, Head, Location, Slots, BLOCK_LEN, BLOCK_SHIFT, ENTRY, PAGE_HEADER,
+    BLOCK_LEN, BLOCK_SHIFT, Block, ENTRY, Head, Location, PAGE_HEADER, Slots, block_of,
+    decode_page, encode_block, encode_detached, encode_page, find_in_page, pack_block, packed_len,
+    page_crcs, page_header, rank, read_block, set_entry, set_page_crc, set_page_header, u32_at,
+    u64_at,
 };
-use crate::file::{crc, open_ro, open_rw, read_at, sidecar, sync_dir, write_at, At as _};
+use crate::file::{At as _, crc, open_ro, open_rw, read_at, sidecar, sync_dir, write_at};
 use crate::store::{check, check_order, check_resumed};
 use crate::{
-    BulkLoad, Error, FileStore, FixReport, LoadState, Metadata, Mode, NodeRead, NodeReader,
-    NodeStore, ReadOnly, ReadWrite, Result, MAX_NODE_ID,
+    BulkLoad, Error, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead,
+    NodeReader, NodeStore, ReadOnly, ReadWrite, Result,
 };
 
 const PAGE_SIZE: usize = 4096;
@@ -185,7 +186,7 @@ impl Header {
     fn read(page: &[u8], file_len: u64, path: &Path) -> Result<(Self, Metadata)> {
         let corrupt = |reason: &str| Error::Corrupt {
             path: path.to_path_buf(),
-            reason: reason.to_string(),
+            reason: reason.to_owned(),
         };
         if !page.starts_with(MAGIC_PREFIX) && !page[SLOT..].starts_with(MAGIC_PREFIX) {
             return Err(Error::NotAStore(path.to_path_buf()));
@@ -355,7 +356,7 @@ impl<M: Mode> PagedStore<M> {
             return Err(if page.starts_with(MAGIC_PREFIX) {
                 Error::Corrupt {
                     path: path.to_path_buf(),
-                    reason: "the file is shorter than its header".to_string(),
+                    reason: "the file is shorter than its header".to_owned(),
                 }
             } else {
                 Error::NotAStore(path.to_path_buf())
@@ -405,7 +406,7 @@ impl<M: Mode> PagedStore<M> {
                 return Err(Error::NeedsFix {
                     path: path.to_path_buf(),
                     reason,
-                })
+                });
             }
         };
         if !report.is_clean() {
@@ -499,11 +500,11 @@ impl<M: Mode> PagedStore<M> {
     #[inline]
     fn find_block(&self, num: u64) -> Option<Found<'_>> {
         let p = self.dir.pages[self.dir.find(num)?];
-        if !self.changed.is_empty() {
-            if let Some((_, blocks)) = self.changed.get(&p) {
-                let i = blocks.binary_search_by_key(&num, |b| b.num).ok()?;
-                return Some(Found::Changed(&blocks[i]));
-            }
+        if !self.changed.is_empty()
+            && let Some((_, blocks)) = self.changed.get(&p)
+        {
+            let i = blocks.binary_search_by_key(&num, |b| b.num).ok()?;
+            return Some(Found::Changed(&blocks[i]));
         }
         let page = self.page(p);
         Some(Found::Page(page, find_in_page(page, num)?))
@@ -1004,7 +1005,7 @@ fn read_dir(dir_path: &Path, header: &Header) -> Result<Vec<(u64, u32)>, String>
         std::fs::read(dir_path).map_err(|e| format!("cannot read the directory file: {e}"))?;
     let n = usize::try_from(header.dir_len).unwrap();
     if !bytes.starts_with(DIR_MAGIC) || bytes.len() < DIR_MAGIC.len() + DIR_ENTRY * n {
-        return Err("the directory file is damaged or shorter than its header says".to_string());
+        return Err("the directory file is damaged or shorter than its header says".to_owned());
     }
     let entries: Vec<(u64, u32)> = bytes[DIR_MAGIC.len()..][..DIR_ENTRY * n]
         .as_chunks::<DIR_ENTRY>()
@@ -1028,7 +1029,7 @@ fn read_dir(dir_path: &Path, header: &Header) -> Result<Vec<(u64, u32)>, String>
             .last()
             .is_some_and(|&s| s > MAX_NODE_ID >> BLOCK_SHIFT)
     {
-        return Err("the directory file does not match the pages".to_string());
+        return Err("the directory file does not match the pages".to_owned());
     }
     Ok(entries)
 }

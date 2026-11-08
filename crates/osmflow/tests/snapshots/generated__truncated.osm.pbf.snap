@@ -1,0 +1,7 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 53
+expression: snapshot
+---
+osmflow error: blob 3 at byte 337: the file ends inside a blob
+osmpbf fails too: protobuf error at 'blob content': Unexpected end of file

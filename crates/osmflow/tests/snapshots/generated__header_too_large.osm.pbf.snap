@@ -1,0 +1,7 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+assertion_line: 53
+expression: snapshot
+---
+osmflow error: blob 1 at byte 66: blob header of 1048576 bytes is larger than the 64 KiB limit
+osmpbf fails too: blob header is too big: 1048576 bytes

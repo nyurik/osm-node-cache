@@ -1,0 +1,38 @@
+[package]
+name = "osmflow"
+version = "0.0.0"
+description = "Fast, parallel reading of OpenStreetMap PBF files, from a city extract to the planet"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+keywords = ["osm", "openstreetmap", "pbf", "parser"]
+categories = ["parser-implementations", "science::geo"]
+rust-version = "1.90"
+publish = false
+
+[[bench]]
+name = "parse"
+harness = false
+
+[dependencies]
+buffa.workspace = true
+flate2 = { workspace = true, features = ["zlib-rs", "runtime_detection"] }
+rayon.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# The benchmark evicts its input from the page cache before each run, and checks that it is gone
+libc = { workspace = true }
+
+[dev-dependencies]
+# For the `codegen` example, which regenerates src/generated (`just update-generated`, needs protoc)
+buffa-build.workspace = true
+criterion.workspace = true
+insta.workspace = true
+osmpbf.workspace = true
+osmpbfreader.workspace = true
+test_each_file.workspace = true
+
+[lints]
+workspace = true

@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 
 use crate::codec::u16_at;
-use crate::{Error, Location, Result, MAX_NODE_ID};
+use crate::{Error, Location, MAX_NODE_ID, Result};
 
 /// The most bytes [`Metadata`] may take, encoded: 2 for the entry count, and per entry 1 for the
 /// key's length, the key, 2 for the value's length, and the value.
@@ -51,10 +51,10 @@ impl Metadata {
         if key.is_empty() || key.len() > 255 {
             return Err(Error::MetadataTooLarge);
         }
-        let old = self.0.insert(key.to_string(), value.to_vec());
+        let old = self.0.insert(key.to_owned(), value.to_vec());
         if self.encoded_len() > MAX_METADATA_BYTES {
             match old {
-                Some(old) => self.0.insert(key.to_string(), old),
+                Some(old) => self.0.insert(key.to_owned(), old),
                 None => self.0.remove(key),
             };
             return Err(Error::MetadataTooLarge);
@@ -87,7 +87,7 @@ impl Metadata {
             let key = std::str::from_utf8(b.get(at + 1..at + 1 + k)?).ok()?;
             at += 1 + k;
             let v = usize::from(u16_at(b.get(at..at + 2)?, 0));
-            map.insert(key.to_string(), b.get(at + 2..at + 2 + v)?.to_vec());
+            map.insert(key.to_owned(), b.get(at + 2..at + 2 + v)?.to_vec());
             at += 2 + v;
         }
         let meta = Self(map);
@@ -323,6 +323,7 @@ pub(crate) fn check_resumed(stored: Option<Location>, id: u64, loc: Location) ->
         feature = "memory"
     )
 ))]
+#[allow(clippy::panic, reason = "test helpers fail the test")]
 pub(crate) mod tests {
     use std::collections::BTreeMap;
     #[cfg(any(feature = "paged", feature = "redb"))]
@@ -336,7 +337,7 @@ pub(crate) mod tests {
     use super::{BulkLoad as _, NodeRead, NodeReader as _, NodeStore};
     #[cfg(any(feature = "paged", feature = "redb", feature = "dense"))]
     use crate::file::tests::TestFile;
-    use crate::{Error, LoadState, Location, Metadata, MAX_METADATA_BYTES, MAX_NODE_ID};
+    use crate::{Error, LoadState, Location, MAX_METADATA_BYTES, MAX_NODE_ID, Metadata};
 
     /// IDs mostly in runs, with gaps of all sizes, and locations a short step apart.
     pub(crate) fn nodes(rng: &mut StdRng, count: usize) -> BTreeMap<u64, Location> {

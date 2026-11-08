@@ -1,10 +1,15 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
+# Generated code, vendored schemas, test fixtures (copied from other projects with their licenses) and insta snapshots
+# are checked in exactly as produced
+exclude: ^crates/osmflow/(src/generated|proto|fixtures|tests/snapshots)/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
+        args: [ --maxkb=1024 ] # osmflow's test fixtures include real PBF files of up to about 600 KB
       - id: check-executables-have-shebangs
       - id: check-json
       - id: check-shebang-scripts-are-executable
