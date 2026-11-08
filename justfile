@@ -20,7 +20,7 @@ export RUST_BACKTRACE := env('RUST_BACKTRACE', if ci_mode == '1' {'1'} else {'0'
 
 # Run benchmarks
 bench:
-    cargo bench -p bench
+    cargo bench -p osmnodecache --bench bench --all-features
     open target/criterion/bench/report/index.html
 
 # Build the project
@@ -107,7 +107,7 @@ get-msrv package=main_crate:  (get-crate-field 'rust_version' package)
 
 # Find the minimum supported Rust version (MSRV), update Cargo.toml, and test minimal dependencies
 msrv:  (cargo-install 'cargo-msrv')
-    cargo msrv find --write-msrv --ignore-lockfile -- {{just}} _check-msrv-default
+    cargo msrv find --manifest-path crates/{{main_crate}}/Cargo.toml --write-msrv --ignore-lockfile -- {{just}} _check-msrv-default
 
 # Compile the crate's default features using a dynamically generated minimal Cargo.lock
 _check-msrv-default:  (cargo-install 'cargo-minimal-versions') (cargo-install 'cargo-hack')
