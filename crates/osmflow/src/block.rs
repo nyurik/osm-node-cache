@@ -118,11 +118,16 @@ fn merged<'a>(occurrences: impl IntoIterator<Item = &'a [u8]>) -> Option<Cow<'a,
         .fold(None, |acc, next| Some(merge(acc, next)))
 }
 
-/// Appends an occurrence of a message field to those before it; see [`merged`].
+/// Appends an occurrence of a message field to those before it; see [`merged`]. The first occurrence is borrowed,
+/// the second copies it once, and later ones are appended to that copy, so merging takes linear time.
 fn merge<'a>(acc: Option<Cow<'a, [u8]>>, next: &'a [u8]) -> Cow<'a, [u8]> {
     match acc {
         None => Cow::Borrowed(next),
-        Some(prev) => Cow::Owned([prev.as_ref(), next].concat()),
+        Some(prev) => {
+            let mut all = prev.into_owned();
+            all.extend_from_slice(next);
+            Cow::Owned(all)
+        }
     }
 }
 
@@ -349,7 +354,9 @@ impl Objects {
                 packed::values(v, "tag values", |k| push_index(vals, k, "tag values"))
             }
             (4, Value::Bytes(b)) => {
-                info = Some(merge(info.take(), b));
+                if ctx.select.metadata {
+                    info = Some(merge(info.take(), b));
+                }
                 Ok(())
             }
             (1 | 4, _) => Err(FormatError::Message(what)),
