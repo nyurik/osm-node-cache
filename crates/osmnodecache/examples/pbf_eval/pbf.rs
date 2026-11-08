@@ -313,6 +313,9 @@ struct Direct {
     end: usize,
     /// the file offset of the aligned buffer's end
     offset: u64,
+    /// set by a short read, which only the end of the file gives: the next read would be at an
+    /// unaligned offset, which direct I/O rejects, so there is none until a seek
+    eof: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -336,6 +339,7 @@ impl Direct {
             start: 0,
             end: 0,
             offset: 0,
+            eof: false,
         })
     }
 
@@ -344,15 +348,11 @@ impl Direct {
         use std::os::unix::fs::FileExt as _;
         let buf = &mut self.buf[self.base..self.base + READ_BUFFER];
         let mut n = 0;
-        // Only the end of the file gives a short read. Reading on after it would read at an
-        // unaligned offset, which direct I/O rejects, so a short read ends the buffer.
-        while n < buf.len() {
+        while !self.eof && n < buf.len() {
             let want = buf.len() - n;
             let read = self.file.read_at(&mut buf[n..], self.offset + n as u64)?;
             n += read;
-            if read < want {
-                break;
-            }
+            self.eof = read < want;
         }
         (self.start, self.end) = (0, n);
         self.offset += n as u64;
@@ -381,6 +381,7 @@ impl Seek for Direct {
             return Err(io::Error::other("only seeking from the start is supported"));
         };
         self.offset = pos - pos % Self::ALIGN as u64;
+        self.eof = false;
         self.fill()?;
         self.start = usize::try_from(pos % Self::ALIGN as u64)
             .unwrap()
