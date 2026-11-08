@@ -313,6 +313,9 @@ struct Direct {
     end: usize,
     /// the file offset of the aligned buffer's end
     offset: u64,
+    /// set by a short read, which only the end of the file gives: the next read would be at an
+    /// unaligned offset, which direct I/O rejects, so there is none until a seek
+    eof: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -336,6 +339,7 @@ impl Direct {
             start: 0,
             end: 0,
             offset: 0,
+            eof: false,
         })
     }
 
@@ -344,13 +348,11 @@ impl Direct {
         use std::os::unix::fs::FileExt as _;
         let buf = &mut self.buf[self.base..self.base + READ_BUFFER];
         let mut n = 0;
-        // only the end of the file gives a short read
-        while n < buf.len() {
+        while !self.eof && n < buf.len() {
+            let want = buf.len() - n;
             let read = self.file.read_at(&mut buf[n..], self.offset + n as u64)?;
-            if read == 0 {
-                break;
-            }
             n += read;
+            self.eof = read < want;
         }
         (self.start, self.end) = (0, n);
         self.offset += n as u64;
@@ -379,6 +381,7 @@ impl Seek for Direct {
             return Err(io::Error::other("only seeking from the start is supported"));
         };
         self.offset = pos - pos % Self::ALIGN as u64;
+        self.eof = false;
         self.fill()?;
         self.start = usize::try_from(pos % Self::ALIGN as u64)
             .unwrap()
@@ -729,8 +732,9 @@ pub fn osmpbf_nodes(path: &Path) -> anyhow::Result<(u64, u64)> {
                                 .map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())),
                         )
                     {
-                        n += 1;
+                        // negative IDs, as in files an editor wrote, are left out, as the decoder does
                         if id >= 0 {
+                            n += 1;
                             sum = sum.wrapping_add(checksum(&Node {
                                 id: id.cast_unsigned(),
                                 lat,

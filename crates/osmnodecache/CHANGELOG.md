@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- update to manintained bincode ([#38](https://github.com/nyurik/osm-node-cache/pull/38))
+- update to maintained bincode ([#38](https://github.com/nyurik/osm-node-cache/pull/38))
 - update proj framework ([#36](https://github.com/nyurik/osm-node-cache/pull/36))
 - add .editorconfig
 - minor justfile adjustments
