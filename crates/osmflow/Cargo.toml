@@ -16,26 +16,23 @@ name = "parse"
 harness = false
 
 [dependencies]
-# pin buffa to the same v as dev-dependencies.
-# When updating, make sure to run `just update-generated` - stored generated code must match. This avoids having protoc for the users.
-buffa = "=0.9.2"
-flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
-rayon = "1"
-thiserror = "2"
-
-[dev-dependencies]
-# For the `codegen` example, which regenerates src/generated (`just update-generated`, needs protoc); the same version
-# as buffa, since the generated code must match its runtime.
-buffa-build = "=0.9.2"
-criterion = "0.8"
-insta = "1.43"
-osmpbf = { version = "0.3.8", default-features = false, features = ["zlib-ng"] }
-osmpbfreader = "0.19"
-test_each_file = "0.3.5"
+buffa.workspace = true
+flate2 = { workspace = true, features = ["zlib-rs", "runtime_detection"] }
+rayon.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # The benchmark evicts its input from the page cache before each run, and checks that it is gone
-libc = "0.2"
+libc = { workspace = true }
+
+[dev-dependencies]
+# For the `codegen` example, which regenerates src/generated (`just update-generated`, needs protoc)
+buffa-build.workspace = true
+criterion.workspace = true
+insta.workspace = true
+osmpbf.workspace = true
+osmpbfreader.workspace = true
+test_each_file.workspace = true
 
 [lints]
 workspace = true
