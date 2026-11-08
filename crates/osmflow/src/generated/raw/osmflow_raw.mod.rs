@@ -59,3 +59,7 @@ pub use self::__buffa::view::DenseInfoOwnedView;
 pub use self::__buffa::view::DenseNodesView;
 #[doc(inline)]
 pub use self::__buffa::view::DenseNodesOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::DenseNodeLocationsView;
+#[doc(inline)]
+pub use self::__buffa::view::DenseNodeLocationsOwnedView;

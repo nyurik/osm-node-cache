@@ -5,13 +5,13 @@ MIT License: see LICENSE-OSM-binary in this directory.
 
 The messages and field numbers are those of the original files, with these differences, which make decoding fast:
 
-- every packed array is declared `[packed = true]` and generated with buffa's `packed_views`, so its view is a
-  `PackedView`: the packed bytes, checked and borrowed from the input, decoded as they are read, with no `Vec`. An
-  array split into several fields, or written unpacked (one varint per value, which the format allows), is decoded
-  into the view instead;
-- plain nodes, ways and relations, and the nested `DenseInfo`, are declared `bytes`: osmflow decodes each object's
-  fields itself, straight into its columns, which saves the allocations of a view per object, and only when that
-  object type is selected;
+- every packed array is declared `[packed = true]` with its own type, and buffa decodes it into the view, joining an
+  array split into several fields or written unpacked (one varint per value, which the format allows);
+- plain nodes, ways and relations, a group's dense nodes and their nested `DenseInfo` are declared `bytes`: osmflow
+  decodes them itself, and only when they are selected (plain objects straight into columns, which saves the
+  allocations of a view per object; dense nodes through `DenseNodes`, or `DenseNodeLocations` when only node locations
+  are selected, which skips their tags and metadata unread). They are `repeated`, as protobuf merges several
+  occurrences of a message field: osmflow decodes the occurrences concatenated, which is that merge;
 - every field is `optional`, and fields osmflow does not read (the blob index data, the changesets group) are left
   out, so they are skipped unread.
 
@@ -54,7 +54,7 @@ message StringTable {
 
 message PrimitiveGroup {
   repeated bytes nodes = 1;     // Node
-  optional DenseNodes dense = 2;
+  repeated bytes dense = 2;     // DenseNodes, or DenseNodeLocations; every occurrence, merged by osmflow
   repeated bytes ways = 3;      // Way
   repeated bytes relations = 4; // Relation
 }
@@ -70,8 +70,15 @@ message DenseInfo {
 
 message DenseNodes {
   repeated sint64 id = 1 [packed = true];        // delta coded
-  optional bytes denseinfo = 5;                  // DenseInfo
+  repeated bytes denseinfo = 5;                  // DenseInfo; every occurrence, merged by osmflow
   repeated sint64 lat = 8 [packed = true];       // delta coded
   repeated sint64 lon = 9 [packed = true];       // delta coded
   repeated int32 keys_vals = 10 [packed = true];
+}
+
+// The dense nodes of a read of node locations only: their other fields are skipped unread.
+message DenseNodeLocations {
+  repeated sint64 id = 1 [packed = true];        // delta coded
+  repeated sint64 lat = 8 [packed = true];       // delta coded
+  repeated sint64 lon = 9 [packed = true];       // delta coded
 }

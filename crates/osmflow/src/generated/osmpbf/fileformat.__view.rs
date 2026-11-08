@@ -243,7 +243,6 @@ impl<'a> ::buffa::MessageName for BlobView<'a> {
 }
 ::buffa::impl_default_view_instance!(BlobView);
 ::buffa::impl_view_reborrow!(BlobView);
-::buffa::unsafe_impl_view_lifetime_parametric!(BlobView);
 /** Self-contained, `'static` owned view of a `Blob` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`BlobView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -502,7 +501,6 @@ impl<'a> ::buffa::MessageName for BlobHeaderView<'a> {
 }
 ::buffa::impl_default_view_instance!(BlobHeaderView);
 ::buffa::impl_view_reborrow!(BlobHeaderView);
-::buffa::unsafe_impl_view_lifetime_parametric!(BlobHeaderView);
 /** Self-contained, `'static` owned view of a `BlobHeader` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`BlobHeaderView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.

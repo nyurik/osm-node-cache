@@ -4,11 +4,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
-use rayon::ThreadPool;
+use rayon::{ThreadPool, Yield};
 
 use crate::blob::{BlobKind, BlobReader, RawBlob};
 use crate::block::{Block, Select};
@@ -25,6 +26,8 @@ const MIN_BYTES_IN_FLIGHT: usize = 256 << 20;
 /// the declared uncompressed size, not the compressed one, keeps a highly compressible blob from being admitted at a
 /// fraction of the memory it decodes to.
 const DECODED_FACTOR: usize = 3;
+/// How long a thread of the decoding pool waits for another to finish its work, when it has none of its own to run.
+const POOL_WAIT: Duration = Duration::from_millis(1);
 
 /// An OSM PBF file, with its header read.
 #[derive(Debug, Clone)]
@@ -102,7 +105,7 @@ impl PbfReader {
         pool.in_place_scope(|scope| {
             let run = &run;
             let mut index = 0;
-            let read = admit(&self.path, &run.budget, |blob, permit| {
+            let read = admit(&self.path, &run.budget, &pool, |blob, permit| {
                 let i = index;
                 index += 1;
                 lock(&run.gate).admit();
@@ -309,10 +312,15 @@ fn data_blobs(path: &Path) -> Result<impl Iterator<Item = Result<RawBlob>> + use
 
 /// Reads the file's data blobs and hands each to `spawn` with its share of the budget, until the end of the file,
 /// a read error, or the budget is closed.
-fn admit(path: &Path, budget: &Arc<Budget>, mut spawn: impl FnMut(RawBlob, Permit)) -> Result<()> {
+fn admit(
+    path: &Path,
+    budget: &Arc<Budget>,
+    pool: &ThreadPool,
+    mut spawn: impl FnMut(RawBlob, Permit),
+) -> Result<()> {
     for blob in data_blobs(path)? {
         let blob = blob?;
-        let Some(permit) = budget.acquire(blob.content_len() * DECODED_FACTOR) else {
+        let Some(permit) = budget.acquire(blob.content_len() * DECODED_FACTOR, pool) else {
             break;
         };
         spawn(blob, permit);
@@ -348,13 +356,30 @@ impl Budget {
     }
 
     /// Waits until `cost` more bytes fit, and takes them until the permit is dropped; `None` once the budget is closed.
-    fn acquire(self: &Arc<Self>, cost: usize) -> Option<Permit> {
-        let mut state = self
-            .changed
-            .wait_while(lock(&self.state), |&mut (used, closed)| {
-                !closed && used != 0 && used + cost > self.limit
-            })
-            .unwrap_or_else(PoisonError::into_inner);
+    ///
+    /// On a thread of `pool`, it runs the pool's work while it waits: that work returns the bytes, and blocking the
+    /// thread could leave it no thread to run on (a one-thread pool, a read started from the pool's own work).
+    fn acquire(self: &Arc<Self>, cost: usize, pool: &ThreadPool) -> Option<Permit> {
+        let fits =
+            |&(used, closed): &(usize, bool)| closed || used == 0 || used + cost <= self.limit;
+        let on_pool = pool.current_thread_index().is_some();
+        let mut state = lock(&self.state);
+        while !fits(&state) {
+            if on_pool {
+                drop(state);
+                if pool.yield_now() == Some(Yield::Idle) {
+                    // No work to run here: it runs on other threads, which signal when they return bytes.
+                    let wait = self.changed.wait_timeout(lock(&self.state), POOL_WAIT);
+                    drop(wait.unwrap_or_else(PoisonError::into_inner));
+                }
+                state = lock(&self.state);
+            } else {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
         if state.1 {
             return None;
         }
@@ -399,6 +424,8 @@ pub struct ParOrdered {
     slots: Receiver<Slot>,
     budget: Arc<Budget>,
     reader: Option<JoinHandle<()>>,
+    /// The pool that decodes the blocks, whose work a consumer on one of its threads runs while it waits
+    pool: Arc<ThreadPool>,
 }
 
 impl ParOrdered {
@@ -406,11 +433,12 @@ impl ParOrdered {
         let budget = Budget::for_pool(&pool);
         // The budget bounds the queue of slots; this bound only keeps the channel itself small.
         let (slots_tx, slots) = sync_channel::<Slot>(1024);
-        let reader_budget = Arc::clone(&budget);
+        let (reader_budget, reader_pool) = (Arc::clone(&budget), Arc::clone(&pool));
         let reader = std::thread::Builder::new()
             .name("osmflow-reader".to_owned())
             .spawn(move || {
-                let read = admit(&path, &reader_budget, |blob, permit| {
+                let pool = reader_pool;
+                let read = admit(&path, &reader_budget, &pool, |blob, permit| {
                     let (tx, slot) = sync_channel(1);
                     if slots_tx.send(slot).is_ok() {
                         pool.spawn(move || {
@@ -428,7 +456,31 @@ impl ParOrdered {
             slots,
             budget,
             reader: Some(reader),
+            pool,
         })
+    }
+
+    /// Waits for a block. On a thread of the decoding pool, it runs the pool's work while it waits, as the block may
+    /// be waiting for that very thread.
+    fn wait_for(&self, slot: &Slot) -> Option<(Result<Block>, Option<Permit>)> {
+        if self.pool.current_thread_index().is_none() {
+            return slot.recv().ok();
+        }
+        loop {
+            match slot.try_recv() {
+                Ok(item) => return Some(item),
+                Err(TryRecvError::Disconnected) => return None,
+                Err(TryRecvError::Empty) => {
+                    if self.pool.yield_now() == Some(Yield::Idle) {
+                        match slot.recv_timeout(POOL_WAIT) {
+                            Ok(item) => return Some(item),
+                            Err(RecvTimeoutError::Disconnected) => return None,
+                            Err(RecvTimeoutError::Timeout) => {}
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -443,7 +495,7 @@ impl Iterator for ParOrdered {
             }
             return None;
         };
-        let (block, _permit) = slot.recv().ok()?;
+        let (block, _permit) = self.wait_for(&slot)?;
         Some(block)
     }
 }

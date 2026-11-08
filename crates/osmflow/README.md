@@ -48,12 +48,12 @@ fn read(path: &str) -> osmflow::Result<()> {
 
 ## How it reads
 
-- **Protobuf through [`buffa`](https://crates.io/crates/buffa) views, with packed arrays borrowed.** The blocks are
-  decoded with a read projection of the format's schema (`proto/osmflow_raw.proto`), generated with buffa's
-  `packed_views`: each dense node array is a `PackedView`, checked and borrowed from the decompressed blob, and decoded
-  as osmflow reads it, so it needs no `Vec`. An array split into several fields, or written unpacked, which the format
-  allows, is decoded into the view instead. Plain nodes, ways and relations are read by osmflow's own field reader,
-  straight into columns.
+- **Protobuf through [`buffa`](https://crates.io/crates/buffa) views.** The blocks are decoded with a read projection
+  of the format's schema (`proto/osmflow_raw.proto`) that declares only what osmflow reads, so the rest is skipped
+  unread. Dense nodes are decoded only when nodes are selected, and only their locations when no tags or metadata
+  are. Plain nodes, ways and relations are read by osmflow's own field reader, straight into columns. Packed arrays
+  may be split into several fields or written unpacked, and message fields may arrive in several occurrences, which
+  are merged, as the format allows.
 - **Columns:** a block's objects are stored as columns of IDs, locations, references and string indexes. Its string
   table is checked as UTF-8 once and copied into one string, so a block keeps no decompressed buffer.
 - **Selection:** [`Select`] skips the object types and fields a caller does not need.

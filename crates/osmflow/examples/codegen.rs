@@ -23,10 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "src/generated/osmpbf",
     )
     .compile()?;
-    // The projection: dense node arrays as borrowed `PackedView`s, decoded as they are read, with no `Vec` per array
-    // (see the comments in the .proto file).
-    config(&["osmflow_raw.proto"], "src/generated/raw")
-        .packed_views()
-        .compile()?;
+    // The projection: the fields osmflow reads, as it reads them (see the comments in the .proto file).
+    config(&["osmflow_raw.proto"], "src/generated/raw").compile()?;
     Ok(())
 }

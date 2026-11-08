@@ -240,10 +240,7 @@ impl BlobHeader {
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets `type` to `Some(value)`, consuming and returning `self`.
-    pub fn with_type(
-        mut self,
-        value: impl ::core::convert::Into<::buffa::alloc::vec::Vec<u8>>,
-    ) -> Self {
+    pub fn with_type(mut self, value: impl Into<::buffa::alloc::vec::Vec<u8>>) -> Self {
         self.r#type = Some(value.into());
         self
     }
@@ -422,9 +419,9 @@ impl ::buffa::Message for PrimitiveBlock {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let ::core::option::Option::Some(__v) = self.stringtable.as_option() {
+        if self.stringtable.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.stringtable.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -459,13 +456,13 @@ impl ::buffa::Message for PrimitiveBlock {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let ::core::option::Option::Some(__v) = self.stringtable.as_option() {
+        if self.stringtable.is_set() {
             ::buffa::types::put_len_delimited_header(
                 1u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.stringtable.write_to(__cache, buf);
         }
         for v in &self.primitivegroup {
             ::buffa::types::put_len_delimited_header(
@@ -664,8 +661,10 @@ pub struct PrimitiveGroup {
     ///
     /// Field 1: `nodes`
     pub nodes: ::buffa::alloc::vec::Vec<::buffa::alloc::vec::Vec<u8>>,
+    /// DenseNodes, or DenseNodeLocations; every occurrence, merged by osmflow
+    ///
     /// Field 2: `dense`
-    pub dense: ::buffa::MessageField<DenseNodes, ::buffa::Inline<DenseNodes>>,
+    pub dense: ::buffa::alloc::vec::Vec<::buffa::alloc::vec::Vec<u8>>,
     /// Way
     ///
     /// Field 3: `ways`
@@ -708,20 +707,15 @@ impl ::buffa::Message for PrimitiveGroup {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
         for v in &self.nodes {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
-        if let ::core::option::Option::Some(__v) = self.dense.as_option() {
-            let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        for v in &self.dense {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         for v in &self.ways {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
@@ -733,7 +727,7 @@ impl ::buffa::Message for PrimitiveGroup {
     }
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
@@ -741,13 +735,8 @@ impl ::buffa::Message for PrimitiveGroup {
         for v in &self.nodes {
             ::buffa::types::put_shared_bytes_field(1u32, v, buf);
         }
-        if let ::core::option::Option::Some(__v) = self.dense.as_option() {
-            ::buffa::types::put_len_delimited_header(
-                2u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            __v.write_to(__cache, buf);
+        for v in &self.dense {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         for v in &self.ways {
             ::buffa::types::put_shared_bytes_field(3u32, v, buf);
@@ -783,11 +772,11 @@ impl ::buffa::Message for PrimitiveGroup {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.dense.get_or_insert_default(),
-                    buf,
-                    ctx,
+                let __elem = ::buffa::types::decode_bytes(buf)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
                 )?;
+                self.dense.push(__elem);
             }
             3u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -819,7 +808,7 @@ impl ::buffa::Message for PrimitiveGroup {
     }
     fn clear(&mut self) {
         self.nodes.clear();
-        self.dense = ::buffa::MessageField::none();
+        self.dense.clear();
         self.ways.clear();
         self.relations.clear();
     }
@@ -1276,10 +1265,10 @@ pub struct DenseNodes {
     ///
     /// Field 1: `id`
     pub id: ::buffa::alloc::vec::Vec<i64>,
-    /// DenseInfo
+    /// DenseInfo; every occurrence, merged by osmflow
     ///
     /// Field 5: `denseinfo`
-    pub denseinfo: ::core::option::Option<::buffa::alloc::vec::Vec<u8>>,
+    pub denseinfo: ::buffa::alloc::vec::Vec<::buffa::alloc::vec::Vec<u8>>,
     /// delta coded
     ///
     /// Field 8: `lat`
@@ -1309,18 +1298,6 @@ impl DenseNodes {
     /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
     pub const TYPE_URL: &'static str = "type.googleapis.com/osmflow_raw.DenseNodes";
 }
-impl DenseNodes {
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::denseinfo`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_denseinfo(
-        mut self,
-        value: impl ::core::convert::Into<::buffa::alloc::vec::Vec<u8>>,
-    ) -> Self {
-        self.denseinfo = Some(value.into());
-        self
-    }
-}
 ::buffa::impl_default_instance!(DenseNodes);
 impl ::buffa::MessageName for DenseNodes {
     const PACKAGE: &'static str = "osmflow_raw";
@@ -1349,7 +1326,7 @@ impl ::buffa::Message for DenseNodes {
                 .sum::<u64>();
             size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
-        if let Some(ref v) = self.denseinfo {
+        for v in &self.denseinfo {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if !self.lat.is_empty() {
@@ -1396,7 +1373,7 @@ impl ::buffa::Message for DenseNodes {
                 ::buffa::types::encode_sint64(v, buf);
             }
         }
-        if let Some(ref v) = self.denseinfo {
+        for v in &self.denseinfo {
             ::buffa::types::put_shared_bytes_field(5u32, v, buf);
         }
         if !self.lat.is_empty() {
@@ -1489,10 +1466,11 @@ impl ::buffa::Message for DenseNodes {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::types::merge_bytes(
-                    self.denseinfo.get_or_insert_with(::buffa::alloc::vec::Vec::new),
-                    buf,
+                let __elem = ::buffa::types::decode_bytes(buf)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
                 )?;
+                self.denseinfo.push(__elem);
             }
             8u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
@@ -1622,9 +1600,271 @@ impl ::buffa::Message for DenseNodes {
     }
     fn clear(&mut self) {
         self.id.clear();
-        self.denseinfo = ::core::option::Option::None;
+        self.denseinfo.clear();
         self.lat.clear();
         self.lon.clear();
         self.keys_vals.clear();
+    }
+}
+/// The dense nodes of a read of node locations only: their other fields are skipped unread.
+#[derive(Clone, PartialEq, Default)]
+pub struct DenseNodeLocations {
+    /// delta coded
+    ///
+    /// Field 1: `id`
+    pub id: ::buffa::alloc::vec::Vec<i64>,
+    /// delta coded
+    ///
+    /// Field 8: `lat`
+    pub lat: ::buffa::alloc::vec::Vec<i64>,
+    /// delta coded
+    ///
+    /// Field 9: `lon`
+    pub lon: ::buffa::alloc::vec::Vec<i64>,
+}
+impl ::core::fmt::Debug for DenseNodeLocations {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("DenseNodeLocations")
+            .field("id", &self.id)
+            .field("lat", &self.lat)
+            .field("lon", &self.lon)
+            .finish()
+    }
+}
+impl DenseNodeLocations {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/osmflow_raw.DenseNodeLocations";
+}
+::buffa::impl_default_instance!(DenseNodeLocations);
+impl ::buffa::MessageName for DenseNodeLocations {
+    const PACKAGE: &'static str = "osmflow_raw";
+    const NAME: &'static str = "DenseNodeLocations";
+    const FULL_NAME: &'static str = "osmflow_raw.DenseNodeLocations";
+    const TYPE_URL: &'static str = "type.googleapis.com/osmflow_raw.DenseNodeLocations";
+}
+impl ::buffa::Message for DenseNodeLocations {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.id.is_empty() {
+            let payload: u64 = self
+                .id
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        if !self.lat.is_empty() {
+            let payload: u64 = self
+                .lat
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        if !self.lon.is_empty() {
+            let payload: u64 = self
+                .lon
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.id.is_empty() {
+            let payload: u64 = self
+                .id
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(1u32, payload, buf);
+            for &v in &self.id {
+                ::buffa::types::encode_sint64(v, buf);
+            }
+        }
+        if !self.lat.is_empty() {
+            let payload: u64 = self
+                .lat
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(8u32, payload, buf);
+            for &v in &self.lat {
+                ::buffa::types::encode_sint64(v, buf);
+            }
+        }
+        if !self.lon.is_empty() {
+            let payload: u64 = self
+                .lon
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(9u32, payload, buf);
+            for &v in &self.lon {
+                ::buffa::types::encode_sint64(v, buf);
+            }
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let len = ::buffa::encoding::decode_varint(buf)?;
+                    let len = usize::try_from(len)
+                        .map_err(|_| ::buffa::DecodeError::MessageTooLarge)?;
+                    if buf.remaining() < len {
+                        return ::core::result::Result::Err(
+                            ::buffa::DecodeError::UnexpectedEof,
+                        );
+                    }
+                    if buf.chunk().len() >= len {
+                        ::buffa::types::extend_packed_sint64(
+                            &buf.chunk()[..len],
+                            &mut self.id,
+                            len,
+                        )?;
+                        buf.advance(len);
+                    } else {
+                        self.id.reserve(len);
+                        let mut limited = buf.take(len);
+                        while limited.has_remaining() {
+                            self.id
+                                .push(::buffa::types::decode_sint64_packed(&mut limited)?);
+                        }
+                        let leftover = limited.remaining();
+                        if leftover > 0 {
+                            limited.advance(leftover);
+                        }
+                    }
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
+                    self.id.push(::buffa::types::decode_sint64(buf)?);
+                } else {
+                    return ::core::result::Result::Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            8u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let len = ::buffa::encoding::decode_varint(buf)?;
+                    let len = usize::try_from(len)
+                        .map_err(|_| ::buffa::DecodeError::MessageTooLarge)?;
+                    if buf.remaining() < len {
+                        return ::core::result::Result::Err(
+                            ::buffa::DecodeError::UnexpectedEof,
+                        );
+                    }
+                    if buf.chunk().len() >= len {
+                        ::buffa::types::extend_packed_sint64(
+                            &buf.chunk()[..len],
+                            &mut self.lat,
+                            len,
+                        )?;
+                        buf.advance(len);
+                    } else {
+                        self.lat.reserve(len);
+                        let mut limited = buf.take(len);
+                        while limited.has_remaining() {
+                            self.lat
+                                .push(::buffa::types::decode_sint64_packed(&mut limited)?);
+                        }
+                        let leftover = limited.remaining();
+                        if leftover > 0 {
+                            limited.advance(leftover);
+                        }
+                    }
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
+                    self.lat.push(::buffa::types::decode_sint64(buf)?);
+                } else {
+                    return ::core::result::Result::Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            9u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let len = ::buffa::encoding::decode_varint(buf)?;
+                    let len = usize::try_from(len)
+                        .map_err(|_| ::buffa::DecodeError::MessageTooLarge)?;
+                    if buf.remaining() < len {
+                        return ::core::result::Result::Err(
+                            ::buffa::DecodeError::UnexpectedEof,
+                        );
+                    }
+                    if buf.chunk().len() >= len {
+                        ::buffa::types::extend_packed_sint64(
+                            &buf.chunk()[..len],
+                            &mut self.lon,
+                            len,
+                        )?;
+                        buf.advance(len);
+                    } else {
+                        self.lon.reserve(len);
+                        let mut limited = buf.take(len);
+                        while limited.has_remaining() {
+                            self.lon
+                                .push(::buffa::types::decode_sint64_packed(&mut limited)?);
+                        }
+                        let leftover = limited.remaining();
+                        if leftover > 0 {
+                            limited.advance(leftover);
+                        }
+                    }
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
+                    self.lon.push(::buffa::types::decode_sint64(buf)?);
+                } else {
+                    return ::core::result::Result::Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.id.clear();
+        self.lat.clear();
+        self.lon.clear();
     }
 }

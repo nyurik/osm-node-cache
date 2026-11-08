@@ -206,12 +206,16 @@ fn osmpbfreader_par(path: &Path) -> Summary {
 #[cfg(target_os = "linux")]
 #[allow(
     unsafe_code,
-    reason = "posix_fadvise and mincore have no safe wrapper in std"
+    reason = "sysconf, posix_fadvise and mincore have no safe wrapper in std"
 )]
 fn evict(path: &Path) {
     use std::os::fd::AsRawFd as _;
 
-    const PAGE: usize = 4096;
+    // SAFETY: `sysconf` only reads a system setting.
+    let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })
+        .ok()
+        .filter(|&page| page > 0)
+        .expect("sysconf gives the page size");
     let file = std::fs::File::open(path).unwrap();
     let len = usize::try_from(file.metadata().unwrap().len()).unwrap();
     if len == 0 {
@@ -240,7 +244,8 @@ fn evict(path: &Path) {
         "mmap failed: {}",
         std::io::Error::last_os_error()
     );
-    let mut pages = vec![0u8; len.div_ceil(PAGE)];
+    // mincore gives one byte per page of the system's page size
+    let mut pages = vec![0u8; len.div_ceil(page)];
     // SAFETY: `addr` maps `len` bytes, and `pages` has one byte per page of them.
     let rc = unsafe { libc::mincore(addr, len, pages.as_mut_ptr()) };
     let err = std::io::Error::last_os_error();

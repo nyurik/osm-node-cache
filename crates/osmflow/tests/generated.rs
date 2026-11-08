@@ -442,6 +442,74 @@ fn build_all() -> Vec<(&'static str, Vec<u8>)> {
         ));
     }
 
+    // Message fields in several occurrences, which protobuf merges as if their encodings were one: the objects of
+    // `packed.osm.pbf`. First the dense nodes in two `dense` occurrences, the second's deltas carrying on from the
+    // first's; then the same dense nodes with their metadata in two `denseinfo` occurrences; then a way with its
+    // metadata in two `info` occurrences.
+    let (ids, latitudes, longitudes) = (deltas(&IDS), deltas(&LATS), deltas(&LONS));
+    let versions = ints(&[1, 2, 3]);
+    let times = deltas(&[1_600_000_000, 1_600_001_000, 1_600_002_000]);
+    let (changesets, uids, users) = (deltas(&[7; 3]), deltas(&[42; 3]), deltas(&[6; 3]));
+    let dense_part = |nodes: std::ops::Range<usize>, keys_vals: &[u64]| {
+        let r = || nodes.clone();
+        let mut info = Pb::default();
+        info.packed(1, &versions[r()])
+            .packed(2, &times[r()])
+            .packed(3, &changesets[r()])
+            .packed(4, &uids[r()])
+            .packed(5, &users[r()]);
+        let mut d = Pb::default();
+        d.packed(1, &ids[r()])
+            .msg(5, &info)
+            .packed(8, &latitudes[r()])
+            .packed(9, &longitudes[r()])
+            .packed(10, keys_vals);
+        d
+    };
+    let (mut info_a, mut info_b) = (Pb::default(), Pb::default());
+    info_a.packed(1, &versions).packed(2, &times);
+    info_b
+        .packed(3, &changesets)
+        .packed(4, &uids)
+        .packed(5, &users);
+    let mut split_info = Pb::default();
+    split_info
+        .packed(1, &ids)
+        .msg(5, &info_a)
+        .msg(5, &info_b)
+        .packed(8, &latitudes)
+        .packed(9, &longitudes)
+        .packed(10, &[1, 2, 0, 0, 3, 4, 0]);
+    let (mut info_1, mut info_2) = (Pb::default(), Pb::default());
+    info_1.uint(1, 3).uint(2, 1_600_000_000);
+    info_2.uint(3, 7).uint(4, 42).uint(5, 6);
+    let mut split_way = Pb::default();
+    split_way
+        .int(1, 10)
+        .packed(2, &[1])
+        .packed(3, &[2])
+        .msg(4, &info_1)
+        .msg(4, &info_2)
+        .packed(8, &deltas(&IDS));
+    all.push((
+        "split_messages.osm.pbf",
+        file(&[
+            header(&["OsmSchema-V0.6", "DenseNodes"]),
+            block(
+                &[group(
+                    2,
+                    &[
+                        dense_part(0..2, &[1, 2, 0, 0]),
+                        dense_part(2..3, &[3, 4, 0]),
+                    ],
+                )],
+                |_| {},
+            ),
+            block(&[group(2, &[split_info])], |_| {}),
+            block(&[group(3, &[split_way])], |_| {}),
+        ]),
+    ));
+
     // Nodes again after a way: not sorted by type, so an unordered read has a barrier at every block.
     all.push((
         "unsorted_types.osm.pbf",

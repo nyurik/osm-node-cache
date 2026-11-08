@@ -98,7 +98,7 @@ impl HeaderBlock {
     ///Sets [`Self::writingprogram`] to `Some(value)`, consuming and returning `self`.
     pub fn with_writingprogram(
         mut self,
-        value: impl ::core::convert::Into<::buffa::alloc::string::String>,
+        value: impl Into<::buffa::alloc::string::String>,
     ) -> Self {
         self.writingprogram = Some(value.into());
         self
@@ -108,7 +108,7 @@ impl HeaderBlock {
     ///Sets [`Self::source`] to `Some(value)`, consuming and returning `self`.
     pub fn with_source(
         mut self,
-        value: impl ::core::convert::Into<::buffa::alloc::string::String>,
+        value: impl Into<::buffa::alloc::string::String>,
     ) -> Self {
         self.source = Some(value.into());
         self
@@ -132,7 +132,7 @@ impl HeaderBlock {
     ///Sets [`Self::osmosis_replication_base_url`] to `Some(value)`, consuming and returning `self`.
     pub fn with_osmosis_replication_base_url(
         mut self,
-        value: impl ::core::convert::Into<::buffa::alloc::string::String>,
+        value: impl Into<::buffa::alloc::string::String>,
     ) -> Self {
         self.osmosis_replication_base_url = Some(value.into());
         self
@@ -158,9 +158,9 @@ impl ::buffa::Message for HeaderBlock {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let ::core::option::Option::Some(__v) = self.bbox.as_option() {
+        if self.bbox.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.bbox.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -196,13 +196,13 @@ impl ::buffa::Message for HeaderBlock {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let ::core::option::Option::Some(__v) = self.bbox.as_option() {
+        if self.bbox.is_set() {
             ::buffa::types::put_len_delimited_header(
                 1u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.bbox.write_to(__cache, buf);
         }
         for v in &self.required_features {
             ::buffa::types::put_string_field(4u32, v, buf);
@@ -552,9 +552,9 @@ impl ::buffa::Message for PrimitiveBlock {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let ::core::option::Option::Some(__v) = self.stringtable.as_option() {
+        if self.stringtable.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.stringtable.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -589,13 +589,13 @@ impl ::buffa::Message for PrimitiveBlock {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let ::core::option::Option::Some(__v) = self.stringtable.as_option() {
+        if self.stringtable.is_set() {
             ::buffa::types::put_len_delimited_header(
                 1u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.stringtable.write_to(__cache, buf);
         }
         for v in &self.primitivegroup {
             ::buffa::types::put_len_delimited_header(
@@ -763,9 +763,9 @@ impl ::buffa::Message for PrimitiveGroup {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
-        if let ::core::option::Option::Some(__v) = self.dense.as_option() {
+        if self.dense.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.dense.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -812,13 +812,13 @@ impl ::buffa::Message for PrimitiveGroup {
             );
             v.write_to(__cache, buf);
         }
-        if let ::core::option::Option::Some(__v) = self.dense.as_option() {
+        if self.dense.is_set() {
             ::buffa::types::put_len_delimited_header(
                 2u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.dense.write_to(__cache, buf);
         }
         for v in &self.ways {
             ::buffa::types::put_len_delimited_header(
@@ -1867,9 +1867,9 @@ impl ::buffa::Message for Node {
                 .sum::<u64>();
             size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
-        if let ::core::option::Option::Some(__v) = self.info.as_option() {
+        if self.info.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.info.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -1909,13 +1909,13 @@ impl ::buffa::Message for Node {
                 ::buffa::types::encode_uint32(v, buf);
             }
         }
-        if let ::core::option::Option::Some(__v) = self.info.as_option() {
+        if self.info.is_set() {
             ::buffa::types::put_len_delimited_header(
                 4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.info.write_to(__cache, buf);
         }
         ::buffa::types::put_sint64_field(8u32, self.lat, buf);
         ::buffa::types::put_sint64_field(9u32, self.lon, buf);
@@ -2135,9 +2135,9 @@ impl ::buffa::Message for DenseNodes {
                 .sum::<u64>();
             size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
-        if let ::core::option::Option::Some(__v) = self.denseinfo.as_option() {
+        if self.denseinfo.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.denseinfo.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -2187,13 +2187,13 @@ impl ::buffa::Message for DenseNodes {
                 ::buffa::types::encode_sint64(v, buf);
             }
         }
-        if let ::core::option::Option::Some(__v) = self.denseinfo.as_option() {
+        if self.denseinfo.is_set() {
             ::buffa::types::put_len_delimited_header(
                 5u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.denseinfo.write_to(__cache, buf);
         }
         if !self.lat.is_empty() {
             let payload: u64 = self
@@ -2514,9 +2514,9 @@ impl ::buffa::Message for Way {
                 .sum::<u64>();
             size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
-        if let ::core::option::Option::Some(__v) = self.info.as_option() {
+        if self.info.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.info.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -2578,13 +2578,13 @@ impl ::buffa::Message for Way {
                 ::buffa::types::encode_uint32(v, buf);
             }
         }
-        if let ::core::option::Option::Some(__v) = self.info.as_option() {
+        if self.info.is_set() {
             ::buffa::types::put_len_delimited_header(
                 4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.info.write_to(__cache, buf);
         }
         if !self.refs.is_empty() {
             let payload: u64 = self
@@ -2947,9 +2947,9 @@ impl ::buffa::Message for Relation {
                 .sum::<u64>();
             size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
-        if let ::core::option::Option::Some(__v) = self.info.as_option() {
+        if self.info.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.info.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -3011,13 +3011,13 @@ impl ::buffa::Message for Relation {
                 ::buffa::types::encode_uint32(v, buf);
             }
         }
-        if let ::core::option::Option::Some(__v) = self.info.as_option() {
+        if self.info.is_set() {
             ::buffa::types::put_len_delimited_header(
                 4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.info.write_to(__cache, buf);
         }
         if !self.roles_sid.is_empty() {
             let payload: u64 = self

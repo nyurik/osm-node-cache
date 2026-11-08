@@ -13,13 +13,54 @@ mod common;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use osmflow::PbfReader;
+use osmflow::{PbfReader, Select};
 use test_each_file::test_each_path;
 
 test_each_path! { for ["pbf"] in "crates/osmflow/fixtures" => fixture }
 
 /// Dumps longer than this are snapshotted by their counts, hash and first lines.
 const FULL_SNAPSHOT_LINES: usize = 200;
+
+/// Fixtures another reader gets wrong: (snapshot name, reader, what it does). They are not compared with that
+/// reader, and their snapshot says why.
+const MISREAD: &[(&str, &str, &str)] = &[
+    (
+        "generated__split_messages.osm.pbf",
+        "osmpbf",
+        LAST_OCCURRENCE,
+    ),
+    (
+        "generated__split_messages.osm.pbf",
+        "osmpbfreader",
+        LAST_OCCURRENCE,
+    ),
+];
+const LAST_OCCURRENCE: &str =
+    "it keeps only the last occurrence of a message field, where protobuf merges them";
+
+/// Neither `osmpbf` nor `osmpbfreader` merges message fields, so the fixture that splits them is checked against the
+/// objects it encodes instead: those of `packed.osm.pbf`, its nodes twice and then its way.
+#[test]
+fn split_messages_are_merged() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/generated");
+    let read =
+        |name: &str| common::osmflow(&PbfReader::open(dir.join(name)).unwrap(), false).unwrap();
+    let packed = read("packed.osm.pbf");
+    let of_type = |kind: char| packed.iter().filter(move |l| l.starts_with(kind)).cloned();
+    let expected: Vec<String> = of_type('n')
+        .chain(of_type('n'))
+        .chain(of_type('w'))
+        .collect();
+    assert_eq!(read("split_messages.osm.pbf"), expected);
+}
+
+/// Why `reader` is not compared on the fixture `name`, if it is not.
+fn misread(name: &str, reader: &str) -> Option<String> {
+    MISREAD
+        .iter()
+        .find(|(n, r, _)| *n == name && *r == reader)
+        .map(|(_, r, why)| format!("# {r} is not compared: {why}"))
+}
 
 fn snapshot_name(path: &Path) -> String {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
@@ -41,14 +82,24 @@ fn fixture([path]: [&Path; 1]) {
         }
         Ok((lines, file)) => {
             check_modes(&file, &lines);
-            let dropped = check_osmpbf(path, &lines);
+            let (osmpbf, osmpbfreader) = (misread(&name, "osmpbf"), misread(&name, "osmpbfreader"));
+            let dropped = if osmpbf.is_none() {
+                check_osmpbf(path, &lines)
+            } else {
+                0
+            };
             // osmpbfreader drops deleted objects, so history files are left out.
-            if !file.header().is_history() {
+            if !file.header().is_history() && osmpbfreader.is_none() {
                 let ours = common::osmflow(&file, true).unwrap();
                 let other = common::osmpbfreader(path).expect("osmpbfreader reads the file");
                 assert_lines_eq(&ours, &other, "osmpbfreader");
             }
-            render(&file, &lines, dropped)
+            let mut out = render(&file, &lines, dropped);
+            for note in [osmpbf, osmpbfreader].into_iter().flatten() {
+                out.push_str(&note);
+                out.push('\n');
+            }
+            out
         }
     };
     insta::with_settings!({ snapshot_path => "snapshots", prepend_module_to_snapshot => false }, {
@@ -59,6 +110,11 @@ fn fixture([path]: [&Path; 1]) {
 fn check_modes(file: &PbfReader, lines: &[String]) {
     let ordered = common::osmflow_ordered(file).expect("parallel ordered read");
     assert_eq!(lines, ordered.as_slice(), "parallel ordered read differs");
+    // Node locations alone take another path through dense nodes, which skips their tags and metadata
+    let locations =
+        common::node_locations(file, Select::node_locations()).expect("node locations read");
+    let all = common::node_locations(file, Select::all()).expect("full read");
+    assert_eq!(locations, all, "node locations read differs");
     let unordered = common::osmflow_unordered(file).expect("parallel unordered read");
     assert_eq!(
         lines,

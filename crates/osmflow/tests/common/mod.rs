@@ -360,3 +360,12 @@ pub fn osmflow_unordered(file: &PbfReader) -> osmflow::Result<Vec<String>> {
     blocks.sort_by_key(|(blob, _)| *blob);
     Ok(blocks.into_iter().flat_map(|(_, lines)| lines).collect())
 }
+
+/// The IDs and locations of the file's nodes, in nanodegrees, read with `select`.
+pub fn node_locations(file: &PbfReader, select: Select) -> osmflow::Result<Vec<(i64, i64, i64)>> {
+    let mut out = Vec::new();
+    for block in file.blocks(select)? {
+        out.extend(block?.nodes().map(|n| (n.id(), n.lat_nano(), n.lon_nano())));
+    }
+    Ok(out)
+}

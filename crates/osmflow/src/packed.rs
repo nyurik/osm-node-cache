@@ -1,5 +1,5 @@
 //! osmflow's own protobuf field reader, for plain nodes, ways, relations and their metadata, which are decoded straight
-//! into columns. Dense nodes are read through buffa views, whose packed arrays are `PackedView`s.
+//! into columns. Dense nodes are read through buffa views.
 
 use crate::error::FormatError;
 

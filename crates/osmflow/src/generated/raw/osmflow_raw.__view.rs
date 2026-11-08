@@ -238,7 +238,6 @@ impl<'a> ::buffa::MessageName for BlobView<'a> {
 }
 ::buffa::impl_default_view_instance!(BlobView);
 ::buffa::impl_view_reborrow!(BlobView);
-::buffa::unsafe_impl_view_lifetime_parametric!(BlobView);
 /** Self-contained, `'static` owned view of a `Blob` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`BlobView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -462,7 +461,6 @@ impl<'a> ::buffa::MessageName for BlobHeaderView<'a> {
 }
 ::buffa::impl_default_view_instance!(BlobHeaderView);
 ::buffa::impl_view_reborrow!(BlobHeaderView);
-::buffa::unsafe_impl_view_lifetime_parametric!(BlobHeaderView);
 /** Self-contained, `'static` owned view of a `BlobHeader` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`BlobHeaderView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -743,9 +741,9 @@ impl<'a> ::buffa::ViewEncode<'a> for PrimitiveBlockView<'a> {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let ::core::option::Option::Some(__v) = self.stringtable.as_option() {
+        if self.stringtable.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
+            let inner_size = self.stringtable.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -781,13 +779,13 @@ impl<'a> ::buffa::ViewEncode<'a> for PrimitiveBlockView<'a> {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let ::core::option::Option::Some(__v) = self.stringtable.as_option() {
+        if self.stringtable.is_set() {
             ::buffa::types::put_len_delimited_header(
                 1u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            __v.write_to(__cache, buf);
+            self.stringtable.write_to(__cache, buf);
         }
         for v in &self.primitivegroup {
             ::buffa::types::put_len_delimited_header(
@@ -819,7 +817,6 @@ impl<'a> ::buffa::MessageName for PrimitiveBlockView<'a> {
 }
 ::buffa::impl_default_view_instance!(PrimitiveBlockView);
 ::buffa::impl_view_reborrow!(PrimitiveBlockView);
-::buffa::unsafe_impl_view_lifetime_parametric!(PrimitiveBlockView);
 /** Self-contained, `'static` owned view of a `PrimitiveBlock` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`PrimitiveBlockView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -1065,7 +1062,6 @@ impl<'a> ::buffa::MessageName for StringTableView<'a> {
 }
 ::buffa::impl_default_view_instance!(StringTableView);
 ::buffa::impl_view_reborrow!(StringTableView);
-::buffa::unsafe_impl_view_lifetime_parametric!(StringTableView);
 /** Self-contained, `'static` owned view of a `StringTable` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`StringTableView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -1180,10 +1176,10 @@ pub struct PrimitiveGroupView<'a> {
     ///
     /// Field 1: `nodes`
     pub nodes: ::buffa::RepeatedView<'a, &'a [u8]>,
+    /// DenseNodes, or DenseNodeLocations; every occurrence, merged by osmflow
+    ///
     /// Field 2: `dense`
-    pub dense: ::buffa::MessageFieldView<
-        super::super::__buffa::view::DenseNodesView<'a>,
-    >,
+    pub dense: ::buffa::RepeatedView<'a, &'a [u8]>,
     /// Way
     ///
     /// Field 3: `ways`
@@ -1223,27 +1219,6 @@ impl<'a> ::buffa::MessageView<'a> for PrimitiveGroupView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                let __sub_ctx = ctx.descend()?;
-                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.dense.as_mut() {
-                    Some(existing) => {
-                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
-                    }
-                    None => {
-                        view.dense = ::buffa::MessageFieldView::set(
-                            <super::super::__buffa::view::DenseNodesView as ::buffa::MessageView>::decode_view_ctx(
-                                sub,
-                                __sub_ctx,
-                            )?,
-                        );
-                    }
-                }
-            }
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
@@ -1254,6 +1229,17 @@ impl<'a> ::buffa::MessageView<'a> for PrimitiveGroupView<'a> {
                     ::buffa::__private::element_footprint(&__elem),
                 )?;
                 view.nodes.push(__elem);
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::borrow_bytes(&mut cur)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                view.dense.push(__elem);
             }
             3u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -1298,15 +1284,7 @@ impl<'a> ::buffa::MessageView<'a> for PrimitiveGroupView<'a> {
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::PrimitiveGroup {
             nodes: self.nodes.iter().map(|b| (b).to_vec()).collect(),
-            dense: match self.dense.as_option() {
-                Some(v) => {
-                    ::buffa::MessageField::<
-                        super::super::DenseNodes,
-                        ::buffa::Inline<super::super::DenseNodes>,
-                    >::some(v.to_owned_from_source(__buffa_src)?)
-                }
-                None => ::buffa::MessageField::none(),
-            },
+            dense: self.dense.iter().map(|b| (b).to_vec()).collect(),
             ways: self.ways.iter().map(|b| (b).to_vec()).collect(),
             relations: self.relations.iter().map(|b| (b).to_vec()).collect(),
             ..::core::default::Default::default()
@@ -1315,20 +1293,15 @@ impl<'a> ::buffa::MessageView<'a> for PrimitiveGroupView<'a> {
 }
 impl<'a> ::buffa::ViewEncode<'a> for PrimitiveGroupView<'a> {
     #[allow(clippy::needless_borrow, clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
         for v in &self.nodes {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
-        if let ::core::option::Option::Some(__v) = self.dense.as_option() {
-            let __slot = __cache.reserve();
-            let inner_size = __v.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        for v in &self.dense {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         for v in &self.ways {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
@@ -1341,7 +1314,7 @@ impl<'a> ::buffa::ViewEncode<'a> for PrimitiveGroupView<'a> {
     #[allow(clippy::needless_borrow)]
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
@@ -1349,13 +1322,8 @@ impl<'a> ::buffa::ViewEncode<'a> for PrimitiveGroupView<'a> {
         for v in &self.nodes {
             ::buffa::types::put_shared_bytes_field(1u32, v, buf);
         }
-        if let ::core::option::Option::Some(__v) = self.dense.as_option() {
-            ::buffa::types::put_len_delimited_header(
-                2u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            __v.write_to(__cache, buf);
+        for v in &self.dense {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         for v in &self.ways {
             ::buffa::types::put_shared_bytes_field(3u32, v, buf);
@@ -1373,7 +1341,6 @@ impl<'a> ::buffa::MessageName for PrimitiveGroupView<'a> {
 }
 ::buffa::impl_default_view_instance!(PrimitiveGroupView);
 ::buffa::impl_view_reborrow!(PrimitiveGroupView);
-::buffa::unsafe_impl_view_lifetime_parametric!(PrimitiveGroupView);
 /** Self-contained, `'static` owned view of a `PrimitiveGroup` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`PrimitiveGroupView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -1463,11 +1430,11 @@ impl PrimitiveGroupOwnedView {
     pub fn nodes(&self) -> &::buffa::RepeatedView<'_, &'_ [u8]> {
         &self.0.reborrow().nodes
     }
+    /// DenseNodes, or DenseNodeLocations; every occurrence, merged by osmflow
+    ///
     /// Field 2: `dense`
     #[must_use]
-    pub fn dense(
-        &self,
-    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::DenseNodesView<'_>> {
+    pub fn dense(&self) -> &::buffa::RepeatedView<'_, &'_ [u8]> {
         &self.0.reborrow().dense
     }
     /// Way
@@ -1510,25 +1477,25 @@ impl ::buffa::HasMessageView for super::super::PrimitiveGroup {
 #[derive(Clone, Debug, Default)]
 pub struct DenseInfoView<'a> {
     /// Field 1: `version`
-    pub version: ::buffa::PackedView<'a, ::buffa::packed_view::Int32>,
+    pub version: ::buffa::RepeatedView<'a, i32>,
     /// delta coded
     ///
     /// Field 2: `timestamp`
-    pub timestamp: ::buffa::PackedView<'a, ::buffa::packed_view::Sint64>,
+    pub timestamp: ::buffa::RepeatedView<'a, i64>,
     /// delta coded
     ///
     /// Field 3: `changeset`
-    pub changeset: ::buffa::PackedView<'a, ::buffa::packed_view::Sint64>,
+    pub changeset: ::buffa::RepeatedView<'a, i64>,
     /// delta coded
     ///
     /// Field 4: `uid`
-    pub uid: ::buffa::PackedView<'a, ::buffa::packed_view::Sint32>,
+    pub uid: ::buffa::RepeatedView<'a, i32>,
     /// delta coded
     ///
     /// Field 5: `user_sid`
-    pub user_sid: ::buffa::PackedView<'a, ::buffa::packed_view::Sint32>,
+    pub user_sid: ::buffa::RepeatedView<'a, i32>,
     /// Field 6: `visible`
-    pub visible: ::buffa::PackedView<'a, ::buffa::packed_view::Bool>,
+    pub visible: ::buffa::RepeatedView<'a, bool>,
 }
 impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
     type Owned = super::super::DenseInfo;
@@ -1563,7 +1530,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
             1u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.version.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_int32(
+                        payload,
+                        view.version.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.version.push(::buffa::types::decode_int32(&mut cur)?);
                 } else {
@@ -1578,7 +1549,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
             2u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.timestamp.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.timestamp.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.timestamp.push(::buffa::types::decode_sint64(&mut cur)?);
                 } else {
@@ -1593,7 +1568,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
             3u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.changeset.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.changeset.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.changeset.push(::buffa::types::decode_sint64(&mut cur)?);
                 } else {
@@ -1608,7 +1587,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
             4u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.uid.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint32(
+                        payload,
+                        view.uid.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.uid.push(::buffa::types::decode_sint32(&mut cur)?);
                 } else {
@@ -1623,7 +1606,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
             5u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.user_sid.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint32(
+                        payload,
+                        view.user_sid.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.user_sid.push(::buffa::types::decode_sint32(&mut cur)?);
                 } else {
@@ -1638,7 +1625,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseInfoView<'a> {
             6u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.visible.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_bool(
+                        payload,
+                        view.visible.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.visible.push(::buffa::types::decode_bool(&mut cur)?);
                 } else {
@@ -1687,28 +1678,49 @@ impl<'a> ::buffa::ViewEncode<'a> for DenseInfoView<'a> {
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
         if !self.version.is_empty() {
-            let __n = self.version.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .version
+                .iter()
+                .map(|&v| ::buffa::types::int32_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.timestamp.is_empty() {
-            let __n = self.timestamp.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .timestamp
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.changeset.is_empty() {
-            let __n = self.changeset.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .changeset
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.uid.is_empty() {
-            let __n = self.uid.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .uid
+                .iter()
+                .map(|&v| ::buffa::types::sint32_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.user_sid.is_empty() {
-            let __n = self.user_sid.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .user_sid
+                .iter()
+                .map(|&v| ::buffa::types::sint32_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.visible.is_empty() {
-            let __n = self.visible.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self.visible.len() as u64
+                * ::buffa::types::BOOL_ENCODED_LEN as u64;
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         ::buffa::saturate_size(size)
     }
@@ -1721,52 +1733,67 @@ impl<'a> ::buffa::ViewEncode<'a> for DenseInfoView<'a> {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         if !self.version.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                self.version.packed_len() as u64,
-                buf,
-            );
-            self.version.write_packed(buf);
+            let payload: u64 = self
+                .version
+                .iter()
+                .map(|&v| ::buffa::types::int32_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(1u32, payload, buf);
+            for &v in &self.version {
+                ::buffa::types::encode_int32(v, buf);
+            }
         }
         if !self.timestamp.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                2u32,
-                self.timestamp.packed_len() as u64,
-                buf,
-            );
-            self.timestamp.write_packed(buf);
+            let payload: u64 = self
+                .timestamp
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(2u32, payload, buf);
+            for &v in &self.timestamp {
+                ::buffa::types::encode_sint64(v, buf);
+            }
         }
         if !self.changeset.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                3u32,
-                self.changeset.packed_len() as u64,
-                buf,
-            );
-            self.changeset.write_packed(buf);
+            let payload: u64 = self
+                .changeset
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(3u32, payload, buf);
+            for &v in &self.changeset {
+                ::buffa::types::encode_sint64(v, buf);
+            }
         }
         if !self.uid.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                4u32,
-                self.uid.packed_len() as u64,
-                buf,
-            );
-            self.uid.write_packed(buf);
+            let payload: u64 = self
+                .uid
+                .iter()
+                .map(|&v| ::buffa::types::sint32_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(4u32, payload, buf);
+            for &v in &self.uid {
+                ::buffa::types::encode_sint32(v, buf);
+            }
         }
         if !self.user_sid.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                5u32,
-                self.user_sid.packed_len() as u64,
-                buf,
-            );
-            self.user_sid.write_packed(buf);
+            let payload: u64 = self
+                .user_sid
+                .iter()
+                .map(|&v| ::buffa::types::sint32_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(5u32, payload, buf);
+            for &v in &self.user_sid {
+                ::buffa::types::encode_sint32(v, buf);
+            }
         }
         if !self.visible.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                6u32,
-                self.visible.packed_len() as u64,
-                buf,
-            );
-            self.visible.write_packed(buf);
+            let payload: u64 = self.visible.len() as u64
+                * ::buffa::types::BOOL_ENCODED_LEN as u64;
+            ::buffa::types::put_len_delimited_header(6u32, payload, buf);
+            for &v in &self.visible {
+                ::buffa::types::encode_bool(v, buf);
+            }
         }
     }
 }
@@ -1778,7 +1805,6 @@ impl<'a> ::buffa::MessageName for DenseInfoView<'a> {
 }
 ::buffa::impl_default_view_instance!(DenseInfoView);
 ::buffa::impl_view_reborrow!(DenseInfoView);
-::buffa::unsafe_impl_view_lifetime_parametric!(DenseInfoView);
 /** Self-contained, `'static` owned view of a `DenseInfo` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`DenseInfoView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -1861,40 +1887,40 @@ impl DenseInfoOwnedView {
     }
     /// Field 1: `version`
     #[must_use]
-    pub fn version(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Int32> {
+    pub fn version(&self) -> &::buffa::RepeatedView<'_, i32> {
         &self.0.reborrow().version
     }
     /// delta coded
     ///
     /// Field 2: `timestamp`
     #[must_use]
-    pub fn timestamp(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint64> {
+    pub fn timestamp(&self) -> &::buffa::RepeatedView<'_, i64> {
         &self.0.reborrow().timestamp
     }
     /// delta coded
     ///
     /// Field 3: `changeset`
     #[must_use]
-    pub fn changeset(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint64> {
+    pub fn changeset(&self) -> &::buffa::RepeatedView<'_, i64> {
         &self.0.reborrow().changeset
     }
     /// delta coded
     ///
     /// Field 4: `uid`
     #[must_use]
-    pub fn uid(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint32> {
+    pub fn uid(&self) -> &::buffa::RepeatedView<'_, i32> {
         &self.0.reborrow().uid
     }
     /// delta coded
     ///
     /// Field 5: `user_sid`
     #[must_use]
-    pub fn user_sid(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint32> {
+    pub fn user_sid(&self) -> &::buffa::RepeatedView<'_, i32> {
         &self.0.reborrow().user_sid
     }
     /// Field 6: `visible`
     #[must_use]
-    pub fn visible(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Bool> {
+    pub fn visible(&self) -> &::buffa::RepeatedView<'_, bool> {
         &self.0.reborrow().visible
     }
 }
@@ -1925,21 +1951,21 @@ pub struct DenseNodesView<'a> {
     /// delta coded
     ///
     /// Field 1: `id`
-    pub id: ::buffa::PackedView<'a, ::buffa::packed_view::Sint64>,
-    /// DenseInfo
+    pub id: ::buffa::RepeatedView<'a, i64>,
+    /// DenseInfo; every occurrence, merged by osmflow
     ///
     /// Field 5: `denseinfo`
-    pub denseinfo: ::core::option::Option<&'a [u8]>,
+    pub denseinfo: ::buffa::RepeatedView<'a, &'a [u8]>,
     /// delta coded
     ///
     /// Field 8: `lat`
-    pub lat: ::buffa::PackedView<'a, ::buffa::packed_view::Sint64>,
+    pub lat: ::buffa::RepeatedView<'a, i64>,
     /// delta coded
     ///
     /// Field 9: `lon`
-    pub lon: ::buffa::PackedView<'a, ::buffa::packed_view::Sint64>,
+    pub lon: ::buffa::RepeatedView<'a, i64>,
     /// Field 10: `keys_vals`
-    pub keys_vals: ::buffa::PackedView<'a, ::buffa::packed_view::Int32>,
+    pub keys_vals: ::buffa::RepeatedView<'a, i32>,
 }
 impl<'a> ::buffa::MessageView<'a> for DenseNodesView<'a> {
     type Owned = super::super::DenseNodes;
@@ -1971,17 +1997,14 @@ impl<'a> ::buffa::MessageView<'a> for DenseNodesView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
-            5u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                view.denseinfo = Some(::buffa::types::borrow_bytes(&mut cur)?);
-            }
             1u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.id.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.id.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.id.push(::buffa::types::decode_sint64(&mut cur)?);
                 } else {
@@ -1993,10 +2016,25 @@ impl<'a> ::buffa::MessageView<'a> for DenseNodesView<'a> {
                     );
                 }
             }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::borrow_bytes(&mut cur)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                view.denseinfo.push(__elem);
+            }
             8u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.lat.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.lat.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.lat.push(::buffa::types::decode_sint64(&mut cur)?);
                 } else {
@@ -2011,7 +2049,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseNodesView<'a> {
             9u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.lon.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.lon.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.lon.push(::buffa::types::decode_sint64(&mut cur)?);
                 } else {
@@ -2026,7 +2068,11 @@ impl<'a> ::buffa::MessageView<'a> for DenseNodesView<'a> {
             10u32 => {
                 if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
                     let payload = ::buffa::types::borrow_bytes(&mut cur)?;
-                    view.keys_vals.extend_packed(payload)?;
+                    ::buffa::types::extend_packed_int32(
+                        payload,
+                        view.keys_vals.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
                 } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
                     view.keys_vals.push(::buffa::types::decode_int32(&mut cur)?);
                 } else {
@@ -2059,7 +2105,7 @@ impl<'a> ::buffa::MessageView<'a> for DenseNodesView<'a> {
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::DenseNodes {
             id: self.id.to_vec(),
-            denseinfo: self.denseinfo.map(|b| (b).to_vec()),
+            denseinfo: self.denseinfo.iter().map(|b| (b).to_vec()).collect(),
             lat: self.lat.to_vec(),
             lon: self.lon.to_vec(),
             keys_vals: self.keys_vals.to_vec(),
@@ -2074,23 +2120,39 @@ impl<'a> ::buffa::ViewEncode<'a> for DenseNodesView<'a> {
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
         if !self.id.is_empty() {
-            let __n = self.id.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .id
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
-        if let Some(ref v) = self.denseinfo {
+        for v in &self.denseinfo {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if !self.lat.is_empty() {
-            let __n = self.lat.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .lat
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.lon.is_empty() {
-            let __n = self.lon.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .lon
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         if !self.keys_vals.is_empty() {
-            let __n = self.keys_vals.packed_len() as u64;
-            size += 1u64 + ::buffa::encoding::varint_len(__n) as u64 + __n;
+            let payload: u64 = self
+                .keys_vals
+                .iter()
+                .map(|&v| ::buffa::types::int32_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
         }
         ::buffa::saturate_size(size)
     }
@@ -2103,39 +2165,51 @@ impl<'a> ::buffa::ViewEncode<'a> for DenseNodesView<'a> {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         if !self.id.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                self.id.packed_len() as u64,
-                buf,
-            );
-            self.id.write_packed(buf);
+            let payload: u64 = self
+                .id
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(1u32, payload, buf);
+            for &v in &self.id {
+                ::buffa::types::encode_sint64(v, buf);
+            }
         }
-        if let Some(ref v) = self.denseinfo {
+        for v in &self.denseinfo {
             ::buffa::types::put_shared_bytes_field(5u32, v, buf);
         }
         if !self.lat.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                8u32,
-                self.lat.packed_len() as u64,
-                buf,
-            );
-            self.lat.write_packed(buf);
+            let payload: u64 = self
+                .lat
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(8u32, payload, buf);
+            for &v in &self.lat {
+                ::buffa::types::encode_sint64(v, buf);
+            }
         }
         if !self.lon.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                9u32,
-                self.lon.packed_len() as u64,
-                buf,
-            );
-            self.lon.write_packed(buf);
+            let payload: u64 = self
+                .lon
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(9u32, payload, buf);
+            for &v in &self.lon {
+                ::buffa::types::encode_sint64(v, buf);
+            }
         }
         if !self.keys_vals.is_empty() {
-            ::buffa::types::put_len_delimited_header(
-                10u32,
-                self.keys_vals.packed_len() as u64,
-                buf,
-            );
-            self.keys_vals.write_packed(buf);
+            let payload: u64 = self
+                .keys_vals
+                .iter()
+                .map(|&v| ::buffa::types::int32_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(10u32, payload, buf);
+            for &v in &self.keys_vals {
+                ::buffa::types::encode_int32(v, buf);
+            }
         }
     }
 }
@@ -2147,7 +2221,6 @@ impl<'a> ::buffa::MessageName for DenseNodesView<'a> {
 }
 ::buffa::impl_default_view_instance!(DenseNodesView);
 ::buffa::impl_view_reborrow!(DenseNodesView);
-::buffa::unsafe_impl_view_lifetime_parametric!(DenseNodesView);
 /** Self-contained, `'static` owned view of a `DenseNodes` message.
 
  Wraps [`::buffa::OwnedView`]`<`[`DenseNodesView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
@@ -2232,33 +2305,33 @@ impl DenseNodesOwnedView {
     ///
     /// Field 1: `id`
     #[must_use]
-    pub fn id(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint64> {
+    pub fn id(&self) -> &::buffa::RepeatedView<'_, i64> {
         &self.0.reborrow().id
     }
-    /// DenseInfo
+    /// DenseInfo; every occurrence, merged by osmflow
     ///
     /// Field 5: `denseinfo`
     #[must_use]
-    pub fn denseinfo(&self) -> ::core::option::Option<&'_ [u8]> {
-        self.0.reborrow().denseinfo
+    pub fn denseinfo(&self) -> &::buffa::RepeatedView<'_, &'_ [u8]> {
+        &self.0.reborrow().denseinfo
     }
     /// delta coded
     ///
     /// Field 8: `lat`
     #[must_use]
-    pub fn lat(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint64> {
+    pub fn lat(&self) -> &::buffa::RepeatedView<'_, i64> {
         &self.0.reborrow().lat
     }
     /// delta coded
     ///
     /// Field 9: `lon`
     #[must_use]
-    pub fn lon(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Sint64> {
+    pub fn lon(&self) -> &::buffa::RepeatedView<'_, i64> {
         &self.0.reborrow().lon
     }
     /// Field 10: `keys_vals`
     #[must_use]
-    pub fn keys_vals(&self) -> &::buffa::PackedView<'_, ::buffa::packed_view::Int32> {
+    pub fn keys_vals(&self) -> &::buffa::RepeatedView<'_, i32> {
         &self.0.reborrow().keys_vals
     }
 }
@@ -2283,4 +2356,345 @@ for DenseNodesOwnedView {
 impl ::buffa::HasMessageView for super::super::DenseNodes {
     type View<'a> = DenseNodesView<'a>;
     type ViewHandle = DenseNodesOwnedView;
+}
+/// The dense nodes of a read of node locations only: their other fields are skipped unread.
+#[derive(Clone, Debug, Default)]
+pub struct DenseNodeLocationsView<'a> {
+    /// delta coded
+    ///
+    /// Field 1: `id`
+    pub id: ::buffa::RepeatedView<'a, i64>,
+    /// delta coded
+    ///
+    /// Field 8: `lat`
+    pub lat: ::buffa::RepeatedView<'a, i64>,
+    /// delta coded
+    ///
+    /// Field 9: `lon`
+    pub lon: ::buffa::RepeatedView<'a, i64>,
+}
+impl<'a> ::buffa::MessageView<'a> for DenseNodeLocationsView<'a> {
+    type Owned = super::super::DenseNodeLocations;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        _before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let payload = ::buffa::types::borrow_bytes(&mut cur)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.id.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
+                    view.id.push(::buffa::types::decode_sint64(&mut cur)?);
+                } else {
+                    return Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            8u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let payload = ::buffa::types::borrow_bytes(&mut cur)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.lat.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
+                    view.lat.push(::buffa::types::decode_sint64(&mut cur)?);
+                } else {
+                    return Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            9u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let payload = ::buffa::types::borrow_bytes(&mut cur)?;
+                    ::buffa::types::extend_packed_sint64(
+                        payload,
+                        view.lon.as_mut_vec(),
+                        ::buffa::encoding::count_varints(payload),
+                    )?;
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Varint {
+                    view.lon.push(::buffa::types::decode_sint64(&mut cur)?);
+                } else {
+                    return Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::DenseNodeLocations, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::DenseNodeLocations, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::DenseNodeLocations {
+            id: self.id.to_vec(),
+            lat: self.lat.to_vec(),
+            lon: self.lon.to_vec(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for DenseNodeLocationsView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.id.is_empty() {
+            let payload: u64 = self
+                .id
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        if !self.lat.is_empty() {
+            let payload: u64 = self
+                .lat
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        if !self.lon.is_empty() {
+            let payload: u64 = self
+                .lon
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.id.is_empty() {
+            let payload: u64 = self
+                .id
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(1u32, payload, buf);
+            for &v in &self.id {
+                ::buffa::types::encode_sint64(v, buf);
+            }
+        }
+        if !self.lat.is_empty() {
+            let payload: u64 = self
+                .lat
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(8u32, payload, buf);
+            for &v in &self.lat {
+                ::buffa::types::encode_sint64(v, buf);
+            }
+        }
+        if !self.lon.is_empty() {
+            let payload: u64 = self
+                .lon
+                .iter()
+                .map(|&v| ::buffa::types::sint64_encoded_len(v) as u64)
+                .sum::<u64>();
+            ::buffa::types::put_len_delimited_header(9u32, payload, buf);
+            for &v in &self.lon {
+                ::buffa::types::encode_sint64(v, buf);
+            }
+        }
+    }
+}
+impl<'a> ::buffa::MessageName for DenseNodeLocationsView<'a> {
+    const PACKAGE: &'static str = "osmflow_raw";
+    const NAME: &'static str = "DenseNodeLocations";
+    const FULL_NAME: &'static str = "osmflow_raw.DenseNodeLocations";
+    const TYPE_URL: &'static str = "type.googleapis.com/osmflow_raw.DenseNodeLocations";
+}
+::buffa::impl_default_view_instance!(DenseNodeLocationsView);
+::buffa::impl_view_reborrow!(DenseNodeLocationsView);
+/** Self-contained, `'static` owned view of a `DenseNodeLocations` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`DenseNodeLocationsView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`DenseNodeLocationsView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct DenseNodeLocationsOwnedView(
+    ::buffa::OwnedView<DenseNodeLocationsView<'static>>,
+);
+impl DenseNodeLocationsOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            DenseNodeLocationsOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            DenseNodeLocationsOwnedView(
+                ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+            ),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::DenseNodeLocations,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            DenseNodeLocationsOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`DenseNodeLocationsView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &DenseNodeLocationsView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::DenseNodeLocations {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// delta coded
+    ///
+    /// Field 1: `id`
+    #[must_use]
+    pub fn id(&self) -> &::buffa::RepeatedView<'_, i64> {
+        &self.0.reborrow().id
+    }
+    /// delta coded
+    ///
+    /// Field 8: `lat`
+    #[must_use]
+    pub fn lat(&self) -> &::buffa::RepeatedView<'_, i64> {
+        &self.0.reborrow().lat
+    }
+    /// delta coded
+    ///
+    /// Field 9: `lon`
+    #[must_use]
+    pub fn lon(&self) -> &::buffa::RepeatedView<'_, i64> {
+        &self.0.reborrow().lon
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<DenseNodeLocationsView<'static>>>
+for DenseNodeLocationsOwnedView {
+    fn from(inner: ::buffa::OwnedView<DenseNodeLocationsView<'static>>) -> Self {
+        DenseNodeLocationsOwnedView(inner)
+    }
+}
+impl ::core::convert::From<DenseNodeLocationsOwnedView>
+for ::buffa::OwnedView<DenseNodeLocationsView<'static>> {
+    fn from(wrapper: DenseNodeLocationsOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<DenseNodeLocationsView<'static>>>
+for DenseNodeLocationsOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<DenseNodeLocationsView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::DenseNodeLocations {
+    type View<'a> = DenseNodeLocationsView<'a>;
+    type ViewHandle = DenseNodeLocationsOwnedView;
 }

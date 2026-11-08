@@ -1,12 +1,14 @@
 //! A decoded block of objects, held as columns, and the views of its nodes, ways and relations.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
-use buffa::packed_view::{Int32, PackedCodec, Sint64};
-use buffa::{MessageView as _, PackedView};
+use buffa::MessageView as _;
 
 use crate::error::{Error, FormatError, Position, Result};
-use crate::generated::raw::osmflow_raw::{DenseInfoView, DenseNodesView, PrimitiveBlockView};
+use crate::generated::raw::osmflow_raw::{
+    DenseInfoView, DenseNodeLocationsView, DenseNodesView, PrimitiveBlockView,
+};
 use crate::packed::{self, Value};
 
 type FResult<T> = std::result::Result<T, FormatError>;
@@ -108,6 +110,22 @@ fn check_string(index: u32, strings: usize) -> FResult<()> {
     }
 }
 
+/// The occurrences of a message field, merged as protobuf merges them: decoding their concatenation. One occurrence,
+/// the usual case, stays borrowed; none is `None`.
+fn merged<'a>(occurrences: impl IntoIterator<Item = &'a [u8]>) -> Option<Cow<'a, [u8]>> {
+    occurrences
+        .into_iter()
+        .fold(None, |acc, next| Some(merge(acc, next)))
+}
+
+/// Appends an occurrence of a message field to those before it; see [`merged`].
+fn merge<'a>(acc: Option<Cow<'a, [u8]>>, next: &'a [u8]) -> Cow<'a, [u8]> {
+    match acc {
+        None => Cow::Borrowed(next),
+        Some(prev) => Cow::Owned([prev.as_ref(), next].concat()),
+    }
+}
+
 /// The tags of a column of objects, as string indexes: object `i` has `keys[r]` and `vals[r]`, `r = range(ends, i)`.
 #[derive(Debug, Default)]
 struct Tags {
@@ -133,12 +151,7 @@ impl Tags {
 
     /// Appends the tags of `count` dense nodes: for each node, key and value indexes, then a 0. An empty array means
     /// no node has tags.
-    fn push_dense(
-        &mut self,
-        keys_vals: &PackedView<'_, Int32>,
-        count: usize,
-        strings: usize,
-    ) -> FResult<()> {
+    fn push_dense(&mut self, keys_vals: &[i32], count: usize, strings: usize) -> FResult<()> {
         if keys_vals.is_empty() {
             self.ends
                 .resize(self.ends.len() + count, end(self.keys.len()));
@@ -146,7 +159,7 @@ impl Tags {
         }
         let first = self.ends.len();
         let mut key = None;
-        for v in keys_vals {
+        for &v in keys_vals {
             let v = u32::try_from(v).map_err(|_| FormatError::Packed("dense node tags"))?;
             match key.take() {
                 None if v == 0 => self.ends.push(end(self.keys.len())),
@@ -276,11 +289,11 @@ impl Ctx {
 
 /// Sets one field of every node's metadata from a packed array, which must have one value per node or none. `set`
 /// rejects a value by returning `None`.
-fn fill<C: PackedCodec>(
+fn fill<T: Copy>(
     infos: &mut [Option<RawInfo>],
-    values: &PackedView<'_, C>,
+    values: &[T],
     what: &'static str,
-    mut set: impl FnMut(&mut RawInfo, C::Elem) -> Option<()>,
+    mut set: impl FnMut(&mut RawInfo, T) -> Option<()>,
 ) -> FResult<()> {
     if values.is_empty() {
         return Ok(());
@@ -290,7 +303,7 @@ fn fill<C: PackedCodec>(
             "dense nodes and their metadata",
         ));
     }
-    for (slot, v) in infos.iter_mut().flatten().zip(values) {
+    for (slot, &v) in infos.iter_mut().flatten().zip(values) {
         set(slot, v).ok_or(FormatError::Packed(what))?;
     }
     Ok(())
@@ -336,7 +349,7 @@ impl Objects {
                 packed::values(v, "tag values", |k| push_index(vals, k, "tag values"))
             }
             (4, Value::Bytes(b)) => {
-                info = Some(b);
+                info = Some(merge(info.take(), b));
                 Ok(())
             }
             (1 | 4, _) => Err(FormatError::Message(what)),
@@ -347,7 +360,7 @@ impl Objects {
             self.tags.end_object(first, ctx.strings)?;
         }
         if ctx.select.metadata {
-            self.infos.push(info.map(|i| ctx.info(i)).transpose()?);
+            self.infos.push(info.map(|i| ctx.info(&i)).transpose()?);
         }
         Ok(())
     }
@@ -385,23 +398,28 @@ impl Nodes {
         Ok(())
     }
 
-    fn push_dense(&mut self, d: &DenseNodesView<'_>, ctx: &Ctx) -> FResult<()> {
-        let count = d.id.len();
-        if d.lat.len() != count || d.lon.len() != count {
-            return Err(FormatError::LengthMismatch(
-                "dense node ids, latitudes and longitudes",
-            ));
+    /// Decodes a group's dense nodes: all their fields, or only their locations when no tags or metadata are
+    /// selected, which skips the rest unread.
+    ///
+    /// buffa's views decode each packed array into a `Vec`, which is read again here. Borrowed packed views
+    /// (`PackedView`, <https://github.com/anthropics/buffa/issues/814>) would decode the arrays as they are read here,
+    /// with no `Vec` per array; osmflow can use them once a buffa release has them.
+    fn push_dense(&mut self, dense: &[u8], ctx: &Ctx) -> FResult<()> {
+        let bad = FormatError::protobuf("dense nodes");
+        if !ctx.select.tags && !ctx.select.metadata {
+            let d = DenseNodeLocationsView::decode_view(dense).map_err(bad)?;
+            self.push_locations(&d.id, &d.lat, &d.lon)?;
+            return Ok(());
         }
+        let d = DenseNodesView::decode_view(dense).map_err(bad)?;
+        let count = self.push_locations(&d.id, &d.lat, &d.lon)?;
         let o = &mut self.objects;
-        delta_sum(&d.id, &mut o.ids);
-        delta_sum(&d.lat, &mut self.lats);
-        delta_sum(&d.lon, &mut self.lons);
         if ctx.select.tags {
             o.tags.push_dense(&d.keys_vals, count, ctx.strings)?;
         }
         if ctx.select.metadata {
-            match d.denseinfo {
-                Some(info) => ctx.dense_info(info, count, &mut o.infos)?,
+            match merged(d.denseinfo.iter().copied()) {
+                Some(info) => ctx.dense_info(&info, count, &mut o.infos)?,
                 None => o.infos.resize(o.infos.len() + count, None),
             }
         }
@@ -409,10 +427,26 @@ impl Nodes {
     }
 }
 
+impl Nodes {
+    /// Appends dense nodes' IDs and locations, and returns how many there are.
+    fn push_locations(&mut self, ids: &[i64], lats: &[i64], lons: &[i64]) -> FResult<usize> {
+        let count = ids.len();
+        if lats.len() != count || lons.len() != count {
+            return Err(FormatError::LengthMismatch(
+                "dense node ids, latitudes and longitudes",
+            ));
+        }
+        delta_sum(ids, &mut self.objects.ids);
+        delta_sum(lats, &mut self.lats);
+        delta_sum(lons, &mut self.lons);
+        Ok(count)
+    }
+}
+
 /// Appends the running sums of delta-coded values.
-fn delta_sum(deltas: &PackedView<'_, Sint64>, out: &mut Vec<i64>) {
+fn delta_sum(deltas: &[i64], out: &mut Vec<i64>) {
     let mut sum = 0i64;
-    out.extend(deltas.iter().map(|d| {
+    out.extend(deltas.iter().map(|&d| {
         sum = sum.wrapping_add(d);
         sum
     }));
@@ -562,8 +596,8 @@ impl Columns {
                 for node in &group.nodes {
                     c.nodes.push(node, &ctx)?;
                 }
-                if let Some(dense) = group.dense.as_option() {
-                    c.nodes.push_dense(dense, &ctx)?;
+                if let Some(dense) = merged(group.dense.iter().copied()) {
+                    c.nodes.push_dense(&dense, &ctx)?;
                 }
             }
             if select.ways {

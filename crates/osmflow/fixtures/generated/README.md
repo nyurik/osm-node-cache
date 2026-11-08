@@ -30,3 +30,4 @@ These are cases no published file has.
 | `zero_granularity.osm.pbf`, `negative_date_granularity.osm.pbf` | A coordinate or date granularity that is not positive |
 | `info_without_user.osm.pbf` | A way whose metadata has no user, in a block with an empty string table: the user is empty, not an error |
 | `unsorted_types.osm.pbf` | Nodes, a way, nodes again, then a relation: not sorted by type, so an unordered read has a barrier at every block |
+| `split_messages.osm.pbf` | Message fields in several occurrences, which protobuf merges: dense nodes in two `dense` fields, their metadata in two `denseinfo` fields, and a way's metadata in two `info` fields; the same objects as `packed.osm.pbf` |

@@ -23,8 +23,8 @@ memmap2 = "0.9"
 osmpbf = { version = "0.3.8", default-features = false, features = ["zlib-ng"] }
 osmpbfreader = "0.19"
 rand = "0.10"
-# 1.5.1 is the first with `ThreadPool::in_place_scope`
-rayon = "1.5.1"
+# 1.7 is the first with `ThreadPool::yield_now`
+rayon = "1.7"
 redb = "4"
 test_each_file = "0.3.5"
 thiserror = "2"
@@ -75,9 +75,3 @@ cargo = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 missing_errors_doc = "allow"
 module_name_repetitions = "allow"
-
-[patch.crates-io]
-# buffa with `packed_views_in` (https://github.com/anthropics/buffa/pull/816), which osmflow's projection uses to read
-# dense node arrays as borrowed `PackedView`s
-buffa = { git = "https://github.com/nyurik/buffa", branch = "packed-views" }
-buffa-build = { git = "https://github.com/nyurik/buffa", branch = "packed-views" }

@@ -1,0 +1,19 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("osmflow tests/generated.rs"), source: None
+# bbox: None
+# replication: None None None
+# 6 nodes, 1 ways, 0 relations, hash 3c7ad0f74247e092
+n1 v1 dV c7 t1600000000000 i42 uuser_a Thighway=residential x-74000000000 y40000000000
+n2 v2 dV c7 t1600001000000 i42 uuser_a T x-74000020000 y40000010000
+n3 v3 dV c7 t1600002000000 i42 uuser_a Tname=Main%20%St x-73999980000 y39999990000
+n1 v1 dV c7 t1600000000000 i42 uuser_a Thighway=residential x-74000000000 y40000000000
+n2 v2 dV c7 t1600001000000 i42 uuser_a T x-74000020000 y40000010000
+n3 v3 dV c7 t1600002000000 i42 uuser_a Tname=Main%20%St x-73999980000 y39999990000
+w10 v3 dV c7 t1600000000000 i42 uuser_a Thighway=residential N1,2,3
+# osmpbf is not compared: it keeps only the last occurrence of a message field, where protobuf merges them
+# osmpbfreader is not compared: it keeps only the last occurrence of a message field, where protobuf merges them

@@ -253,7 +253,7 @@ impl BlobHeader {
     ///Sets [`Self::indexdata`] to `Some(value)`, consuming and returning `self`.
     pub fn with_indexdata(
         mut self,
-        value: impl ::core::convert::Into<::buffa::alloc::vec::Vec<u8>>,
+        value: impl Into<::buffa::alloc::vec::Vec<u8>>,
     ) -> Self {
         self.indexdata = Some(value.into());
         self
