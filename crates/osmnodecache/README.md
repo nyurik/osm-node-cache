@@ -60,7 +60,7 @@ The three stores kept in a file (all but `MemoryStore`) also:
 
 ## How the stores work
 
-![How each store looks up a node and keeps a change](docs/how-stores-work.svg)
+![How each store looks up a node and keeps a change](https://raw.githubusercontent.com/nyurik/osm-node-cache/main/crates/osmnodecache/docs/how-stores-work.svg)
 
 `PagedStore` and `RedbStore` group node IDs into blocks of 64. A block keeps which of its IDs are present, and each
 location as the step from the one before it, bit-packed or as varints, whichever is smaller. A reader per thread keeps
@@ -181,7 +181,7 @@ What made the most difference for the planet, in the [performance](#performance)
 
 ## Performance
 
-![The four stores compared: size on disk, bulk load, resolving the nodes of all ways, lookups and commits](docs/perf.svg)
+![The four stores compared: size on disk, bulk load, resolving the nodes of all ways, lookups and commits](https://raw.githubusercontent.com/nyurik/osm-node-cache/main/crates/osmnodecache/docs/perf.svg)
 
 Measured with `examples/pbf_eval/measure.sh` on an AWS m8gd.4xlarge (16 Graviton4 cores, 64 GiB of memory), with the
 PBF files and the stores on its local 885 GB NVMe disk, using District of Columbia from Geofabrik (2026-10-27), and
@@ -315,8 +315,8 @@ cargo run --release --all-features --example pbf_eval -- --direct decode planet.
 
 Licensed under either of
 
-* Apache License, Version 2.0 ([LICENSE-APACHE](../../LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
-* MIT license ([LICENSE-MIT](../../LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+* Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+* MIT license ([LICENSE-MIT](https://github.com/nyurik/osm-node-cache/blob/main/LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
   at your option.
 
 ### Contribution

@@ -344,13 +344,15 @@ impl Direct {
         use std::os::unix::fs::FileExt as _;
         let buf = &mut self.buf[self.base..self.base + READ_BUFFER];
         let mut n = 0;
-        // only the end of the file gives a short read
+        // Only the end of the file gives a short read. Reading on after it would read at an
+        // unaligned offset, which direct I/O rejects, so a short read ends the buffer.
         while n < buf.len() {
+            let want = buf.len() - n;
             let read = self.file.read_at(&mut buf[n..], self.offset + n as u64)?;
-            if read == 0 {
+            n += read;
+            if read < want {
                 break;
             }
-            n += read;
         }
         (self.start, self.end) = (0, n);
         self.offset += n as u64;
@@ -729,8 +731,9 @@ pub fn osmpbf_nodes(path: &Path) -> anyhow::Result<(u64, u64)> {
                                 .map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())),
                         )
                     {
-                        n += 1;
+                        // negative IDs, as in files an editor wrote, are left out, as the decoder does
                         if id >= 0 {
+                            n += 1;
                             sum = sum.wrapping_add(checksum(&Node {
                                 id: id.cast_unsigned(),
                                 lat,
