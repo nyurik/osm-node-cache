@@ -38,10 +38,12 @@ fn for_each(packed: &[u8], what: &'static str, mut f: impl FnMut(u64) -> Result<
 pub(crate) enum Value<'a> {
     Varint(u64),
     Bytes(&'a [u8]),
+    /// A fixed-width field (`fixed32`, `fixed64`, `float`, `double`, ...). No field osmflow reads has this wire
+    /// type, so its value is not kept: a known field that arrives as one is an error, and an unknown one is skipped.
+    Fixed,
 }
 
-/// Calls `f` with the number and value of every field of a message. Fixed-width fields are skipped, as osmflow
-/// reads none; the deprecated group wire types are an error.
+/// Calls `f` with the number and value of every field of a message; the deprecated group wire types are an error.
 pub(crate) fn fields<'a>(
     msg: &'a [u8],
     what: &'static str,
@@ -71,8 +73,10 @@ pub(crate) fn fields<'a>(
                 f(field, Value::Bytes(bytes))?;
                 len
             }
-            1 => 8,
-            5 => 4,
+            1 | 5 => {
+                f(field, Value::Fixed)?;
+                if key & 7 == 1 { 8 } else { 4 }
+            }
             _ => return Err(err()),
         };
         pos = pos
@@ -83,7 +87,8 @@ pub(crate) fn fields<'a>(
     Ok(())
 }
 
-/// Calls `f` for every value of one occurrence of a repeated scalar field: packed bytes, or one unpacked varint.
+/// Calls `f` for every value of one occurrence of a repeated scalar field: packed bytes, or one unpacked varint. A
+/// fixed-width value is an error: osmflow's repeated fields are varints.
 pub(crate) fn values(
     value: Value<'_>,
     what: &'static str,
@@ -92,6 +97,7 @@ pub(crate) fn values(
     match value {
         Value::Bytes(bytes) => for_each(bytes, what, f),
         Value::Varint(v) => f(v),
+        Value::Fixed => Err(FormatError::Packed(what)),
     }
 }
 
@@ -175,15 +181,23 @@ mod tests {
         let mut seen = Vec::new();
         fields(&msg, "t", |f, v| {
             seen.push(match v {
-                Value::Varint(v) => (f, v, Vec::new()),
-                Value::Bytes(b) => (f, 0, b.to_vec()),
+                Value::Varint(v) => (f, Some(v), None),
+                Value::Bytes(b) => (f, None, Some(b.to_vec())),
+                Value::Fixed => (f, None, None),
             });
             Ok(())
         })
         .unwrap();
+        // fixed-width fields are reported without their value, so a known one can be rejected
         assert_eq!(
             seen,
-            [(1, 150, vec![]), (2, 0, b"ab".to_vec()), (5, 1, vec![])]
+            [
+                (1, Some(150), None),
+                (2, None, Some(b"ab".to_vec())),
+                (3, None, None),
+                (4, None, None),
+                (5, Some(1), None),
+            ]
         );
         // a length beyond the message, a group wire type, field number 0, a truncated fixed64
         for bad in [&[0x12, 5, b'a'][..], &[0x0b], &[0x00, 1], &[0x09, 0, 0]] {
@@ -205,5 +219,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(out, [1, 300, 7]);
+        assert!(values(Value::Fixed, "t", |_| Ok(())).is_err());
     }
 }

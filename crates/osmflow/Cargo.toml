@@ -16,7 +16,7 @@ name = "parse"
 harness = false
 
 [dependencies]
-# pin buffa to teh same v as dev-dependencies.
+# pin buffa to the same v as dev-dependencies.
 # When updating, make sure to run `just update-generated` - stored generated code must match. This avoids having protoc for the users.
 buffa = "=0.9.2"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }

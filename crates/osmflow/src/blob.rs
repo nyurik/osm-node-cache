@@ -36,9 +36,16 @@ pub(crate) struct RawBlob {
 }
 
 impl RawBlob {
-    /// The bytes this blob takes in the file, without its length and header.
-    pub(crate) fn len(&self) -> usize {
-        self.data.len()
+    /// The bytes the blob's content takes once decompressed: its declared uncompressed size, or for a blob that
+    /// declares none (raw data), its own size. A blob that is not well formed counts as its own size; decoding it
+    /// reports the error.
+    pub(crate) fn content_len(&self) -> usize {
+        BlobView::decode_view(&self.data)
+            .ok()
+            .and_then(|view| view.raw_size)
+            .and_then(|size| usize::try_from(size).ok())
+            .filter(|&size| size <= MAX_BLOB)
+            .unwrap_or(self.data.len())
     }
 
     /// Calls `f` with the blob's content, decompressed into this thread's buffer.
@@ -87,7 +94,9 @@ fn with_content<T>(
             ZLIB.with_borrow_mut(|(zlib, out)| {
                 zlib.reset(true);
                 out.clear();
-                // Room for one byte more than declared, to detect data longer than its declared size.
+                // Room for one byte more than declared, to detect data longer than its declared size. `decompress_vec`
+                // writes only into this reserved capacity and never grows the vector, so a stream that inflates
+                // past its declared size stops there and fails the length check below.
                 out.reserve(expected + 1);
                 let status = zlib
                     .decompress_vec(data, out, flate2::FlushDecompress::Finish)

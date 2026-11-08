@@ -21,8 +21,10 @@ const READ_BUFFER: usize = 8 << 20;
 /// pool thread, and at least the minimum.
 const BYTES_IN_FLIGHT_PER_THREAD: usize = 16 << 20;
 const MIN_BYTES_IN_FLIGHT: usize = 256 << 20;
-/// A decoded block takes several times its compressed size; this is the factor counted against the limit.
-const DECODED_FACTOR: usize = 8;
+/// A decoded block takes a few times its uncompressed size; this is the factor counted against the limit. Counting
+/// the declared uncompressed size, not the compressed one, keeps a highly compressible blob from being admitted at a
+/// fraction of the memory it decodes to.
+const DECODED_FACTOR: usize = 3;
 
 /// An OSM PBF file, with its header read.
 #[derive(Debug, Clone)]
@@ -310,7 +312,7 @@ fn data_blobs(path: &Path) -> Result<impl Iterator<Item = Result<RawBlob>> + use
 fn admit(path: &Path, budget: &Arc<Budget>, mut spawn: impl FnMut(RawBlob, Permit)) -> Result<()> {
     for blob in data_blobs(path)? {
         let blob = blob?;
-        let Some(permit) = budget.acquire(blob.len() * DECODED_FACTOR) else {
+        let Some(permit) = budget.acquire(blob.content_len() * DECODED_FACTOR) else {
             break;
         };
         spawn(blob, permit);
