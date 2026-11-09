@@ -66,13 +66,13 @@ mod sealed {
 #[allow(clippy::struct_excessive_bools, reason = "independent switches")]
 pub struct Select<T: TagMode = Tags> {
     /// Nodes, plain and dense. Without them, blocks of only nodes are skipped unread.
-    pub nodes: bool,
+    nodes: bool,
     /// Ways and their node refs.
-    pub ways: bool,
+    ways: bool,
     /// Relations and their members.
-    pub relations: bool,
+    relations: bool,
     /// Version, timestamp, changeset, user and visibility of the selected objects.
-    pub metadata: bool,
+    metadata: bool,
     tags: PhantomData<T>,
 }
 
@@ -105,7 +105,7 @@ impl Select<NoTags> {
 }
 
 impl<T: TagMode> Select<T> {
-    /// The same selection, without nodes.
+    /// The same selection, without nodes, plain and dense: blocks of only nodes are then skipped unread.
     #[must_use]
     pub const fn without_nodes(self) -> Self {
         Self {
@@ -114,7 +114,7 @@ impl<T: TagMode> Select<T> {
         }
     }
 
-    /// The same selection, without ways.
+    /// The same selection, without ways and their node refs.
     #[must_use]
     pub const fn without_ways(self) -> Self {
         Self {
@@ -123,7 +123,7 @@ impl<T: TagMode> Select<T> {
         }
     }
 
-    /// The same selection, without relations.
+    /// The same selection, without relations and their members.
     #[must_use]
     pub const fn without_relations(self) -> Self {
         Self {
@@ -132,7 +132,7 @@ impl<T: TagMode> Select<T> {
         }
     }
 
-    /// The same selection, without metadata.
+    /// The same selection, without metadata: the version, timestamp, changeset, user and visibility of objects.
     #[must_use]
     pub const fn without_metadata(self) -> Self {
         Self {

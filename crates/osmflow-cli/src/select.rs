@@ -106,9 +106,15 @@ impl Filter {
 
     /// `select` without the types no object is wanted of.
     pub fn select<T: TagMode>(&self, mut select: Select<T>) -> Select<T> {
-        select.nodes &= self.wants(Kind::Node);
-        select.ways &= self.wants(Kind::Way);
-        select.relations &= self.wants(Kind::Relation);
+        if !self.wants(Kind::Node) {
+            select = select.without_nodes();
+        }
+        if !self.wants(Kind::Way) {
+            select = select.without_ways();
+        }
+        if !self.wants(Kind::Relation) {
+            select = select.without_relations();
+        }
         select
     }
 
