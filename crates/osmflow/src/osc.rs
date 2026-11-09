@@ -265,10 +265,18 @@ struct StringsBuf {
     ends: Vec<u32>,
 }
 
+/// The most strings of one kind an object may have, and their bytes: a million tags or member roles, and 64 MiB of
+/// them, far above any real object, bound the memory a damaged file can take.
+const MAX_STRINGS: usize = 2 << 20;
+const MAX_TEXT: usize = 64 << 20;
+
 impl StringsBuf {
     /// Appends an attribute value, unescaped.
     fn push(&mut self, raw: &[u8]) -> Result<(), XmlError> {
         value::push_text(raw, &mut self.text)?;
+        if self.ends.len() >= MAX_STRINGS || self.text.len() > MAX_TEXT {
+            return Err(XmlError::TooLarge);
+        }
         self.ends
             .push(u32::try_from(self.text.len()).map_err(|_| XmlError::TooLarge)?);
         Ok(())

@@ -50,6 +50,12 @@ pub enum OscError {
         /// The diff's URL.
         url: String,
     },
+    /// The server has no `state.txt` where the stream should start: the replication URL is probably wrong.
+    #[error("{url} is not on the server; is the replication URL right?")]
+    NoStream {
+        /// The URL of the missing `state.txt`.
+        url: String,
+    },
     /// A read asked for a diff past the stream's latest one.
     #[error("sequence {sequence} is past the source's latest state, {latest}")]
     NotPublished {
@@ -115,8 +121,8 @@ pub enum XmlError {
     /// An element has an attribute twice, which XML does not allow.
     #[error("the attribute {0:?} is repeated")]
     DuplicateAttribute(&'static str),
-    /// An attribute value does not parse as its type: an integer in range, a coordinate whose 1e-7 degrees fit an
-    /// `i32` (±214.7°), a UTC timestamp, a member type or a boolean.
+    /// An attribute value does not parse as its type: an integer in range, a latitude within ±90° or a longitude
+    /// within ±180°, a UTC timestamp, a member type or a boolean.
     #[error("invalid {attribute} {value:?}")]
     Value {
         /// The attribute's name.
@@ -137,9 +143,11 @@ pub enum XmlError {
     /// A node has a latitude without a longitude, or the other way round.
     #[error("a node has only one of lat and lon")]
     HalfLocation,
-    /// An element over 16 MiB, or an object's text over 4 GiB: limits that keep a damaged file from taking all
-    /// memory.
-    #[error("an element is larger than 16 MiB, or an object's text larger than 4 GiB")]
+    /// An element over 16 MiB, or an object with over a million node refs, members or tags, or over 64 MiB of tag or
+    /// role text: limits far above any real object, which bound the memory a damaged file can take.
+    #[error(
+        "an element is larger than 16 MiB, or an object holds over a million items or 64 MiB of text"
+    )]
     TooLarge,
 }
 

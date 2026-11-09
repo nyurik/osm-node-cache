@@ -33,7 +33,7 @@ top. It reads the subset of XML osmChange files use, and checks it strictly.
   fixed form `YYYY-MM-DDThh:mm:ssZ`, checked against the calendar. A value is unescaped only when it holds `&`, `<` or
   a control character.
 * **Coordinates are fixed-point decimals,** never parsed as floating-point numbers. Digits past the seventh decimal
-  round half away from zero, as PBF writers round, and a coordinate must fit an `i32` of 1e-7 degrees. PBF files store
+  round half away from zero, as PBF writers round, and a latitude must be within ±90° and a longitude within ±180°. PBF files store
   locations to 1e-7 degrees, so a location from a diff equals the same location from a PBF file.
 * **The structure is checked:** the root is `osmChange`, it holds only the three sections, they hold only nodes, ways
   and relations, and those hold only their tags, way nodes and members. Unknown attributes are ignored. Comments and
@@ -42,8 +42,8 @@ top. It reads the subset of XML osmChange files use, and checks it strictly.
   as writers disagree on its value in a `delete` section.
 * **DTDs, entity declarations and CDATA sections are rejected.** osmChange files have none, and refusing them rules out
   entity expansion attacks.
-* **Limits** keep a damaged file from taking all memory: one element's markup takes at most 16 MiB, and an object's
-  text at most 4 GiB.
+* **Limits** keep a damaged file from taking all memory: one element's markup takes at most 16 MiB, and an object holds
+  at most a million node refs, members or tags, and 64 MiB of tag or role text, far above any real object.
 * **Errors say where:** an `OscError::Xml` has an `XmlError` saying what is wrong, and an `XmlPosition` with the file,
   the byte offset in the decompressed XML, and the element. After an error, the reader ends.
 

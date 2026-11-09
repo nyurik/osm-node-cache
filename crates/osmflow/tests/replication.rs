@@ -391,6 +391,14 @@ fn a_panicking_fetcher_is_an_error_not_the_end() {
 }
 
 #[test]
+fn a_server_without_state_is_not_a_stream() {
+    let cache = temp_dir("replication-no-state");
+    let repl = Replication::remote(BASE, &cache, Mock::new(&[]));
+    let error = repl.state().unwrap_err();
+    assert!(matches!(error, OscError::NoStream { .. }), "{error}");
+}
+
+#[test]
 fn remote_stream_is_cached() {
     let cache = temp_dir("replication-remote");
     // The server has sequence 6, but its latest state is 5.

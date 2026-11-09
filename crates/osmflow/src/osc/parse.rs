@@ -18,6 +18,9 @@ use crate::osc::{Action, Change, Meta, Node, Object, Relation, StringsBuf, Tags,
 const BUFFER: usize = 256 << 10;
 /// The largest piece of markup (one element's start tag, or a comment) the buffer grows to hold.
 const MAX_MARKUP: usize = 16 << 20;
+/// The most node refs or members an object may have: far above the OpenStreetMap API's 2,000 nodes per way and
+/// 32,000 members per relation, and a bound on the memory a damaged file can take.
+const MAX_ITEMS: usize = 1 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -382,6 +385,9 @@ impl Scratch {
                 set(&mut r, "ref", value, int)?;
             }
         }
+        if self.refs.len() >= MAX_ITEMS {
+            return Err(XmlError::TooLarge);
+        }
         self.refs.push(r.ok_or(XmlError::MissingAttribute("ref"))?);
         Ok(())
     }
@@ -406,6 +412,9 @@ impl Scratch {
         }
         let kind = kind.ok_or(XmlError::MissingAttribute("type"))?;
         let r = r.ok_or(XmlError::MissingAttribute("ref"))?;
+        if self.members.len() >= MAX_ITEMS {
+            return Err(XmlError::TooLarge);
+        }
         self.roles.push(role.unwrap_or_default())?;
         self.members.push((kind, r));
         Ok(())
@@ -634,8 +643,12 @@ impl<R: Read> OscReader<R> {
                 })?,
                 b"changeset" => set(&mut m.changeset, "changeset", v, int)?,
                 b"uid" => set(&mut m.uid, "uid", v, int)?,
-                b"lat" => set(&mut head.lat, "lat", v, decimicro)?,
-                b"lon" => set(&mut head.lon, "lon", v, decimicro)?,
+                b"lat" => set(&mut head.lat, "lat", v, |v| {
+                    decimicro(v).filter(|lat| lat.unsigned_abs() <= 900_000_000)
+                })?,
+                b"lon" => set(&mut head.lon, "lon", v, |v| {
+                    decimicro(v).filter(|lon| lon.unsigned_abs() <= 1_800_000_000)
+                })?,
                 b"visible" => set(&mut head.visible, "visible", v, |v| match v {
                     b"true" => Some(true),
                     b"false" => Some(false),

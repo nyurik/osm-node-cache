@@ -333,7 +333,15 @@ impl Source {
         let Some(remote) = &self.remote else {
             return State::read(&path);
         };
-        let (_, body, state) = remote.fetch_checked("state.txt", parse_state)?;
+        let (_, body, state) = remote
+            .fetch_checked("state.txt", parse_state)
+            .map_err(|e| {
+                if let OscError::NotFound { url } = e {
+                    OscError::NoStream { url }
+                } else {
+                    e
+                }
+            })?;
         write_atomic(&path, &body)?;
         *remote.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.sequence);
         Ok(state)

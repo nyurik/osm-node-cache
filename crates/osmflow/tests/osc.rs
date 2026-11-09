@@ -262,7 +262,7 @@ fn escapes() {
 }
 
 /// Coordinates at ±90 and ±180, with fewer than seven decimals, with an eighth decimal rounding half away from zero,
-/// and at the limits of `i32` in 1e-7 degrees; `-0`, `.5` and `1.`; a negative ID.
+/// and rounding up to ±90° and ±180°; `-0`, `.5` and `1.`; a negative ID.
 const COORDINATES: &str = r#"<osmChange version="0.6">
   <create>
     <node id="1" lat="0" lon="0"/>
@@ -272,7 +272,7 @@ const COORDINATES: &str = r#"<osmChange version="0.6">
     <node id="5" lat="1.23456785" lon="-1.23456785"/>
     <node id="6" lat="1.23456784999" lon="-1.234567849"/>
     <node id="7" lat="0.00000005" lon="-0.00000004"/>
-    <node id="8" lat="214.7483647" lon="-214.7483648"/>
+    <node id="8" lat="89.99999995" lon="-179.99999995"/>
     <node id="9" lat="-0" lon=".5"/>
     <node id="10" lat="12.3" lon="1."/>
     <node id="-11" lat="45.0000001" lon="-45.0000001"/>
@@ -292,7 +292,7 @@ fn coordinates() {
         create n5 v- t- c- i- u- T x12345679,-12345679
         create n6 v- t- c- i- u- T x12345678,-12345678
         create n7 v- t- c- i- u- T x1,0
-        create n8 v- t- c- i- u- T x2147483647,-2147483648
+        create n8 v- t- c- i- u- T x900000000,-1800000000
         create n9 v- t- c- i- u- T x0,5000000
         create n10 v- t- c- i- u- T x123000000,10000000
         create n-11 v- t- c- i- u- T x450000001,-450000001
@@ -695,6 +695,20 @@ const MALFORMED: &[Malformed] = &[
         "<node",
     ),
     (
+        "lat-past-90",
+        br#"<osmChange><create><node id="1" lat="90.0000001" lon="0"/></create></osmChange>"#,
+        XmlError::Value { attribute: "lat", value: String::new() },
+        Some("node"),
+        "<node",
+    ),
+    (
+        "lon-past-180",
+        br#"<osmChange><create><node id="1" lat="0" lon="-180.0000001"/></create></osmChange>"#,
+        XmlError::Value { attribute: "lon", value: String::new() },
+        Some("node"),
+        "<node",
+    ),
+    (
         "bad-timestamp",
         br#"<osmChange><create><way id="1" timestamp="2026-02-29T00:00:00Z"/></create></osmChange>"#,
         XmlError::Value { attribute: "timestamp", value: String::new() },
@@ -822,6 +836,30 @@ fn malformed() {
         );
         assert!(
             error.to_string().starts_with(&format!("byte {offset}")),
+            "{error}"
+        );
+    }
+}
+
+/// An object with more node refs or tags than any real one is an error, before it takes much memory.
+#[test]
+fn objects_with_too_many_items() {
+    let too_many = |item: &str| {
+        let items = item.repeat((1 << 20) + 1);
+        format!("<osmChange><create><way id='1'>{items}</way></create></osmChange>")
+    };
+    for xml in [too_many("<nd ref='1'/>"), too_many("<tag k='' v=''/>")] {
+        let error = OscReader::new(xml.as_bytes())
+            .find_map(Result::err)
+            .unwrap();
+        assert!(
+            matches!(
+                error,
+                OscError::Xml {
+                    kind: XmlError::TooLarge,
+                    ..
+                }
+            ),
             "{error}"
         );
     }
