@@ -29,7 +29,8 @@ criterion = "0.8"
 flate2 = { version = "1.1.10", default-features = false }
 geo-types = { version = "0.7.9", default-features = false, features = ["std"] }
 insta = "1.43"
-libc = "0.2.143"
+# 0.2.171 is the oldest that rustix 1.1, which osmflow uses, accepts
+libc = "0.2.171"
 memchr = "2.7"
 memmap2 = "0.9"
 osm-bench = { path = "benches/common" }
