@@ -107,8 +107,18 @@ fn check_filters(path: &Path, lines: &[String]) {
             "{mode:?} read of ways"
         );
     }
-    let file = PbfReader::open(path)
-        .unwrap()
+    // A read finds a string table that goes on after a block's first group only in a block it keeps, and from then
+    // on the reader's filtered reads check whole tables. This read keeps every block for its nodes, so the filtered
+    // read after it, by a clone that shares what it found, keeps every object with the key.
+    let reader = PbfReader::open(path).unwrap();
+    common::osmflow(&reader.clone().ways_where(|s| s.has("highway")), false).unwrap();
+    let split = path.ends_with("generated/split_string_table_zlib.osm.pbf");
+    assert_eq!(
+        reader.split_string_tables() > 0,
+        split,
+        "split string tables found"
+    );
+    let file = reader
         .nodes_where(|s| s.has("highway"))
         .ways_where(|s| s.has("highway"))
         .relations_where(|s| s.has("highway"));
@@ -120,6 +130,42 @@ fn check_filters(path: &Path, lines: &[String]) {
     {
         assert!(got.any(|g| g == line), "a filter of highway lost {line}");
     }
+}
+
+/// Before a read has found a string table that goes on after a block's first group, a filter judges a block by the
+/// strings at its start, as `PbfReader::split_string_tables` says: a block a filter skips whole is not looked at.
+#[test]
+fn a_split_string_table_is_checked_once_one_is_found() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/generated/split_string_table_zlib.osm.pbf");
+    let highway = |f: PbfReader| {
+        f.nodes_where(|s| s.has("highway"))
+            .ways_where(|s| s.has("highway"))
+            .relations_where(|s| s.has("highway"))
+    };
+    let reader = PbfReader::open(&path).unwrap();
+    let ways = |f: &PbfReader| {
+        common::osmflow(f, false)
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with('w'))
+            .count()
+    };
+    assert_eq!(
+        ways(&highway(reader.clone())),
+        0,
+        "skipped by the start of its table"
+    );
+    assert_eq!(reader.split_string_tables(), 0);
+    // nodes are kept, so the block is inflated whole, and its later strings found
+    assert_eq!(ways(&reader.clone().ways_where(|s| s.has("highway"))), 1);
+    assert_eq!(reader.split_string_tables(), 1);
+    assert_eq!(
+        ways(&highway(reader.clone())),
+        1,
+        "checked whole once one was found"
+    );
+    assert_eq!(reader.split_string_tables(), 2);
 }
 
 /// Why `reader` is not compared on the fixture `name`, if it is not.

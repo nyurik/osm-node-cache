@@ -31,4 +31,4 @@ These are cases no published file has.
 | `info_without_user.osm.pbf` | A way whose metadata has no user, in a block with an empty string table: the user is empty, not an error |
 | `unsorted_types.osm.pbf` | Nodes, a way, nodes again, then a relation: not sorted by type, so an unordered read has a barrier at every block |
 | `split_messages.osm.pbf` | Message fields in several occurrences, which protobuf merges: dense nodes in two `dense` fields, their metadata in two `denseinfo` fields, and a way's metadata in two `info` fields; the same objects as `packed.osm.pbf` |
-| `split_string_table_zlib.osm.pbf` | A zlib block whose string table goes on after its group, in a second `stringtable` field: the way's `highway` tag is in that later part, which block filters must see |
+| `split_string_table_zlib.osm.pbf` | A zlib block whose string table goes on after its group, in a second `stringtable` field: the way's `highway` tag is in that later part, which block filters see once a read has found such a table |

@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{self, ErrorKind, Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI8, Ordering};
+use std::sync::atomic::{AtomicI8, AtomicU64, Ordering};
 use std::{mem, result};
 
 use buffa::MessageView as _;
@@ -475,6 +475,8 @@ pub(crate) struct Loader {
     pub(crate) mode: ReadMode,
     /// Whether recent blocks were kept (positive) or skipped (negative), between -8 and 8.
     pub(crate) kept: AtomicI8,
+    /// The blocks found with a string table that goes on after their first group, by every read of the reader.
+    pub(crate) split_tables: Arc<AtomicU64>,
 }
 
 /// Reads into `buf` at `offset`, as `pread` does, so threads share one file. Windows also moves the file's position,
@@ -708,10 +710,13 @@ impl Loader {
                 let mut select = self.filters.narrow(self.select, &strings);
                 let mut filters = None;
                 let mut have = Some(have);
-                // The string table may go on after the first group, as protobuf merges a message's occurrences, so
-                // when the strings at the start reject a type and more follows that group, the rest is inflated and
-                // looked at. A table that goes on is filtered whole as the block is decoded.
-                if !alone && select != self.select {
+                // The string table may go on after the first group, as protobuf merges a message's occurrences,
+                // which no known writer does. Once a read has found such a block, when the strings at the start
+                // reject a type and more follows that group, the rest is inflated and looked at; before, the start
+                // decides, as looking costs a whole inflate of every block skipped. A table that goes on is filtered
+                // whole as the block is decoded.
+                let split_seen = self.split_tables.load(Ordering::Relaxed) > 0;
+                if split_seen && !alone && select != self.select {
                     let all = self.more(
                         blob.position,
                         &blob.span,
@@ -726,6 +731,7 @@ impl Loader {
                     )
                     .map_err(err)?;
                     if strings_follow(out) {
+                        self.split_tables.fetch_add(1, Ordering::Relaxed);
                         select = self.select;
                         filters = Some(&self.filters);
                     }
@@ -751,6 +757,13 @@ impl Loader {
                         layout.raw_size,
                     )
                     .map_err(err)?;
+                    // A block that is kept is inflated whole anyway, so looking for more of its table costs only a
+                    // walk over its fields: finding some turns the check above on for the reads that follow.
+                    if !alone && !self.filters.is_empty() && strings_follow(out) {
+                        self.split_tables.fetch_add(1, Ordering::Relaxed);
+                        select = self.select;
+                        filters = Some(&self.filters);
+                    }
                 }
                 Block::decode(blob.position, blob.span.len, true, out, select, filters)
                     .map(|b| Some(Some(b)))
@@ -874,6 +887,7 @@ mod tests {
             sorted: reader.header().is_sorted(),
             mode,
             kept: AtomicI8::new(0),
+            split_tables: Arc::default(),
         });
         let blobs = DataBlobs::new(&path, Arc::clone(&loader))
             .unwrap()

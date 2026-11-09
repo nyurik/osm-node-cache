@@ -174,6 +174,16 @@ pub fn run(args: &Args) -> Result<()> {
         })
     })?;
     w.end()?;
+    let split = file.split_string_tables();
+    if split > 0 {
+        writeln!(
+            io::stderr(),
+            "osmflow: note: {split} blocks of {} have a string table that goes on after their first group, which \
+             --tag may have misjudged in the blocks it skipped before finding the first one. Please report the file at \
+             https://github.com/nyurik/osmflow/issues",
+            args.input.display()
+        )?;
+    }
     Ok(())
 }
 

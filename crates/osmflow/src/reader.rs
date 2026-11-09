@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -39,6 +39,8 @@ pub struct PbfReader {
     pool: Option<Arc<ThreadPool>>,
     filters: Filters,
     mode: ReadMode,
+    /// Shared by the reader's clones and every read of them.
+    split_tables: Arc<AtomicU64>,
 }
 
 impl PbfReader {
@@ -63,7 +65,23 @@ impl PbfReader {
             pool: None,
             filters: Filters::default(),
             mode: ReadMode::default(),
+            split_tables: Arc::default(),
         })
+    }
+
+    /// How many blocks the reads of this reader, and of its clones, found with a string table that goes on after the
+    /// block's first group. The format allows this, but no writer osmflow knows of does it.
+    ///
+    /// Only reads with block filters ([`nodes_where`](Self::nodes_where) and the like) look, as only they can be
+    /// misled: a filter judges a block by the strings before its first group. Until a read finds the first such
+    /// block, a filter may have skipped a block whose later strings it would have kept, losing its objects. From then
+    /// on, reads look at the whole table of every block a filter would skip, which inflates it: they are correct, and
+    /// slower. So check this after a filtered pass over a new kind of file: if it is not 0, read the file again with
+    /// this reader or a clone of it, and please report the file and the program that wrote it at
+    /// <https://github.com/nyurik/osmflow/issues>.
+    #[must_use]
+    pub fn split_string_tables(&self) -> u64 {
+        self.split_tables.load(Ordering::Relaxed)
     }
 
     /// How a read with filters reads the blobs it may skip; see [`ReadMode`]. The default suits most storage.
@@ -175,6 +193,7 @@ impl PbfReader {
             sorted: self.header.is_sorted(),
             mode: self.mode,
             kept: AtomicI8::new(0),
+            split_tables: Arc::clone(&self.split_tables),
         }))
     }
 

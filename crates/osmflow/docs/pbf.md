@@ -60,6 +60,13 @@ A read skips what it does not want before decoding it, and where it can, before 
   certain when the block has a single group, as osmium writes them. In a file sorted by type, it is also certain when
   the next blob starts with the same type, or when the type is relations, the last one. Otherwise the block is
   inflated and decoded without the unwanted types.
+* **A string table may go on after the first group,** as protobuf merges a message's occurrences, though no writer
+  osmflow knows of does that. A block that is kept is inflated whole anyway, so the reader looks for more of its table
+  there, for little more than a walk over its fields. Once a read has found some, the reader's filtered reads inflate
+  every block a test would skip, if it has more than one group, and test its whole table: correct, and about twice as
+  slow on the planet. Before that, a test sees only the start, and may skip a block whose later strings it would have
+  kept. `PbfReader::split_string_tables` counts the blocks found, so a program can check it after a filtered pass and
+  read the file again.
 * **Raw blobs, and starts not laid out as expected,** are read whole and decoded with the same filters, so the result
   never depends on how much of a blob was peeked at.
 
