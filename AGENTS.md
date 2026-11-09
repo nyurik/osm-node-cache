@@ -28,12 +28,12 @@ The crates are MIT OR Apache-2.0, so what they take from other projects must all
 
 - **Never read, copy or adapt code under the GPL, LGPL or AGPL**, such as osm2pgsql or osmium-tool, nor code under the
   Business Source License. Their documentation may be read to learn what they do.
-- **Permissive code may be read and adapted:** MIT, Apache-2.0, BSD, ISC, zlib, and the Boost Software License
-  (BSL-1.0, which libosmium uses). Keep the original copyright notice with anything copied.
+- **Permissive code may be read and adapted:** MIT, Apache-2.0, BSD, ISC, zlib, the Boost Software License (BSL-1.0,
+  which libosmium uses), WTFPL, and public domain. Keep the original copyright notice with anything copied.
 - Check a project's license before opening its source.
 - Test files come only from projects under such licenses, or from the OpenStreetMap and Geofabrik servers (data under
   the ODbL). Each source gets a directory in `fixtures/` with a README saying where the files came from, at which
-  commit, under which license, and what they test, and with the project's license file.
+  commit, under which license, and what they test, and with the project's license file where it has one.
 
 ## Writing
 
@@ -42,7 +42,8 @@ The crates are MIT OR Apache-2.0, so what they take from other projects must all
   function rather than `main`.
 - Public items carry docs that say more than their names: units, ranges, when an error happens, what to do about it.
 - Test cases written for one feature or error each go inline in the tests; only real data from elsewhere goes in
-  `fixtures/`.
+  `fixtures/`. PBF cases are the exception, as the reader opens files: `tests/generated.rs` writes them to
+  `fixtures/generated/` and fails when a file there differs from what it builds.
 
 ## Code
 
@@ -51,8 +52,8 @@ The crates are MIT OR Apache-2.0, so what they take from other projects must all
   signatures name their error.
 - Unsafe code is denied in the workspace. Only `nodes::file::map_file` and `nodes::codec::zeroed` opt in, each with a
   `// SAFETY:` comment.
-- Paths are at most two segments (`fs::write`, `io::Error`, or an imported type); code behind a feature flag imports
-  what it uses inside the function.
+- A path that starts at a crate has at most two segments (`fs::write`, `io::Error`, or an imported type), as the
+  `absolute_paths` lint checks; code behind a feature flag imports what it uses inside the function.
 - Performance claims come from measurements with the repository's own tools, and say where they were taken.
 
 ## Checks

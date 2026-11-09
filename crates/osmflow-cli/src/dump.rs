@@ -11,8 +11,8 @@ use geo_types::{Coord, LineString, Polygon};
 use osmflow::nodes::prelude::{NodeRead as _, NodeStore as _};
 use osmflow::nodes::{MemoryReader, MemoryStore};
 use osmflow::{
-    AreaRules, Block, GeometryError, GroupKind, Header, Info, Location, Locator, MemberType, Node,
-    PbfReader, Relation, Select, Way,
+    AreaRules, Block, GeometryError, Header, Info, Location, Locator, MemberType, Node, PbfReader,
+    Relation, Select, Way,
 };
 
 use crate::output::{self, count, degrees, json_str, timestamp, to_decimicro};
@@ -386,13 +386,7 @@ impl Writer {
         }
         o.write_all(b"; groups:")?;
         for (i, g) in l.groups.iter().enumerate() {
-            let kind = match g.kind {
-                GroupKind::Nodes => "plain nodes",
-                GroupKind::DenseNodes => "dense nodes",
-                GroupKind::Ways => "ways",
-                GroupKind::Relations => "relations",
-                GroupKind::Empty | _ => "empty",
-            };
+            let kind = output::GROUP_NAMES[output::group_index(g.kind)];
             let sep = if i == 0 { " " } else { ", " };
             match g.objects {
                 Some(n) => write!(o, "{sep}{} {kind}", count(n as u64))?,

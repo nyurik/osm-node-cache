@@ -1,6 +1,22 @@
-//! Writing values as JSON and as text: strings, coordinates, timestamps, counts and sizes.
+//! Writing values as JSON and as text: strings, coordinates, timestamps, counts, sizes and group kinds.
 
 use std::io::{self, Write};
+
+use osmflow::GroupKind;
+
+/// The names of the kinds of groups, in the order of [`group_index`].
+pub const GROUP_NAMES: [&str; 5] = ["plain nodes", "dense nodes", "ways", "relations", "empty"];
+
+/// The position of a group kind in [`GROUP_NAMES`].
+pub fn group_index(kind: GroupKind) -> usize {
+    match kind {
+        GroupKind::Nodes => 0,
+        GroupKind::DenseNodes => 1,
+        GroupKind::Ways => 2,
+        GroupKind::Relations => 3,
+        GroupKind::Empty | _ => 4,
+    }
+}
 
 /// Writes `s` as a quoted JSON string.
 pub fn json_str(out: &mut impl Write, s: &str) -> io::Result<()> {

@@ -147,12 +147,7 @@ mod tests {
     fn encode(values: &[u64]) -> Vec<u8> {
         let mut out = Vec::new();
         for &v in values {
-            let mut v = v;
-            while v >= 0x80 {
-                out.push((v as u8) | 0x80);
-                v >>= 7;
-            }
-            out.push(v as u8);
+            push_varint(&mut out, v);
         }
         out
     }

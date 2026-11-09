@@ -1,14 +1,14 @@
 # osmflow-cli
 
-The `osmflow` command, built on the [`osmflow`](https://crates.io/crates/osmflow) crate: it dumps the objects of OpenStreetMap PBF files as
-text or GeoJSON, and summarizes files.
+The `osmflow` command, built on the [`osmflow`](https://crates.io/crates/osmflow) crate: it dumps the objects of
+OpenStreetMap PBF files as text or GeoJSON, and summarizes files.
 
 ```sh
 cargo install --path crates/osmflow-cli
 ```
 
-In this repository, `just run …` builds it in release mode and runs it with the same arguments, and `just dump …` and
-`just stats …` run its two commands: `just stats dc.osm.pbf`.
+In this repository, `just run …` builds it in release mode and runs it with the same arguments, and `just dump …`
+and `just stats …` run its two commands: `just stats dc.osm.pbf`.
 
 ## `osmflow dump`
 
@@ -91,6 +91,6 @@ The order line checks every object, whatever the header claims.
 
 ## Threads
 
-Both commands decode on a pool of threads, two fewer than the cores. `-j N` sets the pool's size; with `-j 1`, blocks are
-decoded one after another on one thread. A dump writes objects in file order either way, so its output does
-not depend on the number of threads.
+Both commands decode on a pool of threads, two fewer than the cores. `-j N` sets the pool's size; with `-j 1`, blocks
+are decoded one after another on one thread. A dump writes objects in file order either way, so its output does not
+depend on the number of threads.

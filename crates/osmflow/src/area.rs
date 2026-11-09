@@ -111,8 +111,8 @@ enum Kind {
 /// says so, and `area=yes` or `area=no` overrides every other tag. Only closed ways are tested; an open way is always
 /// a line.
 ///
-/// [`AreaRules::default`] has a built-in list, started from the public-domain list that osmtogeojson and Overpass turbo
-/// use, and expanded using the OpenStreetMap wiki pages of the tags:
+/// [`AreaRules::default`] has a built-in list, started from the CC0 list that osmtogeojson and Overpass turbo use, and
+/// expanded using the OpenStreetMap wiki pages of the tags:
 ///
 /// * any value but `no` of `amenity`, `area`, `area:highway`, `building`, `building:part`, `craft`, `golf`, `historic`,
 ///   `indoor`, `landcover`, `landuse`, `military`, `office`, `place`, `public_transport`, `ruins`, `shop` and

@@ -3,8 +3,8 @@
 //! The file is a header page holding two copies of the header, written in turn so that a crash
 //! while writing one leaves the other, then 8 bytes per node ID: the latitude with its sign bit
 //! flipped, then the longitude (little-endian `u32` each). Zero latitude bytes are an ID with no
-//! node, as no valid latitude has them. IDs above the highest stored one take no space, as the
-//! file ends there, and unwritten parts of it are sparse on most file systems.
+//! node, as no valid latitude has them. The file ends a little past the highest stored ID, as it
+//! grows by an eighth at a time, and unwritten parts of it are sparse on most file systems.
 
 use std::fs::File;
 use std::marker::PhantomData;

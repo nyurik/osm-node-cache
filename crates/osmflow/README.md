@@ -138,8 +138,8 @@ element.
 `osmflow::nodes` has stores of node locations by node ID, for building ways from their nodes' IDs: `PagedStore`, about
 5 bytes per node in a memory-mapped file (55.6 GB for the planet); `DenseStore`, 8 bytes per node ID, for the fastest
 lookups; and `MemoryStore`, a hash map in memory. They bulk load and take replication changes, the two kept in a file
-keep their last commit through a crash, and none of them needs the PBF reader. [`docs/nodes.md`](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/docs/nodes.md) has the
-details.
+keep their last commit through a crash, and none of them needs the PBF reader.
+[`docs/nodes.md`](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/docs/nodes.md) has the details.
 
 ## Features
 
@@ -153,7 +153,8 @@ details.
 
 ## How it reads
 
-[`docs/design.md`](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/docs/design.md) explains how osmflow is built, and why; in short:
+[`docs/design.md`](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/docs/design.md) explains how osmflow is
+built, and why; in short:
 
 - **Protobuf through [`buffa`](https://crates.io/crates/buffa) views.** The blocks are decoded with a read projection
   of the format's schema (`proto/osmflow_raw.proto`) that declares only what osmflow reads, so the rest is skipped
@@ -188,7 +189,8 @@ default zlib-rs, `osmpbf` 0.3.8 its fastest option, zlib-ng, rather than its def
 0.19.1 the default of `flate2`, `miniz_oxide`, as it has no option of its own. osmflow decodes on its default pool
 of 14 threads; `osmpbf` and `osmpbfreader` use rayon's global pool of 16. osmflow and `osmpbf` also decode each
 object's metadata, which no reader's summary uses; `osmpbfreader` has none.
-[`benches/README.md`](https://github.com/nyurik/osmflow/blob/main/benches/README.md) has what the benchmark measures, and how to run it.
+[`benches/README.md`](https://github.com/nyurik/osmflow/blob/main/benches/README.md) has what the benchmark measures,
+and how to run it.
 
 | File | PBF size | Nodes | Ways | Relations | Way node refs | Tags |
 |---|---:|---:|---:|---:|---:|---:|

@@ -534,9 +534,7 @@ impl Nodes {
     /// Decodes a group's dense nodes: all their fields, or only their locations when no tags or metadata are
     /// selected, which skips the rest unread.
     ///
-    /// buffa's views decode each packed array into a `Vec`, which is read again here. Borrowed packed views
-    /// (`PackedView`, <https://github.com/anthropics/buffa/issues/814>) would decode the arrays as they are read here,
-    /// with no `Vec` per array; osmflow can use them once a buffa release has them.
+    /// buffa's views decode each packed array into a `Vec`, which is read again here.
     fn push_dense(&mut self, dense: &[u8], ctx: &Ctx) -> FResult<()> {
         let bad = PbfFormatError::protobuf("dense nodes");
         if !ctx.select.tags && !ctx.select.metadata {

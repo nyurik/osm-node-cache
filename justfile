@@ -133,7 +133,7 @@ _check-msrv-default:  (cargo-install 'cargo-minimal-versions') (cargo-install 'c
     toolchain="$(rustc --version | cut -d' ' -f2)"
     export RUSTUP_TOOLCHAIN="$toolchain"
     export CARGO="$(rustup which --toolchain "$toolchain" cargo)"
-    cargo minimal-versions check --direct --package {{main_crate}}
+    cargo minimal-versions check --direct --all-features --package {{main_crate}}
 
 # Run cargo-release
 release *args='':  (cargo-install 'release-plz')

@@ -87,7 +87,7 @@ static CLASS: [u8; 256] = {
     }
 };
 
-/// The end of the name that starts at `from`, or `None` if the buffer ends first.
+/// The end of the name that starts at `i`, or `None` if the buffer ends first.
 fn name_end(buf: &[u8], mut i: usize) -> Option<usize> {
     while i < buf.len() {
         if CLASS[buf[i] as usize] & NAME_END != 0 {

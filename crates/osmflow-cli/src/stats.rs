@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use anyhow::{Context as _, Result};
-use osmflow::{Block, GroupKind, Header, Info, PbfReader, Select};
+use osmflow::{Block, Header, Info, PbfReader, Select};
 
 use crate::output::{self, count, degrees, json_str, nanodegrees, timestamp};
 use crate::select::{Kind, Threads};
@@ -113,14 +113,7 @@ impl Stats {
         s.strings = layout.strings as u64;
         s.string_bytes = layout.string_bytes as u64;
         for g in &layout.groups {
-            let i = match g.kind {
-                GroupKind::Nodes => 0,
-                GroupKind::DenseNodes => 1,
-                GroupKind::Ways => 2,
-                GroupKind::Relations => 3,
-                GroupKind::Empty | _ => 4,
-            };
-            s.groups[i] += 1;
+            s.groups[output::group_index(g.kind)] += 1;
         }
         let mut order = Order::default();
         for n in block.nodes() {
@@ -336,11 +329,10 @@ impl Report<'_> {
             count(s.strings),
             output::size(s.string_bytes),
         )?;
-        let names = ["plain nodes", "dense nodes", "ways", "relations", "empty"];
         let groups: Vec<String> = s
             .groups
             .iter()
-            .zip(names)
+            .zip(output::GROUP_NAMES)
             .filter(|&(&n, _)| n > 0)
             .map(|(&n, name)| format!("{} {name}", count(n)))
             .collect();

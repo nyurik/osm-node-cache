@@ -26,15 +26,15 @@ ways and relations, each a whole version of the object. Replication diffs are os
 
 ### Parsing
 
-The reader is osmflow's own: a tokenizer over its buffer, using `memchr` to find markup, and the format's structure on
-top. It reads the subset of XML osmChange files use, and checks it strictly.
+The reader is osmflow's own: a tokenizer over its buffer, using `memchr` to find the ends of attribute values and
+comments, and the format's structure on top. It reads the subset of XML osmChange files use, and checks it strictly.
 
 * **Attributes are matched as bytes,** and their values read straight from the bytes: integers, and timestamps in the
   fixed form `YYYY-MM-DDThh:mm:ssZ`, checked against the calendar. A value is unescaped only when it holds `&`, `<` or
   a control character.
 * **Coordinates are fixed-point decimals,** never parsed as floating-point numbers. Digits past the seventh decimal
-  round half away from zero, as PBF writers round, and a latitude must be within ±90° and a longitude within ±180°. PBF files store
-  locations to 1e-7 degrees, so a location from a diff equals the same location from a PBF file.
+  round half away from zero, as PBF writers round, and a latitude must be within ±90° and a longitude within ±180°.
+  PBF files store locations to 1e-7 degrees, so a location from a diff equals the same location from a PBF file.
 * **The structure is checked:** the root is `osmChange`, it holds only the three sections, they hold only nodes, ways
   and relations, and those hold only their tags, way nodes and members. Unknown attributes are ignored. Comments and
   processing instructions are skipped, as is a byte order mark.

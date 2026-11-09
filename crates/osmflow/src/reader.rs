@@ -47,20 +47,16 @@ impl PbfReader {
     /// format does not allow but some tools write, gets an empty [`Header`]; an empty file is an error.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let header = match BlobReader::open(&path)?
+        let Some(blob) = BlobReader::open(&path)?
             .next_with(|_, _| Want::WHOLE)
             .transpose()?
-        {
-            Some(blob) if blob.kind == BlobKind::Header => {
-                blob.with_content(|data| Header::parse(data, blob.position))?
-            }
-            Some(blob) if blob.kind == BlobKind::Data => Header::default(),
-            Some(RawBlob {
-                kind: BlobKind::Other(kind),
-                ..
-            }) => return Err(PbfError::MissingHeader(kind)),
-            Some(_) => unreachable!("header and data blobs are matched above"),
-            None => return Err(PbfError::EmptyFile),
+        else {
+            return Err(PbfError::EmptyFile);
+        };
+        let header = match &blob.kind {
+            BlobKind::Header => blob.with_content(|data| Header::parse(data, blob.position))?,
+            BlobKind::Data => Header::default(),
+            BlobKind::Other(kind) => return Err(PbfError::MissingHeader(kind.clone())),
         };
         Ok(Self {
             path,
@@ -183,16 +179,17 @@ impl PbfReader {
         }))
     }
 
-    /// Calls `f` for every block on the pool, unordered within each run of one object type, with a barrier wherever
-    /// the type changes in file order: the consecutive blocks holding the same types form a run, handed to `f` in
-    /// parallel and in no particular order, and a run starts only once `f` has returned for every block before it.
-    /// In a file sorted by type, as published files are, every node is handled before any way, and every way before
-    /// any relation, as resolving way geometry needs, at the speed of a read with no barriers: blocks are still read
-    /// and decoded ahead while a run's last blocks finish, so a barrier costs only that short tail. A file whose
-    /// types come back (nodes again after ways) gets a barrier at every change, so one whose types alternate block by
-    /// block is read nearly one block at a time. A block mixing types is a run of its own, and a block holding none
-    /// of the selected types joins the run it is in, and a block the filters skip whole is not handed to `f`. Stops at
-    /// the first error, from reading or from `f`.
+    /// Calls `f` for every block on the pool. Consecutive blocks holding the same object types form a run: a run's
+    /// blocks are handed to `f` in parallel and in no particular order, and a run starts only once `f` has returned for
+    /// every block before it.
+    ///
+    /// In a file sorted by type, as published files are, every node is so handled before any way, and every way before
+    /// any relation, as resolving way geometry needs. Blocks are still read and decoded ahead while a run's last blocks
+    /// finish, so a barrier costs only that short tail. A file whose types come back (nodes again after ways) gets a
+    /// barrier at every change, and one whose types alternate block by block is read nearly one block at a time.
+    ///
+    /// A block mixing types is a run of its own, a block holding none of the selected types joins the run it is in, and
+    /// a block the filters skip whole is not handed to `f`. Stops at the first error, from reading or from `f`.
     pub fn par_unordered<T, F>(&self, select: Select<T>, f: F) -> Result<()>
     where
         T: TagMode,

@@ -46,7 +46,8 @@ use crate::Location;
 
 const PAGE_SIZE: usize = 4096;
 const MAGIC: &[u8; 8] = b"ONCPAGE3";
-/// Earlier versions' magic starts the same.
+/// What every version's magic starts with: a file that has it is a paged store, of a version this
+/// library may not read.
 const MAGIC_PREFIX: &[u8; 7] = b"ONCPAGE";
 const VERSION: u32 = 3;
 /// Each copy of the header takes half of the header page.
@@ -78,7 +79,7 @@ pub struct PagedOpts {
 
 impl Default for PagedOpts {
     fn default() -> Self {
-        // on Europe, a synthetic day of edits splits about 30 of 3.9 million pages at this fill
+        // room in each page for the changes of the days after a load, so few pages split
         Self { fill: 0.97 }
     }
 }
@@ -120,7 +121,7 @@ pub struct PagedStats {
     pub pages: u64,
     /// bytes used in the pages, headers included
     pub used_bytes: u64,
-    /// size of the data file
+    /// size of the data file, which grows by an eighth at a time, so it can be that much past the last page in use
     pub file_bytes: u64,
     /// blocks with all 64 IDs present, a single run of them, or any other mix
     pub masks: [u64; 3],
@@ -678,9 +679,6 @@ impl NodeStore for PagedStore<ReadWrite> {
                 None
             }
         };
-        if changed {
-            return Err(NodeStoreError::NotEmpty);
-        }
         // blocks up to the last loaded one are complete
         let floor_block = resume.map(|id| id >> BLOCK_SHIFT);
         Ok(PagedLoader {

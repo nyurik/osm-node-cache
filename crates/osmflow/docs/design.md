@@ -99,8 +99,8 @@ The PBF reader, the osmChange parser and the generated protobuf code have no uns
   rejects snapshots its error, and what `osmpbf` does with the same file.
 * **osmChange cases inline:** `tests/osc.rs` writes most of its cases in the test itself, one feature or one error
   each. It also reads a real planet minute diff and the change and state files of other projects. It checks that the
-  result does not depend on how the input is split into reads, down to one byte at a time, and that every node of a PBF fixture written as
-  osmChange reads back at the same location.
+  result does not depend on how the input is split into reads, down to one byte at a time, and that every node of a
+  PBF fixture written as osmChange reads back at the same location.
 * **Replication** is tested against a mock `Fetch`, and, with the `http` feature, against a local HTTP server.
 * **Pools:** reads on a caller's pool of one thread, started from that thread, must finish.
 * **Node stores** all pass one test suite, written against their traits.

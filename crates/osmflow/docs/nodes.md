@@ -12,11 +12,11 @@ The stores are osmflow's `nodes` feature, on by default, and need none of the PB
 Three stores implement the same traits, so code written against them switches stores by changing a type. They trade
 lookup speed, size, and the cost and safety of changes differently:
 
-| Store         | Kept in                                             | Disk size, North America / planet                                                                                                 | Lookups in random order | Commit 2,000 changes | After a crash                              |
-|---------------|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|-------------------------|----------------------|--------------------------------------------|
-| `PagedStore`  | 4 KiB pages of delta-coded blocks, memory-mapped    | 13.7 GB / 55.6 GB: about 5 bytes per node                                                                                         | 24 M/s                  | 10 ms                | the last commit, also after a power loss   |
-| `DenseStore`  | 8 bytes per ID, at the ID's position, memory-mapped | 64.3 GB / 106.7 GB: a sparse file of 8 bytes × the highest node ID; its holes, the ID ranges with no nodes, may use no disk space, except on Windows, where the file takes its whole size | 1,131 M/s               | 3 ms                 | the last commit, and some changes after it |
-| `MemoryStore` | a hash map in RAM, with no file                     | none; 20 to 39 bytes per node of RAM instead                                                                                      | 358 M/s                 | none needed          | nothing: it has no file                    |
+| Store         | Kept in                                             | Disk size, North America / planet                                                                                                 | Lookups in random order, 16 threads | Commit 2,000 changes | After a crash                              |
+|---------------|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|-------------------------------------|----------------------|--------------------------------------------|
+| `PagedStore`  | 4 KiB pages of delta-coded blocks, memory-mapped    | 13.7 GB / 55.6 GB: about 5 bytes per node                                                                                         | 24 M/s                              | 10 ms                | the last commit, also after a power loss   |
+| `DenseStore`  | 8 bytes per ID, at the ID's position, memory-mapped | 64.3 GB / 106.7 GB: a sparse file of 8 bytes × the highest node ID; its holes, the ID ranges with no nodes, may use no disk space, except on Windows, where the file takes its whole size | 1,131 M/s                           | 3 ms                 | the last commit, and some changes after it |
+| `MemoryStore` | a hash map in RAM, with no file                     | none; 20 to 39 bytes per node of RAM instead                                                                                      | 358 M/s                             | none needed          | nothing: it has no file                    |
 
 The disk sizes are of whole extracts. The lookups and commits were measured on a local NVMe disk, with each store in
 memory, on North America's nodes up to ID 3 billion; the [performance](#performance) section has the details.
@@ -188,7 +188,7 @@ first.
 * **The paged load is bound by the store, not the disk**: 59 s of its 69 s are spent encoding and writing it. The
   dense store writes the most, 107 GB, as the planet's node IDs leave few gaps.
 * **Only the paged store fits in the host's memory**, so only it resolves the planet's ways at memory speed: 231
-  million refs a second once it is in memory, 49 ns per lookup on each of 16 threads.
+  million refs a second on 16 threads once it is in memory.
 
 Whole extracts:
 
@@ -233,7 +233,8 @@ and how far apart they were:
 
 "Load peak memory" counts the pages of a memory-mapped file that were in memory; the OS drops them when it needs room.
 
-`just bench` times lookups and commits of every store on synthetic nodes (`benches/nodes.rs`).
+The repository's [node store benchmark](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/benches/nodes.rs)
+times lookups and commits of every store on synthetic nodes.
 
 ### Design notes
 
