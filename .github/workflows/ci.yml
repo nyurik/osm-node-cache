@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      cli_tag:
+        description: 'Attach the osmflow binaries to this existing release, e.g. osmflow-cli-v0.11.0; empty for none'
+        required: false
+        default: ''
 
 defaults:
   run:
@@ -164,11 +169,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
   # Attach the osmflow binaries to the GitHub release of osmflow-cli, named as the binstall metadata in
-  # crates/osmflow-cli/Cargo.toml expects: osmflow-<target>.tar.gz, or .zip on Windows
+  # crates/osmflow-cli/Cargo.toml expects: osmflow-<target>.tar.gz, or .zip on Windows. It runs once release-plz has
+  # released osmflow-cli, or when the workflow is run by hand with the tag of an existing release (cli_tag).
+  # always(): without it, the job is skipped whenever any job above it is, and build-binaries, which ci-passed needs,
+  # is skipped on every push.
   release-binaries:
     name: Release ${{ matrix.target }}
     needs: [ release-plz ]
-    if: needs.release-plz.outputs.cli_tag != ''
+    if: |
+      always()
+      && (
+        (needs.release-plz.result == 'success' && needs.release-plz.outputs.cli_tag != '')
+        || (github.event_name == 'workflow_dispatch' && startsWith(inputs.cli_tag, 'osmflow-cli-v'))
+      )
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -178,7 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-plz.outputs.cli_tag }}
+          ref: ${{ needs.release-plz.outputs.cli_tag || inputs.cli_tag }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - if: contains(matrix.target, '-linux-')
@@ -191,7 +204,7 @@ jobs:
           bin: osmflow
           package: osmflow-cli
           target: '${{ matrix.target }}'
-          ref: refs/tags/${{ needs.release-plz.outputs.cli_tag }}
+          ref: refs/tags/${{ needs.release-plz.outputs.cli_tag || inputs.cli_tag }}
           tar: unix
           zip: windows
           include: LICENSE-MIT,LICENSE-APACHE
