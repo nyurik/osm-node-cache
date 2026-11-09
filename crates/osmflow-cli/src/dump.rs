@@ -182,6 +182,10 @@ fn open(path: &Path) -> Result<PbfReader> {
 /// memory.
 fn node_locations(args: &Args, file: &PbfReader) -> Result<MemoryStore> {
     let mut store = MemoryStore::new();
+    if args.limit == Some(0) {
+        // Nothing is dumped, so no way needs its nodes; the countdown below would also underflow.
+        return Ok(store);
+    }
     if !args.filter.picks() && args.limit.is_none() {
         file.load_nodes(&mut store)?;
         return Ok(store);

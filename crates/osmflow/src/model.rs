@@ -72,3 +72,21 @@ pub struct Member<'a> {
     /// The member's part in the relation, such as `outer` or `stop`; often empty.
     pub role: &'a str,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn degrees_are_the_nearest_f64() {
+        // Multiplying by 1e-7, which an f64 cannot hold exactly, gives 13.054941099999999 and -122.29099629999999.
+        let loc = Location::new(130_549_411, -1_222_909_963);
+        assert_eq!(
+            (loc.lat_degrees(), loc.lon_degrees()),
+            (13.054_941_1, -122.290_996_3)
+        );
+        let edge = Location::new(-900_000_000, 1_800_000_000);
+        assert_eq!((edge.lat_degrees(), edge.lon_degrees()), (-90.0, 180.0));
+        assert_eq!(Location::from_degrees(13.054_941_1, -122.290_996_3), loc);
+    }
+}

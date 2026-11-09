@@ -15,7 +15,10 @@ dropping the file from the page cache, and the timing loop.
 
 Every reader computes the same summary of the file: counts and sums of IDs, coordinates and node refs, and the length of
 every tag key, tag value and member role, each taken as a string slice and passed through `black_box`. So every crate
-does the work of handing out its strings, and the benchmark copies none. The benchmark refuses to run unless every
+does the work of handing out its strings, and the benchmark copies none. Each reader adds what it reads to one summary
+in place, except `osmpbf/par_map_reduce`, whose API maps every element on its own and so builds a summary per element.
+The summary has no object metadata: osmflow (`Select::all()`) and `osmpbf` decode it all the same, and `osmpbfreader`
+does not have it. The benchmark refuses to run unless every
 reader's summary is the same, and `report.py` checks the summaries of separate runs against each other.
 
 | Reader | API |

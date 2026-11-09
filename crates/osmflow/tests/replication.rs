@@ -489,6 +489,7 @@ mod http {
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
     use std::thread;
+    use std::time::{Duration, Instant};
 
     use osmflow::osc::{Fetch as _, HttpFetch, Replication};
 
@@ -525,6 +526,14 @@ mod http {
             }
         });
         (base, requests)
+    }
+
+    #[test]
+    fn a_request_that_cannot_succeed_is_not_retried() {
+        // With the default 8 retries, retrying this would take minutes.
+        let start = Instant::now();
+        HttpFetch::new().fetch("not a url").unwrap_err();
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

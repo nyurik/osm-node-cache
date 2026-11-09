@@ -489,6 +489,8 @@ pub(crate) mod tests {
         load(&mut store, &expected, 7, 20_000);
         assert_eq!(store.stamp(), 7);
         assert_eq!(store.load_state(), LoadState::Complete);
+        // Reads the file while the store, open to write, holds its lock.
+        store.preload().unwrap();
         check(&store, &expected);
         store.check_committed(&f, &expected, 7, &Metadata::default());
     }

@@ -9,9 +9,9 @@ use std::path::Path;
 
 use osm_bench::{Reader, Summary};
 
-fn osmpbf_element(e: &osmpbf::Element<'_>) -> Summary {
+/// Adds `e` to `s` in place, as the osmflow reader does, so the single-thread reader pays for no summary per element.
+fn osmpbf_element(s: &mut Summary, e: &osmpbf::Element<'_>) {
     use osmpbf::Element;
-    let mut s = Summary::default();
     match e {
         Element::Node(n) => {
             s.node(n.id(), n.decimicro_lat(), n.decimicro_lon());
@@ -31,14 +31,13 @@ fn osmpbf_element(e: &osmpbf::Element<'_>) -> Summary {
             r.members().for_each(|m| s.member(m.role().unwrap()));
         }
     }
-    s
 }
 
 fn osmpbf_seq(path: &Path) -> Summary {
     let mut total = Summary::default();
     osmpbf::ElementReader::from_path(path)
         .unwrap()
-        .for_each(|e| total = total.merge(osmpbf_element(&e)))
+        .for_each(|e| osmpbf_element(&mut total, &e))
         .unwrap();
     total
 }
@@ -46,7 +45,16 @@ fn osmpbf_seq(path: &Path) -> Summary {
 fn osmpbf_par(path: &Path) -> Summary {
     osmpbf::ElementReader::from_path(path)
         .unwrap()
-        .par_map_reduce(|e| osmpbf_element(&e), Summary::default, Summary::merge)
+        // The API maps each element on its own, so a summary per element is unavoidable here.
+        .par_map_reduce(
+            |e| {
+                let mut s = Summary::default();
+                osmpbf_element(&mut s, &e);
+                s
+            },
+            Summary::default,
+            Summary::merge,
+        )
         .unwrap()
 }
 

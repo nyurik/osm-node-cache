@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use geo_types::Geometry;
 use osmflow::nodes::{MemoryStore, NodeRead as _};
-use osmflow::{AreaRules, GeometryError, Locator, PbfReader, Select};
+use osmflow::{AreaRules, GeometryError, Location, Locator, PbfReader, Select};
 
 fn fixture(name: &str) -> PbfReader {
     PbfReader::open(
@@ -61,9 +61,10 @@ fn ways_get_their_nodes_locations() {
                         assert_eq!(line.0.len(), refs.len());
                         for (c, id) in line.coords().zip(&refs) {
                             let (lat, lon) = expected[id];
+                            let loc = Location::new(lat, lon);
                             assert_eq!(
                                 (c.y, c.x),
-                                (f64::from(lat) * 1e-7, f64::from(lon) * 1e-7),
+                                (loc.lat_degrees(), loc.lon_degrees()),
                                 "{name} {id}"
                             );
                         }

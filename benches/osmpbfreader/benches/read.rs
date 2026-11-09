@@ -10,9 +10,9 @@ use std::path::Path;
 
 use osm_bench::{Reader, Summary};
 
-fn osmpbfreader_obj(obj: &osmpbfreader::OsmObj) -> Summary {
+/// Adds `obj` to `s` in place, as the osmflow reader does, so no reader pays for a summary per object.
+fn osmpbfreader_obj(s: &mut Summary, obj: &osmpbfreader::OsmObj) {
     use osmpbfreader::OsmObj;
-    let mut s = Summary::default();
     match obj {
         OsmObj::Node(n) => {
             s.node(n.id.0, n.decimicro_lat, n.decimicro_lon);
@@ -28,21 +28,24 @@ fn osmpbfreader_obj(obj: &osmpbfreader::OsmObj) -> Summary {
             r.refs.iter().for_each(|m| s.member(&m.role));
         }
     }
-    s
 }
 
 fn osmpbfreader_seq(path: &Path) -> Summary {
     let mut reader = osmpbfreader::OsmPbfReader::new(File::open(path).unwrap());
-    reader.iter().fold(Summary::default(), |s, o| {
-        s.merge(osmpbfreader_obj(&o.unwrap()))
-    })
+    let mut total = Summary::default();
+    for obj in reader.iter() {
+        osmpbfreader_obj(&mut total, &obj.unwrap());
+    }
+    total
 }
 
 fn osmpbfreader_par(path: &Path) -> Summary {
     let mut reader = osmpbfreader::OsmPbfReader::new(File::open(path).unwrap());
-    reader.par_iter().fold(Summary::default(), |s, o| {
-        s.merge(osmpbfreader_obj(&o.unwrap()))
-    })
+    let mut total = Summary::default();
+    for obj in reader.par_iter() {
+        osmpbfreader_obj(&mut total, &obj.unwrap());
+    }
+    total
 }
 
 /// The readers, by the names the benchmark prints and `report.py` reads.

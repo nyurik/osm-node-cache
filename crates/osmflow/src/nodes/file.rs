@@ -161,18 +161,17 @@ pub(crate) fn crc(bytes: &[u8]) -> u32 {
     crc32fast::hash(bytes)
 }
 
-/// Reads all of `path` into the page cache, with as many threads as cores reading chunks of it
-/// in turn: the OS's own read-ahead keeps too few requests in flight for one reader to get the
-/// most from a network disk.
-pub(crate) fn preload(path: &Path) -> Result<()> {
+/// Reads all of `file`, the store's file at `path`, into the page cache, with as many threads as
+/// cores reading chunks of it in turn: the OS's own read-ahead keeps too few requests in flight for
+/// one reader to get the most from a network disk. It reads through the store's own handle, as
+/// Windows locks a file against reads through any other while a writer holds it.
+pub(crate) fn preload(file: &File, path: &Path) -> Result<()> {
     const CHUNK: u64 = 64 << 20;
-    let file = File::open(path).at(path)?;
     let len = file.metadata().at(path)?.len();
     let threads = thread::available_parallelism().map_or(4, usize::from) as u64;
     thread::scope(|s| {
         let readers: Vec<_> = (0..threads)
             .map(|t| {
-                let file = &file;
                 s.spawn(move || -> io::Result<()> {
                     let mut buf = vec![0; 1 << 20];
                     let mut chunk = t * CHUNK;
@@ -207,7 +206,9 @@ pub(crate) mod tests {
     pub(crate) struct TestFile(pub PathBuf);
 
     impl TestFile {
+        /// `name` may hold a module path: its `:`, which Windows does not allow in file names, becomes `-`.
         pub(crate) fn new(name: &str) -> Self {
+            let name = name.replace(':', "-");
             let file =
                 Self(env::temp_dir().join(format!("osmflow-nodes-{}-{name}", process::id())));
             file.remove();

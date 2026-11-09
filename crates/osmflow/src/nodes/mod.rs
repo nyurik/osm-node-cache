@@ -117,6 +117,12 @@ pub enum NodeStoreError {
     #[error("the store's bulk load is not finished; resume it first")]
     LoadUnfinished,
 
+    /// A commit or a file growth failed part way, so the store in memory no longer matches its file: every change is
+    /// refused, and reads may give stale locations or none. Drop the store and open the file for writing again: that
+    /// restores the last commit.
+    #[error("{path} failed part way through a commit; open it for writing again to roll the commit back", path = .0.display())]
+    Poisoned(PathBuf),
+
     /// A metadata key is empty or longer than 255 bytes, or the metadata would take more than
     /// [`MAX_METADATA_BYTES`] encoded.
     #[error(

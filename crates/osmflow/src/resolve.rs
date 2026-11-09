@@ -38,12 +38,12 @@ pub struct Locator<R> {
     reader: R,
 }
 
-/// A location in 1e-7 degrees as a geo-types coordinate in degrees.
+/// A location as a geo-types coordinate in degrees.
 #[cfg(feature = "geometry")]
-fn coord(lat: i32, lon: i32) -> Coord<f64> {
+fn coord(loc: Location) -> Coord<f64> {
     Coord {
-        x: f64::from(lon) * 1e-7,
-        y: f64::from(lat) * 1e-7,
+        x: loc.lon_degrees(),
+        y: loc.lat_degrees(),
     }
 }
 
@@ -65,22 +65,23 @@ impl<R: NodeReader> Locator<R> {
         way: &Way<'_, T>,
     ) -> Result<LineString<f64>, GeometryError> {
         let coords: Vec<Coord<f64>> = match way.locations() {
-            // The file stores the locations on the way, in nanodegrees, within ±180°: exact in an `f64`.
+            // Nanodegrees within ±180° are exact in an `f64`. Dividing rounds correctly where multiplying by an inexact
+            // `1e-9` does not, so a location gives the same degrees as the same one in 1e-7 units does.
             #[allow(
                 clippy::cast_precision_loss,
                 reason = "nanodegrees of a location fit an f64 exactly"
             )]
             Some(locations) => locations
                 .map(|(lat, lon)| Coord {
-                    x: lon as f64 * 1e-9,
-                    y: lat as f64 * 1e-9,
+                    x: lon as f64 / 1e9,
+                    y: lat as f64 / 1e9,
                 })
                 .collect(),
             None => way
                 .refs()
                 .map(|id| {
                     let loc = self.location(id).ok_or(GeometryError::MissingNode(id))?;
-                    Ok(coord(loc.lat, loc.lon))
+                    Ok(coord(loc))
                 })
                 .collect::<Result<_, _>>()?,
         };

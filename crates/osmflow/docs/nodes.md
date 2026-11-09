@@ -233,7 +233,7 @@ and how far apart they were:
 
 "Load peak memory" counts the pages of a memory-mapped file that were in memory; the OS drops them when it needs room.
 
-`just bench nodes` times lookups and commits of every store on synthetic nodes (`benches/nodes.rs`).
+`just bench` times lookups and commits of every store on synthetic nodes (`benches/nodes.rs`).
 
 ### Design notes
 
@@ -242,7 +242,6 @@ and how far apart they were:
   changes to the file instead, and maps it only to read.
 * **Writing past the end of a file on XFS** has it keep blocks after it, which take disk space once the file grows past
   them, so the dense store grows its file before writing past its end.
-* **Entropy coding** (rANS) would make the paged store a little smaller, and its lookups slower.
 * **An async API would not make the stores faster.** Loading is limited by encoding and the disk, and the checkpoints
   are already made durable on another thread. With the store in memory, a lookup takes tens of nanoseconds, much less
   than an async task switch. With a store larger than memory, the disk's random reads are the limit.

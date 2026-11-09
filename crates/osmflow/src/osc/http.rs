@@ -11,11 +11,16 @@ use crate::osc::Fetch;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(600);
 /// The longest pause between tries when the server does not say.
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+/// The largest body read: several times a planet day diff, so only a runaway server reaches it.
+const MAX_BODY: u64 = 2 << 30;
+/// The longest a body may take to arrive, however slowly it comes: a stalled mirror must not block the caller for good.
+const BODY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// Fetches files over HTTP or HTTPS, one request at a time, following redirects. Requests answered with 408, 429 or a
 /// 5xx status, or failing to connect or to read, are retried after the pause the server's `Retry-After` asks for (in
 /// seconds), or else after 1, 2, 4 ... up to 60 seconds, each with a small random addition, so clients do not retry in
-/// step.
+/// step. A request that cannot succeed by trying again, such as a malformed URL or a failed TLS handshake, fails at
+/// once. A body over 2 GiB, or one that takes over 30 minutes, is an error.
 #[derive(Debug, Clone)]
 pub struct HttpFetch {
     agent: ureq::Agent,
@@ -37,6 +42,7 @@ impl HttpFetch {
             .user_agent(concat!("osmflow/", env!("CARGO_PKG_VERSION")))
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_recv_response(Some(Duration::from_secs(60)))
+            .timeout_recv_body(Some(BODY_TIMEOUT))
             .build();
         Self {
             agent: config.into(),
@@ -63,11 +69,12 @@ impl Fetch for HttpFetch {
                         let body = response
                             .body_mut()
                             .with_config()
-                            .limit(u64::MAX)
+                            .limit(MAX_BODY)
                             .read_to_vec();
                         match body {
                             Ok(body) => return Ok(Some(body)),
-                            Err(e) => (e.into_io(), backoff(attempt)),
+                            Err(e) if transient(&e) => (e.into_io(), backoff(attempt)),
+                            Err(e) => return Err(e.into_io()),
                         }
                     } else if status == 404 {
                         return Ok(None);
@@ -83,7 +90,8 @@ impl Fetch for HttpFetch {
                         }
                     }
                 }
-                Err(e) => (e.into_io(), backoff(attempt)),
+                Err(e) if transient(&e) => (e.into_io(), backoff(attempt)),
+                Err(e) => return Err(e.into_io()),
             };
             if attempt >= self.retries {
                 return Err(error);
@@ -92,6 +100,17 @@ impl Fetch for HttpFetch {
             attempt += 1;
         }
     }
+}
+
+/// Whether trying a failed request again can help: the network failed, not the request or the server's answer.
+fn transient(error: &ureq::Error) -> bool {
+    matches!(
+        error,
+        ureq::Error::Io(_)
+            | ureq::Error::Timeout(_)
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::HostNotFound
+    )
 }
 
 /// How long to wait before retrying a request answered with `status` and the `Retry-After` header `retry_after`, after

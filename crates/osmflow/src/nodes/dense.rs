@@ -250,7 +250,7 @@ impl<M: Mode> NodeRead for DenseStore<M> {
     }
 
     fn preload(&self) -> Result<()> {
-        super::file::preload(&self.path)
+        super::file::preload(&self.file, &self.path)
     }
 
     fn for_each(&self, mut f: impl FnMut(u64, Location)) -> Result<()> {
@@ -532,7 +532,8 @@ impl Drop for DenseLoader<'_> {
     }
 }
 
-#[cfg(all(test, unix))]
+// Holes depend on the file system: ext4 and XFS keep them, while APFS, on macOS, used the whole file's size in CI.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::fs;
 

@@ -329,6 +329,9 @@ pub struct PagedStore<M: Mode = ReadWrite> {
     new_entries: Vec<(u64, u32)>,
     /// pages changed since the last commit, decoded: their first block, and their blocks
     changed: HashMap<u32, (u64, Vec<Block>)>,
+    /// a commit or a growth of the file failed: `changed`, `dir` and `allocated` no longer match the file, so only
+    /// opening it again, which rolls the commit back, makes it safe to use
+    poisoned: bool,
     mode: PhantomData<M>,
 }
 
@@ -442,6 +445,7 @@ impl<M: Mode> PagedStore<M> {
             dir: Directory::new(entries),
             new_entries: Vec::new(),
             changed: HashMap::new(),
+            poisoned: false,
             mode: PhantomData,
         };
         store.advise(false);
@@ -572,7 +576,7 @@ impl<M: Mode> NodeRead for PagedStore<M> {
     }
 
     fn preload(&self) -> Result<()> {
-        super::file::preload(&self.path)
+        super::file::preload(&self.file, &self.path)
     }
 
     fn for_each(&self, mut f: impl FnMut(u64, Location)) -> Result<()> {
@@ -636,6 +640,7 @@ impl NodeStore for PagedStore<ReadWrite> {
     }
 
     fn set_metadata(&mut self, key: &str, value: &[u8]) -> Result<()> {
+        self.require_healthy()?;
         self.metadata.set(key, value)
     }
 
@@ -645,21 +650,11 @@ impl NodeStore for PagedStore<ReadWrite> {
 
     fn commit(&mut self, stamp: u64) -> Result<()> {
         self.require_complete()?;
-        let generation = self.committed.generation + 1;
-        let undo = self.write_changes(generation)?;
-        let header = Header {
-            generation,
-            pages: self.allocated,
-            dir_len: self.dir.len(),
-            stamp,
-            state: LoadState::Complete,
-        };
-        self.write_committed(header)?;
-        if let Some(undo) = undo {
-            // the commit is kept, so the old pages are not needed
-            undo.set_len(0).at(&sidecar(&self.path, "undo"))?;
-        }
-        Ok(())
+        let result = self.write_commit(stamp);
+        // Writing the changes empties `changed` and extends the directory before any page is written, so a retry
+        // would commit pages that lost their edits.
+        self.poisoned |= result.is_err();
+        result
     }
 
     fn bulk_load(&mut self) -> Result<PagedLoader<'_>> {
@@ -705,7 +700,34 @@ impl NodeStore for PagedStore<ReadWrite> {
 }
 
 impl PagedStore<ReadWrite> {
+    fn write_commit(&mut self, stamp: u64) -> Result<()> {
+        let generation = self.committed.generation + 1;
+        let undo = self.write_changes(generation)?;
+        let header = Header {
+            generation,
+            pages: self.allocated,
+            dir_len: self.dir.len(),
+            stamp,
+            state: LoadState::Complete,
+        };
+        self.write_committed(header)?;
+        if let Some(undo) = undo {
+            // the commit is kept, so the old pages are not needed
+            undo.set_len(0).at(&sidecar(&self.path, "undo"))?;
+        }
+        Ok(())
+    }
+
+    /// Fails once a commit or a growth of the file failed, until the store is opened again.
+    fn require_healthy(&self) -> Result<()> {
+        if self.poisoned {
+            return Err(NodeStoreError::Poisoned(self.path.clone()));
+        }
+        Ok(())
+    }
+
     fn require_complete(&self) -> Result<()> {
+        self.require_healthy()?;
         match self.committed.state {
             LoadState::Complete => Ok(()),
             LoadState::Loading { .. } => Err(NodeStoreError::LoadUnfinished),
@@ -809,8 +831,9 @@ impl PagedStore<ReadWrite> {
     fn alloc_page(&mut self) -> Result<u32> {
         let p = u32::try_from(self.allocated).expect("more than 2^32 pages");
         self.allocated += 1;
-        self.ensure_len(self.allocated)?;
-        Ok(p)
+        let grown = self.ensure_len(self.allocated);
+        self.poisoned |= grown.is_err();
+        grown.map(|()| p)
     }
 
     /// Grows the file to hold `pages` pages, and maps all of it.
@@ -1720,6 +1743,34 @@ mod tests {
         drop(store);
         // the rolled back commit's undo applies no more
         check(&PagedStore::open_read_only(&f.0).unwrap(), &expected);
+    }
+
+    #[test]
+    fn a_failed_commit_poisons_the_store_until_it_is_reopened() {
+        let f = TestFile::new("failed_commit");
+        let (mut store, expected) = store_with_changes(&f.0, 9);
+        let undo = sidecar(&f.0, "undo");
+        // An undo file that cannot be created fails the commit after its changes were taken from the store.
+        let _ = fs::remove_file(&undo);
+        fs::create_dir_all(&undo).unwrap();
+        for id in 1..2000 {
+            store.set(id, Location::new(1, 1)).unwrap();
+        }
+        store.commit(3).unwrap_err();
+        assert!(matches!(
+            store.set(1, Location::new(2, 2)),
+            Err(NodeStoreError::Poisoned(_))
+        ));
+        assert!(matches!(store.commit(3), Err(NodeStoreError::Poisoned(_))));
+        assert!(matches!(
+            store.set_metadata("source", b"x"),
+            Err(NodeStoreError::Poisoned(_))
+        ));
+        drop(store);
+        fs::remove_dir(&undo).unwrap();
+        let store = PagedStore::open(&f.0).unwrap();
+        assert_eq!(store.stamp(), 2);
+        check(&store, &expected);
     }
 
     #[test]

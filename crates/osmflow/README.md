@@ -183,8 +183,11 @@ it with `examples/codegen.rs` (it needs `protoc`), and CI's `just codegen-check`
 Measured on an AWS m8gd.4xlarge (16 Graviton4 cores, 64 GiB of memory) with the PBF files on its local NVMe disk,
 using District of Columbia (2026-10-27) and Massachusetts (2026-11-06) from Geofabrik, and North America and the planet
 cut from the planet of 2026-10-19. Every reader reads every object, tag and member of the whole file, and all of them
-read the same data; every read comes from the disk, not the page cache. osmflow (with its default zlib-rs) decodes on
-its default pool of 14 threads; `osmpbf` 0.3.8 (with zlib-ng) and `osmpbfreader` 0.19.1 use rayon's global pool of 16.
+read the same data; every read comes from the disk, not the page cache. The inflate library differs: osmflow uses its
+default zlib-rs, `osmpbf` 0.3.8 its fastest option, zlib-ng, rather than its default `miniz_oxide`, and `osmpbfreader`
+0.19.1 the default of `flate2`, `miniz_oxide`, as it has no option of its own. osmflow decodes on its default pool
+of 14 threads; `osmpbf` and `osmpbfreader` use rayon's global pool of 16. osmflow and `osmpbf` also decode each
+object's metadata, which no reader's summary uses; `osmpbfreader` has none.
 [`benches/README.md`](https://github.com/nyurik/osmflow/blob/main/benches/README.md) has what the benchmark measures, and how to run it.
 
 | File | PBF size | Nodes | Ways | Relations | Way node refs | Tags |
@@ -213,9 +216,9 @@ Every other time is from one pass of each reader, all taken the same day.
 * **osmflow reads 1.4 times as fast as `osmpbf` in parallel, and 1.5 to 1.6 times as fast on one thread;** in parallel
   it is 3 to 8 times as fast as `osmpbfreader`.
 * **The reads are bound by the CPU, not the disk:** osmflow reads the planet at under half the disk's speed.
-* **`par_unordered` keeps object types apart at almost no cost:** with its barriers between runs of one type, every
-  node of a sorted file is handled before any way, and every way before any relation, for under 0.4% of the planet's
-  read time.
+* **`par_unordered` keeps object types apart:** with its barriers between runs of one type, every node of a sorted
+  file is handled before any way, and every way before any relation. Blocks are still read and decoded ahead while a
+  run's last blocks finish, so a barrier costs only that short tail.
 * **`par_ordered` hands out blocks in file order** on the caller's thread, which is the limit when the consumer does
   much per block, as this benchmark's does. Way refs stay packed until iterated, so this benchmark decodes every ref
   of the file on that one thread, where `par_unordered` decodes them on the pool.
