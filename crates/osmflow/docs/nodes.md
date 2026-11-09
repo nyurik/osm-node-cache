@@ -12,27 +12,29 @@ The stores are osmflow's `nodes` feature, on by default, and need none of the PB
 Three stores implement the same traits, so code written against them switches stores by changing a type. They trade
 lookup speed, size, and the cost and safety of changes differently:
 
-| Store         | Kept in                                             | Disk size, North America / planet                                                                                                 | Lookups in random order, 16 threads | Commit 2,000 changes | After a crash                              |
-|---------------|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|-------------------------------------|----------------------|--------------------------------------------|
-| `PagedStore`  | 4 KiB pages of delta-coded blocks, memory-mapped    | 13.7 GB / 55.6 GB: about 5 bytes per node                                                                                         | 24 M/s                              | 10 ms                | the last commit, also after a power loss   |
-| `DenseStore`  | 8 bytes per ID, at the ID's position, memory-mapped | 64.3 GB / 106.7 GB: a sparse file of 8 bytes × the highest node ID; its holes, the ID ranges with no nodes, may use no disk space, except on Windows, where the file takes its whole size | 1,131 M/s                           | 3 ms                 | the last commit, and some changes after it |
-| `MemoryStore` | a hash map in RAM, with no file                     | none; 20 to 39 bytes per node of RAM instead                                                                                      | 358 M/s                             | none needed          | nothing: it has no file                    |
+| Store         | Kept in                                             | Disk size, North America / planet                                                                                                 | Lookups in random order, 16 threads | Commit a planet minute diff, median | After a crash                              |
+|---------------|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|-------------------------------------|-------------------------------------|--------------------------------------------|
+| `PagedStore`  | 4 KiB pages of delta-coded blocks, memory-mapped    | 13.7 GB / 55.6 GB: about 5 bytes per node                                                                                         | 27 M/s                              | 2.5 ms                              | the last commit, also after a power loss   |
+| `DenseStore`  | 8 bytes per ID, at the ID's position, memory-mapped | 64.3 GB / 106.7 GB: a sparse file of 8 bytes × the highest node ID; its holes, the ID ranges with no nodes, may use no disk space, except on Windows, where the file takes its whole size | 1,152 M/s                           | 8.1 ms                              | the last commit, and some changes after it |
+| `MemoryStore` | a hash map in RAM, with no file                     | none; about 30 bytes per node of RAM instead                                                                                      | 386 M/s                             | none needed                         | nothing: it has no file                    |
 
-The disk sizes are of whole extracts. The lookups and commits were measured on a local NVMe disk, with each store in
-memory, on North America's nodes up to ID 3 billion; the [performance](#performance) section has the details.
+The disk sizes are of whole extracts. The lookups were measured on a local NVMe disk, with each store in memory, on
+North America's nodes up to ID 3 billion, and the commits on the planet's minute diffs; the [performance](#performance)
+section has the details.
 
-* `PagedStore` is the smallest for large data and the fastest to load: the planet in 69 s, into 55.6 GB. Its lookups
+* `PagedStore` is the smallest for large data and the fastest to load: the planet in 80 s, into 55.6 GB. Its lookups
   are fast as long as its file, about 5 bytes per node, fits in memory, which makes it the only store that resolves the
-  planet's ways on a 64 GiB host at memory speed: 57 s, once the store is in memory.
+  planet's ways on a 64 GiB host at memory speed: 66 s, once the store is in memory.
 * `DenseStore` has by far the fastest lookups, one memory read each, but its file is huge: 8 bytes for every ID up to
   the highest one stored, 107 GB for the planet. Extracts have nodes with IDs all the way up, so their files are as
   long; the parts with no nodes take no disk space on most file systems, but an extract still takes far more than in
   the other stores: 64.3 GB for North America, 167 MB (85 bytes per node) for District of Columbia. It is only fast
   with memory for the whole file.
 * `MemoryStore` keeps the nodes in a hash map in RAM, and has no file: it takes no disk space, and nothing is left of it
-  when the process ends. It takes the most memory, 20 to 39 bytes per node depending on how full its hash map is (the
-  planet's 11 billion nodes would take about 290 GB), and is the fastest to change: a change is one hash map update,
-  and a commit only records the stamp. It suits a city or a region, which loads from its PBF file in a second or two.
+  when the process ends. It takes the most memory, about 30 bytes per node once loaded and 44 at the peak of a load,
+  while its hash map grows (the planet's 11 billion nodes would take about 330 GB), and is the fastest to change: a
+  change is one hash map update, and a commit only records the stamp. It suits a city or a region, which loads from its
+  PBF file in a second or two.
 
 All stores:
 
@@ -156,7 +158,7 @@ What made the most difference for the planet, in the [performance](#performance)
 * **Keep one reader per thread** (`NodeRead::reader`) for all of a thread's lookups: it keeps up to 4,096 decoded blocks
   (2 MiB), and making one has a cost.
 * **Read the store into memory before resolving**, if it fits but is not there, as after a restart: `NodeRead::preload`
-  reads it in big reads on all cores, 27.5 s for the planet's 55.6 GB `PagedStore`. Preload right after a load too:
+  reads it in big reads on all cores, 28 s for the planet's 55.6 GB `PagedStore`. Preload right after a load too:
   the OS may have dropped parts of the store from memory, and reading them back a page at a time, on first use, is much
   slower.
 * **Give the memory back after the load.** glibc's allocator can keep much of the memory that the PBF decoding freed,
@@ -164,77 +166,85 @@ What made the most difference for the planet, in the [performance](#performance)
 
 ## Performance
 
-![The three stores compared: size on disk, bulk load, resolving the nodes of all ways, lookups and commits](https://raw.githubusercontent.com/nyurik/osmflow/main/crates/osmflow/docs/nodes-perf.svg)
-
-Measured on an AWS m8gd.4xlarge (16 Graviton4 cores, 64 GiB of memory), with the PBF files and the stores on its local
-885 GB NVMe disk, using District of Columbia from Geofabrik (2026-10-27), and North America and the planet cut from the
-planet of 2026-10-19. The PBF files were decoded for just node IDs, locations and way refs, and whole extracts read with
-direct I/O. Lookups and commits were measured with each store in memory: District of Columbia, and the nodes of North
-America up to ID 3 billion (14 GB as a dense store), each run twice, the better run shown. An instance's local disk is
-lost when the instance stops, so it suits a store that can be rebuilt, with the PBF file kept elsewhere and copied to it
-first.
+Measured with the repository's [node store
+benchmark](https://github.com/nyurik/osmflow/blob/main/benches/README.md#node-location-stores) on an AWS m8gd.4xlarge
+(16 Graviton4 cores, 64 GiB of memory), with the PBF files and the stores on its local 885 GB NVMe disk, using District
+of Columbia from Geofabrik (2026-10-27), and North America and the planet cut from the planet of 2026-10-19. Every load,
+verify and resolve read the PBF file from the disk, not the page cache. Lookups were measured with each store in memory:
+District of Columbia, and the nodes of North America up to ID 3 billion (14 GB as a dense store). The changes are real
+diffs, each one commit: the next two days of District of Columbia and of North America from Geofabrik, and for the
+planet, the 1,440 minute diffs of the day after its snapshot, then the next day as one daily diff. An instance's local
+disk is lost when the instance stops, so it suits a store that can be rebuilt, with the PBF file kept elsewhere and
+copied to it first.
 
 ### The planet
 
 10.9 billion nodes, and 1.23 billion ways with 13.0 billion node refs:
 
-|                                                             | `PagedStore`                                 | `DenseStore`       |
-|-------------------------------------------------------------|----------------------------------------------|--------------------|
-| On disk                                                     | 55.6 GB, 5.08 bytes per node                 | 106.7 GB, 9.74     |
-| Bulk load from the PBF file                                 | 69 s                                         | 119 s              |
-| Resolve all ways, with none of the store in memory at first | 84 s: 27.5 s to read the store in, then 57 s | larger than memory |
+|                                                             | `PagedStore`                                | `DenseStore`                |
+|-------------------------------------------------------------|---------------------------------------------|-----------------------------|
+| On disk                                                     | 55.6 GB, 5.08 bytes per node                | 106.7 GB, 9.74              |
+| Bulk load from the PBF file                                 | 80 s                                        | 121 s                       |
+| Resolve all ways, with none of the store in memory at first | 94 s: 28 s to read the store in, then 66 s  | larger than memory          |
+| A day of minute diffs: 1,440 commits, 3.65 M node changes   | 4.2 s; per commit median 2.5 ms, 99th percentile 9.8 ms | 15.2 s; 8.1 ms, 52.7 ms |
+| The next day as one diff: 4.0 M node changes                | 2.8 s                                       | 13.2 s                      |
 
-* **Importing the planet** with the paged store, from the PBF file to every way's node locations, takes 2.5 minutes.
-* **The paged load is bound by the store, not the disk**: 59 s of its 69 s are spent encoding and writing it. The
-  dense store writes the most, 107 GB, as the planet's node IDs leave few gaps.
-* **Only the paged store fits in the host's memory**, so only it resolves the planet's ways at memory speed: 231
-  million refs a second on 16 threads once it is in memory.
+* **Importing the planet** with the paged store, from the PBF file to every way's node locations, takes 3 minutes.
+* **Only the paged store fits in the host's memory**, so only it resolves the planet's ways at memory speed: 197
+  million refs a second once it is in memory. The PBF reader keeps the file from pushing the store out of memory
+  ([pbf.md](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/docs/pbf.md#threads-and-memory)).
+* **Keeping up with the planet costs little:** a day of minute diffs takes 4.2 s in the paged store, and 15 s in the
+  dense store, which writes the 107 GB file in place.
 
 Whole extracts:
 
-|  | Nodes | On disk | Bytes per node | Bulk load | Load peak memory | Resolve all ways |
-|---|---:|---:|---:|---:|---:|---:|
-| District of Columbia, `PagedStore` | 1,958,977 | 10 MB | 4.90 | 42 ms | 0.1 GB |  |
-| District of Columbia, `DenseStore` | 1,958,977 | 167 MB | 85.35 | 871 ms | 0.2 GB |  |
-| District of Columbia, `MemoryStore` | 1,958,977 | none (71 MB in memory) | 36.40 in memory | 102 ms | 0.1 GB |  |
-| North America, `PagedStore` | 2,631,813,110 | 13.7 GB | 5.20 | 17.2 s | 0.6 GB |  |
-| North America, `DenseStore` | 2,631,813,110 | 64.3 GB | 24.43 | 141 s | 0.7 GB |  |
-| Planet, `PagedStore` | 10,949,467,954 | 55.6 GB | 5.08 | 68.7 s | 15.5 GB | 84.1 s, 155.1 M refs/s (27.5 s of it reading the store into memory) |
-| Planet, `DenseStore` | 10,949,467,954 | 106.7 GB | 9.74 | 119 s | 15.3 GB |  |
+|  | Nodes | On disk | Bytes per node | Bulk load | Load peak memory |
+|---|---:|---:|---:|---:|---:|
+| District of Columbia, `PagedStore` | 1,958,977 | 10 MB | 4.90 | 35 ms | 0.1 GB |
+| District of Columbia, `DenseStore` | 1,958,977 | 167 MB | 85.29 | 343 ms | 0.1 GB |
+| District of Columbia, `MemoryStore` | 1,958,977 | none | | 87 ms | 0.2 GB |
+| North America, `PagedStore` | 2,631,813,110 | 13.7 GB | 5.20 | 22.6 s | 0.4 GB |
+| North America, `DenseStore` | 2,631,813,110 | 64.3 GB | 24.43 | 73.0 s | 0.3 GB |
+| Planet, `PagedStore` | 10,949,467,954 | 55.6 GB | 5.08 | 80.5 s | 1.1 GB |
+| Planet, `DenseStore` | 10,949,467,954 | 106.7 GB | 9.74 | 121.0 s | 0.9 GB |
 
-District of Columbia: 1,958,977 nodes, 2,507,044 way node refs. The better of two runs, and how far apart they were:
-
-|  | `PagedStore` | `DenseStore` | `MemoryStore` |
-|---|---:|---:|---:|
-| Bulk load | 42 ms, 46.6 M/s (±31%) | 871 ms, 2.2 M/s (±1%) | 102 ms, 19.2 M/s (±6%) |
-| Resolve all ways | 16 ms, 156.7 M/s (±12%) | 15 ms, 167.1 M/s (±7%) | 18 ms, 139.3 M/s (±6%) |
-| Verify every node | 44 ms, 45 M/s (±9%) | 44 ms, 45 M/s (±14%) | 137 ms, 14 M/s (±4%) |
-| Lookups in way order, 16 threads | 583.3 M/s (±16%) | 2186.9 M/s (±8%) | 757.6 M/s (±2%) |
-| Lookups in way order, 1 thread | 20 ns (±10%) | 12 ns (±0%) | 17 ns (±6%) |
-| Lookups in random order, 16 threads | 53.8 M/s (±4%) | 1372.8 M/s (±1%) | 741.0 M/s (±3%) |
-| Lookups in random order, 1 thread | 256 ns (±18%) | 10 ns (±0%) | 17 ns (±6%) |
-| Commit 2,000 changes, median | 9 ms (±3%) | 2 ms (±0%) | 0 ms (±0%) |
-| Commit 2,000 changes, 99th percentile | 13 ms (±5%) | 4 ms (±15%) | 0 ms (±0%) |
-
-North America, the nodes up to ID 3,000,000,000: 618,849,582 nodes, 706,551,105 way node refs. The better of two runs,
-and how far apart they were:
+District of Columbia: 1,958,977 nodes, 2,507,044 way node refs. Two runs of the paged store were within 3%:
 
 |  | `PagedStore` | `DenseStore` | `MemoryStore` |
 |---|---:|---:|---:|
-| Bulk load | 4.9 s, 126.0 M/s (±12%) | 22.6 s, 27.4 M/s (±0%) | 61.5 s, 10.1 M/s (±3%) |
-| Resolve all ways | 10.2 s, 69.4 M/s (±46%) | 7.8 s, 90.9 M/s (±0%) | 10.1 s, 70.2 M/s (±1%) |
-| Verify every node | 8.4 s, 74 M/s (±0%) | 4.2 s, 148 M/s (±0%) | 78.2 s, 8 M/s (±0%) |
-| Lookups in way order, 16 threads | 301.6 M/s (±2%) | 1867.0 M/s (±2%) | 369.1 M/s (±9%) |
-| Lookups in way order, 1 thread | 31 ns (±0%) | 12 ns (±0%) | 48 ns (±6%) |
-| Lookups in random order, 16 threads | 24.2 M/s (±1%) | 1131.3 M/s (±2%) | 357.7 M/s (±4%) |
-| Lookups in random order, 1 thread | 805 ns (±1%) | 16 ns (±0%) | 47 ns (±4%) |
-| Commit 2,000 changes, median | 10 ms (±5%) | 3 ms (±4%) | 0 ms (±0%) |
-| Commit 2,000 changes, 99th percentile | 15 ms (±57%) | 4 ms (±11%) | 0 ms (±0%) |
+| Bulk load | 35 ms, 55.4 M/s | 343 ms, 5.7 M/s | 87 ms, 22.5 M/s |
+| Resolve all ways | 22 ms, 115.1 M/s | 18 ms, 136.0 M/s | 21 ms, 118.1 M/s |
+| Verify every node | 30 ms, 65 M/s | not run, see below | 117 ms, 17 M/s |
+| Lookups in way order, 16 threads | 312.6 M/s | 1,474.9 M/s | 762.1 M/s |
+| Lookups in way order, 1 thread | 17 ns | 5 ns | 16 ns |
+| Lookups in random order, 16 threads | 70.2 M/s | 1,765.2 M/s | 861.7 M/s |
+| Lookups in random order, 1 thread | 221 ns | 8 ns | 16 ns |
+| Two days of Geofabrik diffs, 1,998 node changes: per commit | 2.5 ms | 0.8 ms | under 0.1 ms |
 
-"Load peak memory" counts the pages of a memory-mapped file that were in memory; the OS drops them when it needs room.
+North America, the nodes up to ID 3,000,000,000: 618,849,582 nodes, 706,551,105 way node refs. Two runs of the paged
+store were within 3%:
 
-The repository's [node store benchmark](https://github.com/nyurik/osmflow/blob/main/crates/osmflow/benches/nodes.rs)
-times lookups and commits of every store on synthetic nodes.
+|  | `PagedStore` | `DenseStore` | `MemoryStore` |
+|---|---:|---:|---:|
+| Bulk load | 5.9 s, 105.3 M/s | 16.2 s, 38.1 M/s | 56.9 s, 10.9 M/s |
+| Resolve all ways | 13.6 s, 52.0 M/s | 11.6 s, 60.8 M/s | 15.4 s, 45.9 M/s |
+| Verify every node | 7.6 s, 81 M/s | 12.6 s, 49 M/s | 69.7 s, 9 M/s |
+| Lookups in way order, 16 threads | 95.6 M/s | 1,435.2 M/s | 393.8 M/s |
+| Lookups in way order, 1 thread | 40 ns | 5 ns | 44 ns |
+| Lookups in random order, 16 threads | 26.8 M/s | 1,152.2 M/s | 385.5 M/s |
+| Lookups in random order, 1 thread | 612 ns | 14 ns | 44 ns |
+| Two days of Geofabrik diffs, 72,126 node changes: per commit | 130 ms | 68 ms | 2.9 ms |
+
+* **Resolving North America's ways is bound by reading the file**, not by the stores: the ways of the whole file are
+  read and decoded, and their refs above ID 3 billion left out.
+* **Opened read-only**, every store resolves and looks up as fast as opened to read and write, within 1%.
+* **A dense store's verify reads every ID up to the highest**, holes included: District of Columbia's IDs reach 14
+  billion, so it would read 115 GB for 2 million nodes.
+* **The memory store took 18.8 GB for North America's nodes up to ID 3 billion** once loaded, 30 bytes per node, and
+  27.0 GB at the peak of its load, while its hash map grew.
+
+Load peak memory counts the pages of memory-mapped files that were in memory; the OS drops them when it needs room.
+`crates/osmflow/benches/nodes.rs` is a quicker check of the same stores on synthetic nodes.
 
 ### Design notes
 

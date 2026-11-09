@@ -201,22 +201,19 @@ and how to run it.
 
 | Reader | District of Columbia | Massachusetts | North America | Planet |
 |---|---:|---:|---:|---:|
-| osmflow, `par_unordered` | 0.038 s, 554 MB/s | 0.279 s, 1,117 MB/s | 18.1 s, 1,241 MB/s | 80.7 s, 1,183 MB/s |
-| osmflow, `par_ordered` | 0.051 s, 413 MB/s | 0.487 s, 640 MB/s | 31.6 s, 712 MB/s | 135.5 s, 705 MB/s |
-| osmpbf, `par_map_reduce` | 0.054 s, 390 MB/s | 0.404 s, 771 MB/s | 25.4 s, 885 MB/s | 116.0 s, 823 MB/s |
-| osmpbfreader, `par_iter` | 0.117 s, 180 MB/s | 2.07 s, 151 MB/s | 125.5 s, 179 MB/s * | 615.9 s, 155 MB/s * |
-| osmflow, `blocks` | 0.261 s, 81 MB/s | 3.69 s, 84 MB/s |  |  |
-| osmpbf, `ElementReader::for_each` | 0.419 s, 50 MB/s | 5.48 s, 57 MB/s |  |  |
-| osmpbfreader, `iter` | 0.632 s, 33 MB/s | 7.86 s, 40 MB/s |  |  |
+| osmflow, `par_unordered` | 0.029 s, 726 MB/s | 0.270 s, 1,154 MB/s | 17.9 s, 1,257 MB/s | 79.5 s, 1,201 MB/s |
+| osmflow, `par_ordered` | 0.044 s, 478 MB/s | 0.475 s, 656 MB/s | 31.5 s, 715 MB/s | 140.6 s, 679 MB/s |
+| osmpbf, `par_map_reduce` | 0.049 s, 429 MB/s | 0.401 s, 777 MB/s | 25.6 s, 878 MB/s | 116.2 s, 822 MB/s |
+| osmpbfreader, `par_iter` | 0.116 s, 181 MB/s | 1.74 s, 179 MB/s | 109.3 s, 206 MB/s | 554.6 s, 172 MB/s |
+| osmflow, `blocks` | 0.252 s, 84 MB/s | 3.63 s, 86 MB/s |  |  |
+| osmpbf, `ElementReader::for_each` | 0.421 s, 50 MB/s | 5.35 s, 58 MB/s |  |  |
+| osmpbfreader, `iter` | 0.608 s, 35 MB/s | 7.71 s, 40 MB/s |  |  |
 
-The disk reads 2.6 GB/s (10 GiB of the planet file with direct I/O).
+The disk reads 2.5 GB/s (10 GiB of the planet file with direct I/O). Every time is from one pass of each reader, all
+on the same host the same day; a second pass of every reader but `osmpbfreader`'s on the large files was within 5%.
 
-\* `osmpbfreader`'s parallel reads of North America and the planet take 2 and 10 minutes, so they come from an earlier
-run of the same benchmark, with North America in the page cache; at under 200 MB/s, it is far from the disk's limit.
-Every other time is from one pass of each reader, all taken the same day.
-
-* **osmflow reads 1.4 times as fast as `osmpbf` in parallel, and 1.5 to 1.6 times as fast on one thread;** in parallel
-  it is 3 to 8 times as fast as `osmpbfreader`.
+* **osmflow reads 1.4 to 1.7 times as fast as `osmpbf` in parallel, and 1.5 to 1.7 times as fast on one thread;** in
+  parallel it is 4 to 7 times as fast as `osmpbfreader`.
 * **The reads are bound by the CPU, not the disk:** osmflow reads the planet at under half the disk's speed.
 * **`par_unordered` keeps object types apart:** with its barriers between runs of one type, every node of a sorted
   file is handled before any way, and every way before any relation. Blocks are still read and decoded ahead while a

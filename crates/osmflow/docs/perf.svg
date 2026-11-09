@@ -32,82 +32,82 @@
 <text class="title" x="16" y="88">Reading a whole file in parallel</text>
 <text class="note" x="16" y="106">MB of PBF file per second, with the file's time; higher is better</text>
 <text class="label" x="16" y="150.0">District of Columbia</text>
-<path class="s0" d="M166.0,122.0 h134.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-134.3 z"/>
-<text class="value" x="310.3" y="131">554 · 0.038 s</text>
-<path class="s1" d="M166.0,134.0 h99.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-99.3 z"/>
-<text class="value" x="275.3" y="143">413 · 0.051 s</text>
-<path class="s2" d="M166.0,146.0 h93.6 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-93.6 z"/>
-<text class="value" x="269.6" y="155">390 · 0.054 s</text>
-<path class="s3" d="M166.0,158.0 h41.6 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-41.6 z"/>
-<text class="value" x="217.6" y="167">180 · 0.117 s</text>
+<path class="s0" d="M166.0,122.0 h183.8 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-183.8 z"/>
+<text class="value" x="359.8" y="131">726 · 0.029 s</text>
+<path class="s1" d="M166.0,134.0 h120.1 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-120.1 z"/>
+<text class="value" x="296.1" y="143">478 · 0.044 s</text>
+<path class="s2" d="M166.0,146.0 h107.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-107.5 z"/>
+<text class="value" x="283.5" y="155">429 · 0.049 s</text>
+<path class="s3" d="M166.0,158.0 h43.7 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-43.7 z"/>
+<text class="value" x="219.7" y="167">181 · 0.116 s</text>
 <text class="label" x="16" y="214.0">Massachusetts</text>
-<path class="s0" d="M166.0,186.0 h273.9 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-273.9 z"/>
-<text class="value" x="449.9" y="195">1,117 · 0.279 s</text>
-<path class="s1" d="M166.0,198.0 h155.6 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-155.6 z"/>
-<text class="value" x="331.6" y="207">640 · 0.487 s</text>
-<path class="s2" d="M166.0,210.0 h188.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-188.2 z"/>
-<text class="value" x="364.2" y="219">771 · 0.404 s</text>
-<path class="s3" d="M166.0,222.0 h34.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-34.4 z"/>
-<text class="value" x="210.4" y="231">151 · 2.07 s</text>
+<path class="s0" d="M166.0,186.0 h294.1 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-294.1 z"/>
+<text class="value" x="470.1" y="195">1,154 · 0.270 s</text>
+<path class="s1" d="M166.0,198.0 h165.9 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-165.9 z"/>
+<text class="value" x="341.9" y="207">656 · 0.475 s</text>
+<path class="s2" d="M166.0,210.0 h197.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-197.0 z"/>
+<text class="value" x="373.0" y="219">777 · 0.401 s</text>
+<path class="s3" d="M166.0,222.0 h43.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-43.0 z"/>
+<text class="value" x="219.0" y="231">179 · 1.74 s</text>
 <text class="label" x="16" y="278.0">North America</text>
-<path class="s0" d="M166.0,250.0 h304.6 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-304.6 z"/>
-<text class="value" x="480.6" y="259">1,241 · 18.1 s</text>
-<path class="s1" d="M166.0,262.0 h173.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-173.5 z"/>
-<text class="value" x="349.5" y="271">712 · 31.6 s</text>
-<path class="s2" d="M166.0,274.0 h216.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-216.5 z"/>
-<text class="value" x="392.5" y="283">885 · 25.4 s</text>
-<path class="s3" d="M166.0,286.0 h41.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-41.4 z"/>
-<text class="value" x="217.4" y="295">179 · 125.5 s *</text>
+<path class="s0" d="M166.0,250.0 h320.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-320.4 z"/>
+<text class="value" x="496.4" y="259">1,257 · 17.9 s</text>
+<path class="s1" d="M166.0,262.0 h181.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-181.0 z"/>
+<text class="value" x="357.0" y="271">715 · 31.5 s</text>
+<path class="s2" d="M166.0,274.0 h223.1 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-223.1 z"/>
+<text class="value" x="399.1" y="283">878 · 25.6 s</text>
+<path class="s3" d="M166.0,286.0 h50.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-50.0 z"/>
+<text class="value" x="226.0" y="295">206 · 109.3 s</text>
 <text class="label" x="16" y="342.0">Planet</text>
-<path class="s0" d="M166.0,314.0 h290.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-290.4 z"/>
-<text class="value" x="466.4" y="323">1,183 · 80.7 s</text>
+<path class="s0" d="M166.0,314.0 h306.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-306.2 z"/>
+<text class="value" x="482.2" y="323">1,201 · 79.5 s</text>
 <path class="s1" d="M166.0,326.0 h171.8 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-171.8 z"/>
-<text class="value" x="347.8" y="335">705 · 135.5 s</text>
-<path class="s2" d="M166.0,338.0 h201.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-201.0 z"/>
-<text class="value" x="377.0" y="347">823 · 116.0 s</text>
-<path class="s3" d="M166.0,350.0 h35.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-35.4 z"/>
-<text class="value" x="211.4" y="359">155 · 615.9 s *</text>
+<text class="value" x="347.8" y="335">679 · 140.6 s</text>
+<path class="s2" d="M166.0,338.0 h208.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-208.5 z"/>
+<text class="value" x="384.5" y="347">822 · 116.2 s</text>
+<path class="s3" d="M166.0,350.0 h41.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-41.3 z"/>
+<text class="value" x="217.3" y="359">172 · 554.6 s</text>
 <line class="axis" x1="166" y1="118" x2="166" y2="366"/>
 <line class="limit" x1="817.0" y1="118" x2="817.0" y2="366"/>
-<text class="note" x="813.0" y="114" text-anchor="end">disk, 2.6 GB/s</text>
+<text class="note" x="813.0" y="114" text-anchor="end">disk, 2.5 GB/s</text>
 <text class="title" x="16" y="410">On one thread</text>
 <text class="note" x="16" y="428">MB/s, with the file's time; higher is better</text>
 <text class="label" x="16" y="466.0">District of Columbia</text>
-<path class="s0" d="M166.0,444.0 h180.7 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-180.7 z"/>
-<text class="value" x="356.7" y="453">81 · 0.261 s</text>
-<path class="s2" d="M166.0,456.0 h111.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-111.4 z"/>
-<text class="value" x="287.4" y="465">50 · 0.419 s</text>
-<path class="s3" d="M166.0,468.0 h72.9 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-72.9 z"/>
-<text class="value" x="248.9" y="477">33 · 0.632 s</text>
+<path class="s0" d="M166.0,444.0 h184.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-184.0 z"/>
+<text class="value" x="360.0" y="453">84 · 0.252 s</text>
+<path class="s2" d="M166.0,456.0 h108.9 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-108.9 z"/>
+<text class="value" x="284.9" y="465">50 · 0.421 s</text>
+<path class="s3" d="M166.0,468.0 h74.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-74.5 z"/>
+<text class="value" x="250.5" y="477">35 · 0.608 s</text>
 <text class="label" x="16" y="518.0">Massachusetts</text>
 <path class="s0" d="M166.0,496.0 h189.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-189.2 z"/>
-<text class="value" x="365.2" y="505">84 · 3.69 s</text>
-<path class="s2" d="M166.0,508.0 h126.6 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-126.6 z"/>
-<text class="value" x="302.6" y="517">57 · 5.48 s</text>
-<path class="s3" d="M166.0,520.0 h87.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-87.3 z"/>
-<text class="value" x="263.3" y="529">40 · 7.86 s</text>
+<text class="value" x="365.2" y="505">86 · 3.63 s</text>
+<path class="s2" d="M166.0,508.0 h127.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-127.4 z"/>
+<text class="value" x="303.4" y="517">58 · 5.35 s</text>
+<path class="s3" d="M166.0,520.0 h87.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-87.5 z"/>
+<text class="value" x="263.5" y="529">40 · 7.71 s</text>
 <line class="axis" x1="166" y1="440" x2="166" y2="536"/>
 <text class="title" x="468" y="410">osmflow's lead in parallel</text>
 <text class="note" x="468" y="428">times faster than each crate's parallel read</text>
 <text class="label" x="468" y="460.0">District of Columbia</text>
-<path class="s2" d="M618.0,444.0 h32.8 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-32.8 z"/>
-<text class="value" x="660.8" y="453">1.4×</text>
-<path class="s3" d="M618.0,456.0 h74.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-74.5 z"/>
-<text class="value" x="702.5" y="465">3.1×</text>
+<path class="s2" d="M618.0,444.0 h43.6 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-43.6 z"/>
+<text class="value" x="671.6" y="453">1.7×</text>
+<path class="s3" d="M618.0,456.0 h107.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-107.2 z"/>
+<text class="value" x="735.2" y="465">4.0×</text>
 <text class="label" x="468" y="500.0">Massachusetts</text>
-<path class="s2" d="M618.0,484.0 h33.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-33.5 z"/>
-<text class="value" x="661.5" y="493">1.4×</text>
-<path class="s3" d="M618.0,496.0 h183.5 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-183.5 z"/>
-<text class="value" x="811.5" y="505">7.4×</text>
+<path class="s2" d="M618.0,484.0 h37.9 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-37.9 z"/>
+<text class="value" x="665.9" y="493">1.5×</text>
+<path class="s3" d="M618.0,496.0 h175.0 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-175.0 z"/>
+<text class="value" x="803.0" y="505">6.5×</text>
 <text class="label" x="468" y="540.0">North America</text>
-<path class="s2" d="M618.0,524.0 h32.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-32.3 z"/>
-<text class="value" x="660.3" y="533">1.4×</text>
-<path class="s3" d="M618.0,536.0 h171.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-171.3 z"/>
-<text class="value" x="799.3" y="545">6.9× *</text>
+<path class="s2" d="M618.0,524.0 h36.4 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-36.4 z"/>
+<text class="value" x="664.4" y="533">1.4×</text>
+<path class="s3" d="M618.0,536.0 h165.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-165.2 z"/>
+<text class="value" x="793.2" y="545">6.1×</text>
 <text class="label" x="468" y="580.0">Planet</text>
-<path class="s2" d="M618.0,564.0 h33.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-33.2 z"/>
-<text class="value" x="661.2" y="573">1.4×</text>
+<path class="s2" d="M618.0,564.0 h37.3 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-37.3 z"/>
+<text class="value" x="665.3" y="573">1.5×</text>
 <path class="s3" d="M618.0,576.0 h189.2 a3.0,3.0 0 0 1 3.0,3.0 v2.0 a3.0,3.0 0 0 1 -3.0,3.0 h-189.2 z"/>
-<text class="value" x="817.2" y="585">7.6× *</text>
+<text class="value" x="817.2" y="585">7.0×</text>
 <line class="axis" x1="618" y1="440" x2="618" y2="592"/>
 </svg>

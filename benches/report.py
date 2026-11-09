@@ -69,7 +69,7 @@ def parse(logs):
     return regions, disk
 
 
-# Chart drawing, in the style of the node stores' chart (crates/osmflow/docs/nodes-perf.svg).
+# Chart drawing.
 STYLE = """<style>
   .surface { fill: #fcfcfb; }
   .heading { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 17px; font-weight: 600; }

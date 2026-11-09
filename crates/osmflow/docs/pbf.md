@@ -188,7 +188,7 @@ A way stores only its nodes' IDs. To build its geometry, osmflow looks the IDs u
 * **Areas or closed lines.** A closed way is a fence or a roundabout as often as a building, so its tags decide.
   `AreaRules` holds a rule for each key: a closed way with the key is an area with any value (`building`, `landuse`),
   with only some values (`highway=services`, `railway=platform`), or with all values but some (`natural` but not
-  `coastline`). `area=yes` and `area=no` override every other tag. The built-in list is the public-domain
+  `coastline`). `area=yes` and `area=no` override every other tag. The built-in list is the CC0
   [osm-polygon-features](https://github.com/tyrasd/osm-polygon-features) list, which osmtogeojson and Overpass turbo
   use, changed where the OpenStreetMap wiki page of a tag says it is a line (`boundary=administrative`,
   `aeroway=runway`, `leisure=track` and a few more) or an area (`landcover`). A tag whose value is `no` never makes an
