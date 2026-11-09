@@ -100,4 +100,3 @@ $B planet.osm.pbf planet.paged apply -- minute/007/334/847.osc.gz minute/007/334
 
 A dense store's `verify` reads 8 bytes of every ID up to the highest, the ID ranges with no nodes included, so on a
 small extract with high IDs it reads far more than the store holds.
-
