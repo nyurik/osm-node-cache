@@ -76,7 +76,11 @@ enum Format {
 
 impl Format {
     fn of(path: Option<&Path>) -> Self {
-        match path.and_then(Path::extension).and_then(|e| e.to_str()) {
+        let extension = path
+            .and_then(Path::extension)
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        match extension.as_deref() {
             Some("geojson" | "json") => Self::Geojson,
             Some("geojsonl" | "geojsons" | "ndjson") => Self::Geojsonseq,
             _ => Self::Text,
@@ -680,6 +684,7 @@ mod tests {
             Format::Geojsonseq
         );
         assert_eq!(Format::of(Some(Path::new("dc.txt"))), Format::Text);
+        assert_eq!(Format::of(Some(Path::new("DC.GeoJSON"))), Format::Geojson);
         assert_eq!(Format::of(None), Format::Text);
     }
 }

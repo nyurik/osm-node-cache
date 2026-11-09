@@ -239,8 +239,8 @@ impl Matcher {
 /// How many threads decode the file.
 #[derive(Debug, clap::Args)]
 pub struct Threads {
-    /// Threads to decode on. 1 reads and decodes on this thread alone, one block after another; by default a pool
-    /// shared by every read decodes, with two threads fewer than the cores.
+    /// Threads to decode on. With 1, blocks are decoded one after another on one thread; by default a pool shared by
+    /// every read decodes, with two threads fewer than the cores.
     #[arg(short = 'j', long, value_name = "N")]
     threads: Option<NonZeroUsize>,
 }
@@ -252,12 +252,13 @@ impl Threads {
 
     /// `file`, decoding on a pool of the chosen size.
     pub fn apply(&self, file: PbfReader) -> Result<PbfReader> {
+        // A pool of one thread too, for the reads that always use the pool, such as loading nodes.
         match self.threads {
-            Some(n) if n.get() > 1 => {
+            Some(n) => {
                 let pool = ThreadPoolBuilder::new().num_threads(n.get()).build()?;
                 Ok(file.with_pool(Arc::new(pool)))
             }
-            _ => Ok(file),
+            None => Ok(file),
         }
     }
 

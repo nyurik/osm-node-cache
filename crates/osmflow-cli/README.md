@@ -34,7 +34,7 @@ Choosing objects; an object must pass every flag given:
 
 | Flag | Chooses |
 |---|---|
-| `--id 10`, `--id w15,r7` | objects by ID: a plain number of any type, or with `n`, `w` or `r` before it of one. In a file sorted by type and ID, as the planet and Geofabrik's extracts are, the read stops once it is past the highest ID asked for. |
+| `--id 10`, `--id w15,r7` | objects by ID: a plain number of any type, or with `n`, `w` or `r` before it of one. In a file whose header says it is sorted by type and ID, as the planet's and Geofabrik's do, the read stops once it is past the highest ID asked for; `osmflow stats` checks whether a file really is in that order. |
 | `-t, --type way,relation` | object types; the blocks of other types are skipped unread |
 | `--tag highway`, `--tag highway=primary,trunk` | objects with the key, or with one of the values; given more than once, any of them. Blocks without the key are skipped unread. |
 | `--limit N` | stops after N objects |
@@ -52,9 +52,10 @@ Geometry:
   property says which node is missing. Text output has geometry, as WKT, with `--geometry`.
 - **Relations** have no geometry; GeoJSON gives their members in `@members`.
 
-To build ways, a whole-file dump keeps every node location in memory. A dump of chosen objects reads the file twice
-more: once for the ways it will write, then once for only their nodes. So a few ways of the planet need little
-memory.
+To build ways, a whole-file dump keeps every node location in memory, at about 20 to 40 bytes per node: an extract
+fits, while the planet's 11 billion nodes would need hundreds of GB. A dump of chosen objects reads the file twice
+more: once for the ways it will write, then once for only their nodes, which are all it keeps. So a few ways of the
+planet need little memory, but `--tag highway` on a large file still keeps the nodes of every road.
 
 GeoJSON properties hold the object's tags and, starting with `@`, its type, ID and, with `--metadata`, its version,
 timestamp, changeset, user ID and user name.
@@ -90,6 +91,6 @@ The order line checks every object, whatever the header claims.
 
 ## Threads
 
-Both commands decode on a pool of threads, two fewer than the cores. `-j N` sets the pool's size; `-j 1` reads and
-decodes on one thread, one block after another. A dump writes objects in file order either way, so its output does
+Both commands decode on a pool of threads, two fewer than the cores. `-j N` sets the pool's size; with `-j 1`, blocks are
+decoded one after another on one thread. A dump writes objects in file order either way, so its output does
 not depend on the number of threads.
