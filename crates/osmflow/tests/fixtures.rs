@@ -120,9 +120,16 @@ fn misread(name: &str, reader: &str) -> Option<String> {
         .map(|(_, r, why)| format!("# {r} is not compared: {why}"))
 }
 
+/// The fixture's path below `fixtures/`, with `__` between its parts. `test_each_path!` hands out canonical paths,
+/// so the directory is made canonical too: on Windows that adds the `\\?\` prefix, which `CARGO_MANIFEST_DIR` lacks.
 fn snapshot_name(path: &Path) -> String {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
-    let rel = path.strip_prefix(&fixtures).unwrap_or(path);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .canonicalize()
+        .unwrap();
+    let rel = path
+        .strip_prefix(&fixtures)
+        .expect("the fixture is under the canonical fixtures directory");
     rel.to_string_lossy().replace(['/', '\\'], "__")
 }
 
