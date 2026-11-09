@@ -1,29 +1,54 @@
 [package]
 name = "osmflow"
-version = "0.0.0"
-description = "Fast, parallel reading of OpenStreetMap PBF files, from a city extract to the planet"
+version = "0.11.0"
+description = "Fast, parallel reading of OpenStreetMap PBF files, and node location stores, from a city extract to the planet"
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true
 license.workspace = true
-keywords = ["osm", "openstreetmap", "pbf", "parser"]
-categories = ["parser-implementations", "science::geo"]
-rust-version = "1.90"
-publish = false
+keywords = ["osm", "openstreetmap", "pbf", "parser", "cache"]
+categories = ["parser-implementations", "science::geo", "caching"]
+rust-version.workspace = true
+exclude = ["/fixtures"]
 
+[package.metadata.docs.rs]
+all-features = true
+
+# Parsing an osmChange file: `cargo bench -p osmflow --bench osc`
 [[bench]]
-name = "parse"
+name = "osc"
 harness = false
+required-features = ["osc"]
+
+# Lookups and commits of every node store: `just bench`
+[[bench]]
+name = "nodes"
+harness = false
+required-features = ["nodes"]
+
+[features]
+default = ["geometry", "osc"]
+# Ways as geo-types geometries, their node locations from a node store: the reader and the stores together
+geometry = ["dep:geo-types", "nodes", "pbf"]
+# The node location stores, in `osmflow::nodes`
+nodes = ["dep:crc32fast", "dep:memmap2", "dep:rayon"]
+# The PBF reader
+pbf = ["dep:buffa", "dep:flate2", "dep:rayon"]
+# Reading osmChange files and replication diffs
+osc = ["dep:flate2", "dep:memchr"]
+# Downloading replication diffs and state files over HTTP
+http = ["dep:ureq", "osc"]
 
 [dependencies]
-buffa.workspace = true
-flate2 = { workspace = true, features = ["zlib-rs", "runtime_detection"] }
-rayon.workspace = true
+buffa = { workspace = true, optional = true }
+crc32fast = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true, features = ["zlib-rs", "runtime_detection"] }
+geo-types = { workspace = true, optional = true }
+memchr = { workspace = true, optional = true }
+memmap2 = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
 thiserror.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-# The benchmark evicts its input from the page cache before each run, and checks that it is gone
-libc = { workspace = true }
+ureq = { workspace = true, optional = true }
 
 [dev-dependencies]
 # For the `codegen` example, which regenerates src/generated (`just update-generated`, needs protoc)
@@ -32,7 +57,40 @@ criterion.workspace = true
 insta.workspace = true
 osmpbf.workspace = true
 osmpbfreader.workspace = true
+rand.workspace = true
 test_each_file.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "fixtures"
+required-features = ["pbf"]
+
+[[test]]
+name = "generated"
+required-features = ["pbf"]
+
+[[test]]
+name = "keys"
+required-features = ["pbf"]
+
+[[test]]
+name = "layout"
+required-features = ["pbf"]
+
+[[test]]
+name = "pools"
+required-features = ["pbf"]
+
+[[test]]
+name = "geometry"
+required-features = ["geometry"]
+
+[[test]]
+name = "osc"
+required-features = ["osc", "pbf"]
+
+[[test]]
+name = "replication"
+required-features = ["osc"]

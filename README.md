@@ -1,14 +1,14 @@
-# osm-node-cache
+# osmflow
 
-[![CI build status](https://github.com/nyurik/osm-node-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osm-node-cache/actions)
-[![Codecov](https://img.shields.io/codecov/c/github/nyurik/osm-node-cache)](https://app.codecov.io/gh/nyurik/osm-node-cache)
+[![CI build status](https://github.com/nyurik/osmflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osmflow/actions)
+[![Codecov](https://img.shields.io/codecov/c/github/nyurik/osmflow)](https://app.codecov.io/gh/nyurik/osmflow)
 
 Rust crates for OpenStreetMap data.
 
-| Crate                                 | Description                                                                                                   |
-|---------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| [`osmnodecache`](crates/osmnodecache) | OSM node ID to location stores for importing and updating OpenStreetMap data, from a city to the planet       |
-| [`osmflow`](crates/osmflow)           | Fast, parallel reading of OpenStreetMap PBF files, from a city extract to the planet                          |
+| Crate                               | Description                                                                                                    |
+|-------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| [`osmflow`](crates/osmflow)         | Fast, parallel reading of OpenStreetMap PBF files, and node location stores, from a city extract to the planet |
+| [`osmflow-cli`](crates/osmflow-cli) | The `osmflow` command: dumps PBF files as text or GeoJSON, and summarizes them                                 |
 
 ## Development
 
@@ -16,6 +16,8 @@ Rust crates for OpenStreetMap data.
   Install it with `cargo install just`.
 * To get a list of available commands, run `just`.
 * To run tests, use `just test`.
+* [`AGENTS.md`](AGENTS.md) describes the layout of the repository, and the rules for changing it, such as which other
+  projects' code may be read.
 
 ## License
 

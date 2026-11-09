@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="760" viewBox="0 0 980 760" role="img" aria-label="How each store looks up a node and keeps a change. PagedStore finds a page through an in-memory directory and reads it from its memory-mapped file, or from memory if it changed since the last commit, and decodes its block into a reader that keeps up to 4,096 blocks. DenseStore reads 8 bytes at the node's position in its file. MemoryStore looks the node up in a hash map in memory, and has no file.">
+<style>
+  .bg { fill: #fcfcfb; }
+  .box { fill: #f0efec; stroke: #c3c2b7; stroke-width: 1; }
+  .seg { fill: #fcfcfb; stroke: #c3c2b7; stroke-width: 1; }
+  .ink { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 13px; font-weight: normal; }
+  .head { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600; }
+  .title { fill: #0b0b0b; font-family: system-ui, sans-serif; font-size: 17px; font-weight: 600; }
+  .muted { fill: #52514e; font-family: system-ui, sans-serif; font-size: 12px; font-weight: normal; }
+  .small { fill: #52514e; font-family: system-ui, sans-serif; font-size: 11px; font-weight: normal; }
+  .line { stroke: #8a897f; stroke-width: 1.5; fill: none; }
+  .thin { stroke: #c3c2b7; stroke-width: 1; fill: none; stroke-dasharray: 3 3; }
+  .tip { fill: #8a897f; }
+  .paged { fill: #2a78d6; }
+  .paged-line { stroke: #2a78d6; stroke-width: 2; fill: none; }
+  .paged-box { fill: #2a78d6; fill-opacity: 0.12; stroke: #2a78d6; stroke-width: 1.5; }
+  .dense { fill: #1baf7a; }
+  .memory { fill: #eda100; }
+  .dense-line { stroke: #1baf7a; stroke-width: 2; fill: none; }
+  .memory-line { stroke: #eda100; stroke-width: 2; fill: none; }
+  .dense-box { fill: #1baf7a; fill-opacity: 0.12; stroke: #1baf7a; stroke-width: 1.5; }
+  .memory-box { fill: #eda100; fill-opacity: 0.12; stroke: #eda100; stroke-width: 1.5; }
+  .rule { stroke: #c3c2b7; stroke-width: 1; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19; }
+    .box { fill: #262624; stroke: #52514e; }
+    .seg { fill: #1a1a19; stroke: #52514e; }
+    .ink, .head, .title { fill: #f0efec; }
+    .muted, .small { fill: #c3c2b7; }
+    .line { stroke: #8a897f; }
+    .thin { stroke: #52514e; }
+    .paged { fill: #3987e5; }
+    .paged-line { stroke: #3987e5; }
+    .paged-box { fill: #3987e5; stroke: #3987e5; }
+    .dense { fill: #199e70; }
+    .memory { fill: #c98500; }
+    .dense-line { stroke: #199e70; }
+    .memory-line { stroke: #c98500; }
+    .dense-box { fill: #199e70; stroke: #199e70; }
+    .memory-box { fill: #c98500; stroke: #c98500; }
+    .rule { stroke: #52514e; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="tip" d="M0,0 L10,5 L0,10 z"/>
+  </marker>
+</defs>
+<rect class="bg" width="980" height="760" rx="8"/>
+<text class="title" x="24" y="34">How each store looks up a node, and keeps a change</text>
+
+<!-- column headings -->
+<rect class="paged" x="24" y="56" width="12" height="12" rx="3"/>
+<text class="head" x="44" y="67">PagedStore</text>
+<text class="muted" x="44" y="85">a file of 4 KiB pages, read through a memory map</text>
+
+<!-- row 1: node id -->
+<rect class="box" x="164" y="104" width="172" height="34" rx="6"/>
+<text class="ink" x="250" y="126" text-anchor="middle">node ID</text>
+
+<line class="line" x1="250" y1="138" x2="250" y2="174" marker-end="url(#arrow)"/>
+<text class="muted" x="262" y="161">÷ 64 = block number</text>
+
+<!-- row 2: directory / pending -->
+<rect class="paged-box" x="104" y="176" width="292" height="44" rx="6"/>
+<text class="ink" x="250" y="195" text-anchor="middle">directory in RAM</text>
+<text class="small" x="250" y="211" text-anchor="middle">first block of each page → page; kept in &lt;file&gt;.dir</text>
+
+<line class="line" x1="250" y1="220" x2="250" y2="258" marker-end="url(#arrow)"/>
+<text class="muted" x="262" y="236">page 4, no copy: from RAM if changed</text>
+<text class="muted" x="262" y="251">since the last commit, else the file</text>
+
+<!-- row 3 paged: the file as a strip of pages -->
+<text class="small" x="64" y="272">data file: pages in ID order, split pages added at the end</text>
+<rect class="seg" x="64" y="278" width="36" height="28"/><text class="small" x="82" y="296" text-anchor="middle">hdr</text>
+<rect class="seg" x="100" y="278" width="36" height="28"/><text class="small" x="118" y="296" text-anchor="middle">1</text>
+<rect class="seg" x="136" y="278" width="36" height="28"/><text class="small" x="154" y="296" text-anchor="middle">2</text>
+<rect class="seg" x="172" y="278" width="36" height="28"/><text class="small" x="190" y="296" text-anchor="middle">3</text>
+<rect class="paged-box" x="208" y="278" width="36" height="28"/><text class="ink" x="226" y="297" text-anchor="middle">4</text>
+<rect class="seg" x="244" y="278" width="36" height="28"/><text class="small" x="262" y="296" text-anchor="middle">5</text>
+<rect class="seg" x="280" y="278" width="36" height="28"/><text class="small" x="298" y="296" text-anchor="middle">6</text>
+<rect class="seg" x="316" y="278" width="36" height="28"/><text class="small" x="334" y="296" text-anchor="middle">…</text>
+<rect class="seg" x="352" y="278" width="84" height="28" stroke-dasharray="3 3"/><text class="small" x="394" y="296" text-anchor="middle">split pages</text>
+
+<!-- zoom of page 4 -->
+<line class="thin" x1="208" y1="306" x2="44" y2="368"/>
+<line class="thin" x1="244" y1="306" x2="456" y2="368"/>
+<text class="small" x="44" y="362">page 4: a table of its blocks, then the blocks; 3% left free</text>
+<rect class="seg" x="44" y="368" width="64" height="34"/><text class="small" x="76" y="383" text-anchor="middle">header</text><text class="small" x="76" y="396" text-anchor="middle">+ CRC</text>
+<rect class="seg" x="108" y="368" width="88" height="34"/><text class="small" x="152" y="389" text-anchor="middle">block table</text>
+<rect class="paged-box" x="196" y="368" width="64" height="34"/><text class="small" x="228" y="389" text-anchor="middle">block</text>
+<rect class="seg" x="260" y="368" width="64" height="34"/><text class="small" x="292" y="389" text-anchor="middle">block</text>
+<rect class="seg" x="324" y="368" width="88" height="34"/><text class="small" x="368" y="389" text-anchor="middle">… ~60 more</text>
+<rect class="seg" x="412" y="368" width="44" height="34" stroke-dasharray="3 3"/><text class="small" x="434" y="389" text-anchor="middle">3% free</text>
+
+<!-- row 4: decode into the reader -->
+<line class="paged-line" x1="228" y1="402" x2="228" y2="466" marker-end="url(#arrow)"/>
+<rect class="box" x="44" y="468" width="412" height="80" rx="6"/>
+<text class="ink" x="250" y="488" text-anchor="middle">decode the block: present IDs from its mask,</text>
+<text class="ink" x="250" y="505" text-anchor="middle">then each location as a step from the last</text>
+<text class="small" x="250" y="523" text-anchor="middle">a reader per thread keeps up to 4,096 blocks decoded,</text>
+<text class="small" x="250" y="538" text-anchor="middle">so most of a way's nodes need no decoding</text>
+<line class="line" x1="250" y1="548" x2="250" y2="572" marker-end="url(#arrow)"/>
+<rect class="box" x="164" y="574" width="172" height="32" rx="6"/>
+<text class="ink" x="250" y="595" text-anchor="middle">lat, lon</text>
+
+<!-- changes -->
+<text class="head" x="24" y="640">Changes</text>
+<text class="ink" x="44" y="664">set / remove edit the decoded page in RAM; at the commit, a</text>
+<text class="ink" x="44" y="682">page that no longer fits moves its upper blocks to new pages</text>
+<text class="ink" x="44" y="700">at the end of the file</text>
+<text class="muted" x="44" y="720">commit: old pages to &lt;file&gt;.undo, then the pages, the .dir</text>
+<text class="muted" x="44" y="736">entries and a header copy, each synced; a crash rolls it back.</text>
+
+
+<!-- DenseStore -->
+<rect class="dense" x="504" y="56" width="12" height="12" rx="3"/>
+<text class="head" x="524" y="67">DenseStore</text>
+<text class="muted" x="524" y="85">8 bytes per node ID, at the ID's position in a memory-mapped file</text>
+<rect class="box" x="524" y="102" width="72" height="30" rx="6"/>
+<text class="ink" x="560" y="122" text-anchor="middle">node ID</text>
+<line class="line" x1="596" y1="117" x2="630" y2="117" marker-end="url(#arrow)"/>
+<text class="small" x="600" y="109">× 8</text>
+<rect class="seg" x="632" y="102" width="42" height="30"/><text class="small" x="653" y="121" text-anchor="middle">hdr</text>
+<rect class="seg" x="674" y="102" width="38" height="30"/><text class="small" x="693" y="121" text-anchor="middle">0</text>
+<rect class="seg" x="712" y="102" width="38" height="30"/><text class="small" x="731" y="121" text-anchor="middle">1</text>
+<rect class="dense-box" x="750" y="102" width="38" height="30"/><text class="small" x="769" y="121" text-anchor="middle">id</text>
+<rect class="seg" x="788" y="102" width="38" height="30"/><text class="small" x="807" y="121" text-anchor="middle">…</text>
+<line class="dense-line" x1="826" y1="117" x2="860" y2="117" marker-end="url(#arrow)"/>
+<rect class="box" x="862" y="102" width="74" height="30" rx="6"/>
+<text class="ink" x="899" y="122" text-anchor="middle">lat, lon</text>
+<text class="ink" x="524" y="158">set / remove write the 8 bytes in place; no decoding</text>
+<text class="muted" x="524" y="178">commit: sync the file, then a header copy. After a crash, apply</text>
+<text class="muted" x="524" y="194">the changes since the stamp again; the size follows the highest ID.</text>
+
+<line class="rule" x1="504" y1="224" x2="956" y2="224"/>
+<!-- MemoryStore -->
+<rect class="memory" x="504" y="248" width="12" height="12" rx="3"/>
+<text class="head" x="524" y="259">MemoryStore</text>
+<text class="muted" x="524" y="277">a hash map in RAM, with no file</text>
+<rect class="box" x="524" y="294" width="72" height="30" rx="6"/>
+<text class="ink" x="560" y="314" text-anchor="middle">node ID</text>
+<line class="line" x1="596" y1="309" x2="630" y2="309" marker-end="url(#arrow)"/>
+<rect class="memory-box" x="632" y="294" width="190" height="30" rx="6"/>
+<text class="ink" x="727" y="314" text-anchor="middle">hash map in RAM</text>
+<line class="memory-line" x1="822" y1="309" x2="856" y2="309" marker-end="url(#arrow)"/>
+<rect class="box" x="858" y="294" width="74" height="30" rx="6"/>
+<text class="ink" x="895" y="314" text-anchor="middle">lat, lon</text>
+<text class="ink" x="524" y="350">set / remove change the map</text>
+<text class="muted" x="524" y="370">commit: records the stamp; nothing is kept once it is dropped.</text>
+<text class="muted" x="524" y="386">20 to 39 bytes of RAM per node, no disk; for small extracts.</text>
+</svg>

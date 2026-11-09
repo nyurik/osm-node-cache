@@ -1,0 +1,20 @@
+[package]
+name = "osm-bench-osmpbfreader"
+version = "0.0.0"
+description = "Times osmpbfreader with its default features reading a whole PBF file, built apart from the other readers"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bench]]
+name = "read"
+harness = false
+
+[dev-dependencies]
+osm-bench.workspace = true
+osmpbfreader.workspace = true
+
+[lints]
+workspace = true

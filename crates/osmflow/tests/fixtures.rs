@@ -11,9 +11,10 @@
 mod common;
 
 use std::fmt::Write as _;
+use std::panic;
 use std::path::Path;
 
-use osmflow::{PbfReader, Select};
+use osmflow::{PbfReader, ReadMode, Select};
 use test_each_file::test_each_path;
 
 test_each_path! { for ["pbf"] in "crates/osmflow/fixtures" => fixture }
@@ -54,6 +55,63 @@ fn split_messages_are_merged() {
     assert_eq!(read("split_messages.osm.pbf"), expected);
 }
 
+/// Checks the block filters: rejecting every block for one object type removes exactly that type's objects, in every
+/// read mode, whether the blocks are skipped whole or only their groups of that type; and keeping blocks with a key
+/// keeps every object that has it.
+fn check_filters(path: &Path, lines: &[String]) {
+    type Narrow = fn(PbfReader) -> PbfReader;
+    let cases: [(char, Narrow); 3] = [
+        ('n', |f| f.nodes_where(|_| false)),
+        ('w', |f| f.ways_where(|_| false)),
+        ('r', |f| f.relations_where(|_| false)),
+    ];
+    for (kind, narrow) in cases {
+        let file = narrow(PbfReader::open(path).unwrap());
+        let want: Vec<&String> = lines.iter().filter(|l| !l.starts_with(kind)).collect();
+        let modes = [
+            ("one thread", common::osmflow(&file, false)),
+            ("ordered", common::osmflow_ordered(&file)),
+            ("unordered", common::osmflow_unordered(&file)),
+        ];
+        for (mode, got) in modes {
+            let got = got.unwrap();
+            assert_eq!(
+                got.iter().collect::<Vec<_>>(),
+                want,
+                "{mode} read without {kind}"
+            );
+        }
+    }
+    // Every read mode reads the same objects; they differ only in how much of the file they read.
+    let ways: Vec<&String> = lines.iter().filter(|l| l.starts_with('w')).collect();
+    for mode in [ReadMode::Sequential, ReadMode::Selective] {
+        let file = PbfReader::open(path)
+            .unwrap()
+            .read_mode(mode)
+            .nodes_where(|_| false)
+            .relations_where(|_| false);
+        let got = common::osmflow(&file, false).unwrap();
+        assert_eq!(
+            got.iter().collect::<Vec<_>>(),
+            ways,
+            "{mode:?} read of ways"
+        );
+    }
+    let file = PbfReader::open(path)
+        .unwrap()
+        .nodes_where(|s| s.has("highway"))
+        .ways_where(|s| s.has("highway"))
+        .relations_where(|s| s.has("highway"));
+    let got = common::osmflow(&file, false).unwrap();
+    let mut got = got.iter();
+    for line in lines
+        .iter()
+        .filter(|l| l.contains(" Thighway=") || l.contains(",highway="))
+    {
+        assert!(got.any(|g| g == line), "a filter of highway lost {line}");
+    }
+}
+
 /// Why `reader` is not compared on the fixture `name`, if it is not.
 fn misread(name: &str, reader: &str) -> Option<String> {
     MISREAD
@@ -73,7 +131,7 @@ fn fixture([path]: [&Path; 1]) {
     let read = PbfReader::open(path).and_then(|file| Ok((common::osmflow(&file, false)?, file)));
     let snapshot = match read {
         Err(e) => {
-            let osmpbf = match std::panic::catch_unwind(|| common::osmpbf(path)) {
+            let osmpbf = match panic::catch_unwind(|| common::osmpbf(path)) {
                 Ok(Ok(lines)) => format!("osmpbf reads {} objects", lines.len()),
                 Ok(Err(e)) => format!("osmpbf fails too: {e}"),
                 Err(_) => "osmpbf panics".to_owned(),
@@ -82,6 +140,7 @@ fn fixture([path]: [&Path; 1]) {
         }
         Ok((lines, file)) => {
             check_modes(&file, &lines);
+            check_filters(path, &lines);
             let (osmpbf, osmpbfreader) = (misread(&name, "osmpbf"), misread(&name, "osmpbfreader"));
             let dropped = if osmpbf.is_none() {
                 check_osmpbf(path, &lines)

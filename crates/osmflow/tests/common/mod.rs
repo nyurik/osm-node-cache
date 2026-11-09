@@ -14,10 +14,15 @@
 
 #![allow(dead_code, reason = "each test uses a part")]
 
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::{Display, Write as _};
+use std::fs::File;
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
-use osmflow::{Block, Info, MemberType, PbfReader, Select};
+use osmflow::{Block, Info, MemberType, PbfError, PbfReader, Select, TagKey};
 
 /// How an object without metadata is shown.
 const NO_INFO: Info<'static> = Info {
@@ -148,16 +153,72 @@ pub fn osmflow_header(file: &PbfReader) -> Vec<String> {
 }
 
 /// The whole file, read on one thread.
-pub fn osmflow(file: &PbfReader, basic: bool) -> osmflow::Result<Vec<String>> {
+pub fn osmflow(file: &PbfReader, basic: bool) -> Result<Vec<String>, PbfError> {
     let mut out = Vec::new();
     for block in file.blocks(Select::all())? {
-        out.extend(osmflow_block(&block?, basic));
+        let block = block?;
+        check_tag_lookup(&block);
+        out.extend(osmflow_block(&block, basic));
     }
     Ok(out)
 }
 
+/// Checks `Block::tag_key` and `tag` against each object's tags: every key it has gives its first value, and a key of
+/// the block it lacks gives none.
+pub fn check_tag_lookup(block: &Block) {
+    let mut keys: Vec<&str> = block
+        .nodes()
+        .flat_map(|n| n.tags())
+        .chain(block.ways().flat_map(|w| w.tags()))
+        .chain(block.relations().flat_map(|r| r.tags()))
+        .map(|(k, _)| k)
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let found: HashMap<&str, TagKey<'_>> = keys
+        .iter()
+        .map(|&k| {
+            (
+                k,
+                block
+                    .tag_key(k)
+                    .expect("a key of the block's tags is in its string table"),
+            )
+        })
+        .collect();
+    let check = |kind: &str,
+                 id: i64,
+                 tags: Vec<(&str, &str)>,
+                 tag: &dyn Fn(TagKey<'_>) -> Option<String>| {
+        for (i, &(k, v)) in tags.iter().enumerate() {
+            if tags[..i].iter().all(|&(earlier, _)| earlier != k) {
+                assert_eq!(tag(found[k]).as_deref(), Some(v), "{kind} {id} key {k}");
+            }
+        }
+        if let Some(missing) = keys.iter().find(|&&k| tags.iter().all(|&(t, _)| t != k)) {
+            assert_eq!(tag(found[missing]), None, "{kind} {id} lacks {missing}");
+        }
+    };
+    for n in block.nodes() {
+        check("node", n.id(), n.tags().collect(), &|k| {
+            n.tag(k).map(str::to_owned)
+        });
+    }
+    for w in block.ways() {
+        check("way", w.id(), w.tags().collect(), &|k| {
+            w.tag(k).map(str::to_owned)
+        });
+    }
+    for r in block.relations() {
+        check("relation", r.id(), r.tags().collect(), &|k| {
+            r.tag(k).map(str::to_owned)
+        });
+    }
+    assert!(block.tag_key("no such key in any fixture").is_none());
+}
+
 /// The whole file, decoded in parallel on the default pool and read in order.
-pub fn osmflow_ordered(file: &PbfReader) -> osmflow::Result<Vec<String>> {
+pub fn osmflow_ordered(file: &PbfReader) -> Result<Vec<String>, PbfError> {
     let mut out = Vec::new();
     for block in file.par_ordered(Select::all())? {
         out.extend(osmflow_block(&block?, false));
@@ -259,7 +320,7 @@ pub fn osmpbfreader(path: &Path) -> Result<Vec<String>, osmpbfreader::Error> {
             true,
         )
     };
-    let mut reader = OsmPbfReader::new(std::fs::File::open(path)?);
+    let mut reader = OsmPbfReader::new(File::open(path)?);
     let mut out = Vec::new();
     for obj in reader.iter() {
         out.push(match obj? {
@@ -314,19 +375,18 @@ fn types(block: &Block) -> u8 {
     clippy::panic_in_result_fn,
     reason = "the barrier check fails the test"
 )]
-pub fn osmflow_unordered(file: &PbfReader) -> osmflow::Result<Vec<String>> {
-    static POOL: std::sync::OnceLock<std::sync::Arc<rayon::ThreadPool>> =
-        std::sync::OnceLock::new();
+pub fn osmflow_unordered(file: &PbfReader) -> Result<Vec<String>, PbfError> {
+    static POOL: OnceLock<Arc<rayon::ThreadPool>> = OnceLock::new();
     let pool = POOL.get_or_init(|| {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(3)
             .build()
             .unwrap();
-        std::sync::Arc::new(pool)
+        Arc::new(pool)
     });
-    let file = file.clone().with_pool(std::sync::Arc::clone(pool));
+    let file = file.clone().with_pool(Arc::clone(pool));
     // The first blob of each blob's run, from a sequential read; a block with no objects joins the run it is in.
-    let mut run_of = std::collections::BTreeMap::new();
+    let mut run_of = BTreeMap::new();
     let (mut run_types, mut run_start) = (0, 0);
     for block in file.blocks(Select::all())? {
         let block = block?;
@@ -336,8 +396,8 @@ pub fn osmflow_unordered(file: &PbfReader) -> osmflow::Result<Vec<String>> {
         }
         run_of.insert(blob, run_start);
     }
-    let finished = std::sync::Mutex::new(std::collections::BTreeSet::new());
-    let blocks = std::sync::Mutex::new(Vec::new());
+    let finished = Mutex::new(BTreeSet::new());
+    let blocks = Mutex::new(Vec::new());
     file.par_unordered(Select::all(), |block| {
         let blob = block.position().blob;
         let start = run_of[&blob];
@@ -350,7 +410,7 @@ pub fn osmflow_unordered(file: &PbfReader) -> osmflow::Result<Vec<String>> {
                 );
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
         let lines = osmflow_block(&block, false);
         blocks.lock().unwrap().push((blob, lines));
         finished.lock().unwrap().insert(blob);
@@ -362,7 +422,10 @@ pub fn osmflow_unordered(file: &PbfReader) -> osmflow::Result<Vec<String>> {
 }
 
 /// The IDs and locations of the file's nodes, in nanodegrees, read with `select`.
-pub fn node_locations(file: &PbfReader, select: Select) -> osmflow::Result<Vec<(i64, i64, i64)>> {
+pub fn node_locations<T: osmflow::TagMode>(
+    file: &PbfReader,
+    select: Select<T>,
+) -> Result<Vec<(i64, i64, i64)>, PbfError> {
     let mut out = Vec::new();
     for block in file.blocks(select)? {
         out.extend(block?.nodes().map(|n| (n.id(), n.lat_nano(), n.lon_nano())));

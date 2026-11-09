@@ -1,0 +1,19 @@
+[package]
+name = "osm-bench"
+version = "0.0.0"
+description = "What the PBF reading benchmarks share: the summary, page cache eviction and the timing loop"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Each run evicts its input from the page cache, and checks that it is gone
+libc = { workspace = true }
+
+[dependencies]
+criterion.workspace = true
+
+[lints]
+workspace = true

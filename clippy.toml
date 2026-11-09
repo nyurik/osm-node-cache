@@ -11,4 +11,4 @@ disallowed-methods = [
 ]
 
 # Words in docs that are not code, so they need no backticks
-doc-valid-idents = ["NVMe", ".."]
+doc-valid-idents = ["NVMe", "GeoJSON", "FeatureCollection", ".."]

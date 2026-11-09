@@ -23,6 +23,22 @@ jobs:
         with: { tool: 'just,cargo-binstall,protoc' }
       - run: just ci-test
 
+  # The full checks run on Linux above; this runs the tests where files, locks and memory maps behave differently
+  test-os:
+    name: Test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features --all-targets
+      - run: cargo test --workspace --all-features --doc
+
   test-msrv:
     name: Test MSRV
     runs-on: ubuntu-latest
@@ -57,10 +73,46 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/llvm-cov/lcov.info
 
+  # Build the release binaries on pull requests without uploading them, so a target that stops building shows up before
+  # a release. The same matrix uploads them in `release-binaries` below.
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: &binary-targets
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - if: contains(matrix.target, '-linux-')
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with: { target: '${{ matrix.target }}' }
+      - if: endsWith(matrix.target, 'windows-msvc')
+        run: echo "RUSTFLAGS=${RUSTFLAGS} -C target-feature=+crt-static" >> "${GITHUB_ENV}"
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: osmflow
+          package: osmflow-cli
+          target: '${{ matrix.target }}'
+          tar: unix
+          zip: windows
+          include: LICENSE-MIT,LICENSE-APACHE
+          checksum: sha256
+          dry-run: true
+
   # This job checks if any of the previous jobs failed or were canceled.
   # This approach also allows some jobs to be skipped if they are not needed.
   ci-passed:
-    needs: [ test, test-msrv ]
+    needs: [ test, test-os, test-msrv, build-binaries ]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -86,6 +138,8 @@ jobs:
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
+    outputs:
+      cli_tag: ${{ steps.cli.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
@@ -96,9 +150,50 @@ jobs:
         with: { command: release }
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - if: ${{ steps.release.outputs.releases_created == 'true' }}
+        name: Find the tag of the osmflow-cli release, if it was released
+        id: cli
+        env:
+          RELEASES: ${{ steps.release.outputs.releases }}
+        run: echo "tag=$(jq -r '.[] | select(.package_name == "osmflow-cli") | .tag' <<< "$RELEASES")" >> "$GITHUB_OUTPUT"
       - if: ${{ steps.release.outputs.releases_created == 'false' }}
         name: If version is the same, create a PR proposing new version and changelog for the next release
         uses: release-plz/action@v0.5
         with: { command: release-pr }
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # Attach the osmflow binaries to the GitHub release of osmflow-cli, named as the binstall metadata in
+  # crates/osmflow-cli/Cargo.toml expects: osmflow-<target>.tar.gz, or .zip on Windows
+  release-binaries:
+    name: Release ${{ matrix.target }}
+    needs: [ release-plz ]
+    if: needs.release-plz.outputs.cli_tag != ''
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: *binary-targets
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-plz.outputs.cli_tag }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - if: contains(matrix.target, '-linux-')
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with: { target: '${{ matrix.target }}' }
+      - if: endsWith(matrix.target, 'windows-msvc')
+        run: echo "RUSTFLAGS=${RUSTFLAGS} -C target-feature=+crt-static" >> "${GITHUB_ENV}"
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: osmflow
+          package: osmflow-cli
+          target: '${{ matrix.target }}'
+          ref: refs/tags/${{ needs.release-plz.outputs.cli_tag }}
+          tar: unix
+          zip: windows
+          include: LICENSE-MIT,LICENSE-APACHE
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,7 @@
 [workspace]
 dependencies_update = true
-git_release_name = "v{{ version }}"
-git_tag_name = "v{{ version }}"
+
+# The library's releases hold only its changelog; the CLI's release, with the binaries, stays the latest on GitHub
+[[package]]
+name = "osmflow"
+git_release_latest = false

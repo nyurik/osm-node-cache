@@ -1,13 +1,15 @@
 //! osmflow's own protobuf field reader, for plain nodes, ways, relations and their metadata, which are decoded straight
 //! into columns. Dense nodes are read through buffa views.
 
-use crate::error::FormatError;
+use std::result;
 
-type Result<T> = std::result::Result<T, FormatError>;
+use crate::error::PbfFormatError;
+
+type Result<T> = result::Result<T, PbfFormatError>;
 
 /// Reads one varint at `pos`. A varint is at most 10 bytes, and the tenth may only hold the top bit of a `u64`.
 #[inline]
-fn varint(buf: &[u8], pos: &mut usize) -> Option<u64> {
+pub(crate) fn varint(buf: &[u8], pos: &mut usize) -> Option<u64> {
     let mut value = 0u64;
     for shift in (0..64).step_by(7) {
         let byte = *buf.get(*pos)?;
@@ -23,12 +25,12 @@ fn varint(buf: &[u8], pos: &mut usize) -> Option<u64> {
     None
 }
 
-/// Calls `f` for every varint of a packed array, in order; a malformed varint is a [`FormatError::Packed`] error.
+/// Calls `f` for every varint of a packed array, in order; a malformed varint is a [`PbfFormatError::Packed`] error.
 #[inline]
 fn for_each(packed: &[u8], what: &'static str, mut f: impl FnMut(u64) -> Result<()>) -> Result<()> {
     let mut pos = 0;
     while pos < packed.len() {
-        f(varint(packed, &mut pos).ok_or(FormatError::Packed(what))?)?;
+        f(varint(packed, &mut pos).ok_or(PbfFormatError::Packed(what))?)?;
     }
     Ok(())
 }
@@ -49,7 +51,7 @@ pub(crate) fn fields<'a>(
     what: &'static str,
     mut f: impl FnMut(u32, Value<'a>) -> Result<()>,
 ) -> Result<()> {
-    let err = || FormatError::Message(what);
+    let err = || PbfFormatError::Message(what);
     let mut pos = 0;
     while pos < msg.len() {
         let key = varint(msg, &mut pos).ok_or_else(err)?;
@@ -97,8 +99,36 @@ pub(crate) fn values(
     match value {
         Value::Bytes(bytes) => for_each(bytes, what, f),
         Value::Varint(v) => f(v),
-        Value::Fixed => Err(FormatError::Packed(what)),
+        Value::Fixed => Err(PbfFormatError::Packed(what)),
     }
+}
+
+/// The number of varints in packed bytes, if every one is well formed: at most 10 bytes, the tenth holding only the
+/// top bit of a `u64`, and the last one not cut off.
+pub(crate) fn count(packed: &[u8]) -> Option<usize> {
+    let (mut count, mut continued) = (0, 0);
+    for &byte in packed {
+        if continued == 9 && byte > 1 {
+            return None;
+        }
+        if byte < 0x80 {
+            count += 1;
+            continued = 0;
+        } else {
+            continued += 1;
+        }
+    }
+    (continued == 0).then_some(count)
+}
+
+/// Appends `v` as a varint.
+pub(crate) fn push_varint(out: &mut Vec<u8>, mut v: u64) {
+    let low = |v: u64| u8::try_from(v & 0x7f).unwrap_or_default();
+    while v >= 0x80 {
+        out.push(low(v) | 0x80);
+        v >>= 7;
+    }
+    out.push(low(v));
 }
 
 #[inline]
@@ -203,6 +233,24 @@ mod tests {
         for bad in [&[0x12, 5, b'a'][..], &[0x0b], &[0x00, 1], &[0x09, 0, 0]] {
             assert!(fields(bad, "t", |_, _| Ok(())).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn count_checks_every_varint() {
+        let mut packed = Vec::new();
+        for v in [0, 1, 127, 128, u64::MAX] {
+            push_varint(&mut packed, v);
+        }
+        assert_eq!(packed, encode(&[0, 1, 127, 128, u64::MAX]));
+        assert_eq!(count(&packed), Some(5));
+        assert_eq!(count(&[]), Some(0));
+        assert_eq!(count(&[0x80]), None, "cut off");
+        assert_eq!(
+            count(&[0xff; 9].iter().copied().chain([2]).collect::<Vec<_>>()),
+            None,
+            "past 64 bits"
+        );
+        assert_eq!(count(&[0x80; 10]), None, "11 bytes");
     }
 
     #[test]

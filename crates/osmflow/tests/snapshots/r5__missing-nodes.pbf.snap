@@ -1,0 +1,16 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: Sort.Type_then_ID
+# writing program: Some("osmconvert 0.8.10"), source: Some("http://www.openstreetmap.org/api/0.6")
+# bbox: Some((12248757000, 54088958000, 12252480000, 54091390000))
+# replication: None None None
+# 4 nodes, 2 ways, 0 relations, hash 3b65e6919ab0ba31
+n261728686 v1 dV c323878 t1209821963000 i36744 uPikoWinter T x12244192400 y54090630900
+n298884269 v1 dV c676636 t1222033065000 i46882 uSvenHRO T x12248263200 y54090174600
+n298884272 v1 dV c676636 t1222033065000 i46882 uSvenHRO T x12251651300 y54090144700
+n1831881213 v1 dV c12370172 t1342777399000 i75625 ulafkor Tname=Neu%20%Broderstorf,traffic_sign=city_limit x12253938100 y54090066600
+w14 v1 dV c1 t1000 i0 u Tname=Fake%20%Test%20%Stra%df%e N298884269,261728686
+w26659127 v5 dV c4142606 t1268740028000 i55988 uMasch Thighway=unclassified,name=Pastower%20%Stra%df%e N1831881213,298884272,298884269,42,261728686

@@ -1,0 +1,18 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes, HistoricalInformation
+# optional: 
+# writing program: Some("osmium/1.10.0"), source: None
+# bbox: None
+# replication: None None None
+# 4 nodes, 2 ways, 2 relations, hash b1410911b1b91a9e
+n1 v1 dV c1 t1446404400000 i1 uDummy%20%User T x1000000 y1000000
+n2 v1 dV c1 t1446404400000 i1 uDummy%20%User T x2000000 y2000000
+n1 v2 dV c2 t1554145200000 i2 uAnother%20%User T x3000000 y3000000
+n2 v2 dD c2 t1554145200000 i2 uAnother%20%User T x214748364700 y214748364700
+w1 v1 dV c1 t1446404400000 i1 uDummy%20%User Tname=line N1,2
+w2 v2 dV c2 t1554145200000 i2 uAnother%20%User Tname=new%20%line N1,2
+r1 v1 dV c1 t1446404400000 i1 uDummy%20%User T Mn1@,w1@
+r2 v2 dD c2 t1554145200000 i2 uAnother%20%User T M
