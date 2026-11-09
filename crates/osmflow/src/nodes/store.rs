@@ -637,6 +637,19 @@ pub(crate) mod tests {
         assert_eq!(fs::read(&f.0).unwrap(), other, "the file is left as it was");
     }
 
+    /// The highest ID a store takes is stored and removed like any other.
+    fn takes_the_highest_id<S: TestStore>(name: &str) {
+        // Only this node is looked up: a full check would read every ID the file has room for.
+        let (mut store, f) = S::create(name);
+        let ok = Location::new(1, 1);
+        store.set(MAX_NODE_ID, ok).unwrap();
+        assert_eq!(store.get(MAX_NODE_ID), Some(ok));
+        store.commit(1).unwrap();
+        store.remove(MAX_NODE_ID).unwrap();
+        assert_eq!(store.get(MAX_NODE_ID), None);
+        drop((store, f));
+    }
+
     fn rejects_bad_nodes<S: TestStore>(name: &str) {
         let (mut store, _f) = S::create(name);
         let ok = Location::new(1, 1);
@@ -654,16 +667,15 @@ pub(crate) mod tests {
                 Err(NodeStoreError::InvalidLocation(_))
             ));
         }
-        store.set(MAX_NODE_ID, ok).unwrap();
-        assert_eq!(store.get(MAX_NODE_ID), Some(ok));
         for id in [MAX_NODE_ID + 1, 1 << 61, u64::MAX] {
             assert_eq!(store.get(id), None, "{id}");
         }
+        store.set(1, ok).unwrap();
         assert!(matches!(
             store.bulk_load().err(),
             Some(NodeStoreError::NotEmpty)
         ));
-        store.remove(MAX_NODE_ID).unwrap();
+        store.remove(1).unwrap();
         store.commit(0).unwrap();
         drop(store);
         let (mut store, _f) = S::create(&format!("{name}_load"));
@@ -821,6 +833,7 @@ pub(crate) mod tests {
             restarts_a_load_cut_short,
             rejects_other_files,
             rejects_bad_nodes,
+            takes_the_highest_id,
             resumes_a_load,
             drops_a_load_after_its_checkpoint,
             metadata
@@ -842,6 +855,11 @@ pub(crate) mod tests {
             resumes_a_load,
             metadata
         );
+
+        // The highest ID makes a 512 GiB file. NTFS keeps no holes in a file not marked sparse, so
+        // Windows would allocate all of it.
+        #[cfg(not(windows))]
+        store_tests!(super::DenseStore, takes_the_highest_id);
     }
 
     mod memory {
@@ -852,6 +870,7 @@ pub(crate) mod tests {
             empty,
             changes_match_a_map,
             rejects_bad_nodes,
+            takes_the_highest_id,
             metadata
         );
     }
