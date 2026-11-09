@@ -234,7 +234,8 @@ impl Replication {
         self.source.latest()
     }
 
-    /// The state file of one diff, downloaded first if needed.
+    /// The state file of one diff, downloaded first if needed. A file that names another sequence, whether downloaded,
+    /// cached or local, is an [`OscError::State`] error for its `sequenceNumber`, and a downloaded one is not cached.
     pub fn sequence_state(&self, sequence: u64) -> Result<State> {
         self.source.state_file(sequence)
     }
@@ -355,26 +356,30 @@ impl Source {
         Ok(())
     }
 
+    /// The state file of diff `sequence`, which must name that sequence, whether it is downloaded, cached or local.
     fn state_file(&self, sequence: u64) -> Result<State> {
         let (relative, path) = self.path(sequence, ".state.txt");
-        match &self.remote {
+        let (origin, state) = match &self.remote {
             Some(remote) if !path.exists() => {
                 self.check_published(remote, sequence)?;
                 let (url, body, state) = remote.fetch_checked(&relative, parse_state)?;
-                if state.sequence != sequence {
-                    return Err(OscError::State {
-                        origin: url,
-                        kind: StateError::Value {
-                            key: "sequenceNumber",
-                            value: state.sequence.to_string(),
-                        },
-                    });
+                if state.sequence == sequence {
+                    write_atomic(&path, &body)?;
                 }
-                write_atomic(&path, &body)?;
-                Ok(state)
+                (url, state)
             }
-            _ => State::read(&path),
+            _ => (path.display().to_string(), State::read(&path)?),
+        };
+        if state.sequence != sequence {
+            return Err(OscError::State {
+                origin,
+                kind: StateError::Value {
+                    key: "sequenceNumber",
+                    value: state.sequence.to_string(),
+                },
+            });
         }
+        Ok(state)
     }
 
     fn diff_file(&self, sequence: u64) -> Result<PathBuf> {

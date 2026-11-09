@@ -243,6 +243,18 @@ fn local_stream() {
     }
     assert_eq!(repl.diffs(6).unwrap().count(), 0);
     assert_eq!(repl.diffs(5).unwrap().count(), 1);
+
+    // A state file naming another sequence is an error, as it is from a server.
+    fs::write(dir.join("000/000/004.state.txt"), state_text(3)).unwrap();
+    let error = repl.diff(4).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            OscError::State { origin, kind: StateError::Value { key: "sequenceNumber", value } }
+                if origin.ends_with("004.state.txt") && value == "3"
+        ),
+        "{error}"
+    );
 }
 
 #[test]
@@ -494,6 +506,13 @@ fn remote_files_are_checked() {
     mock.answer_first("000/000/002.state.txt", Some(state_text(7).as_bytes()));
     let error = repl.sequence_state(2).unwrap_err();
     assert!(matches!(error, OscError::State { .. }), "{error}");
+    // It is not cached, and one in the cache is checked too.
+    let cached = cache.join("000/000/002.state.txt");
+    assert!(!cached.exists());
+    fs::write(&cached, state_text(7)).unwrap();
+    let error = repl.sequence_state(2).unwrap_err();
+    assert!(matches!(error, OscError::State { .. }), "{error}");
+    fs::remove_file(&cached).unwrap();
 
     // A published file the server does not have is an error, in its turn.
     mock.0
