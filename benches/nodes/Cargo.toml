@@ -1,0 +1,17 @@
+[package]
+name = "osm-bench-nodes"
+version = "0.0.0"
+description = "Times osmflow's node location stores on a PBF file: loading, verifying, resolving ways, lookups, commits"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+osm-bench.workspace = true
+osmflow.workspace = true
+
+[lints]
+workspace = true

@@ -8,8 +8,9 @@ measured with the dependency features it asks for. Cargo merges the features of 
 readers in one program, osmpbf's choice of zlib-ng would also be osmflow's. `common` holds what they share: the summary,
 dropping the file from the page cache, and the timing loop.
 
-`crates/osmflow/benches/nodes.rs` times lookups and commits of every node location store on synthetic nodes:
-`just bench`.
+`nodes` times osmflow's node location stores on a real PBF file, for the tables of
+[`docs/nodes.md`](../crates/osmflow/docs/nodes.md); [below](#node-location-stores) says how.
+`crates/osmflow/benches/nodes.rs` is a quick check of the same stores on synthetic nodes: `just bench`.
 
 ## What it measures
 
@@ -73,3 +74,30 @@ python3 benches/report.py crates/osmflow/docs/perf.svg tables.md earlier.log per
 A later log's time replaces an earlier one's for the same file and reader, and times from any log but the last are
 marked with `*`, so a slow reader's time can come from a run of its own. The `dd` line gives the disk's speed, drawn as
 a line on the chart.
+
+## Node location stores
+
+`osm-bench-nodes` times each store on a PBF file sorted by type and ID: bulk loading, reading every node back
+(`verify`), resolving the nodes of every way (`resolve`), lookups in way order and in random order on one thread and on
+all cores (`lookups`), and applying osmChange diffs with one commit each, as replication does (`apply`). A store path
+ending in `.dense` is a `DenseStore`, one ending in `.mem` a `MemoryStore`, any other a `PagedStore`; `--read-only`
+opens a stored one read-only. `load`, `verify` and `resolve` drop the PBF file from the page cache first, so each reads
+it from the disk. The source's doc comment lists every option.
+
+```sh
+cargo build --release -p osm-bench-nodes
+B=target/release/osm-bench-nodes
+# District of Columbia, every store, with its next two days of Geofabrik diffs
+$B --every 1 dc.osm.pbf dc.paged load verify resolve lookups apply -- 955.osc.gz 956.osc.gz
+$B --every 1 dc.osm.pbf dc.mem load verify resolve lookups apply -- 955.osc.gz 956.osc.gz
+# North America's nodes up to ID 3 billion, so each store fits in memory
+$B --max-id 3000000000 north-america.osm.pbf na.dense load verify resolve lookups
+# the planet: load, then resolve with none of the store in memory at first, then a day of minute diffs
+$B planet.osm.pbf planet.paged load
+$B --read-only --cold --preload planet.osm.pbf planet.paged resolve
+$B planet.osm.pbf planet.paged apply -- minute/007/334/847.osc.gz minute/007/334/848.osc.gz ...
+```
+
+A dense store's `verify` reads 8 bytes of every ID up to the highest, the ID ranges with no nodes included, so on a
+small extract with high IDs it reads far more than the store holds.
+

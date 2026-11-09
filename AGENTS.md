@@ -18,7 +18,7 @@ coding agents alike. How the library works is in [`crates/osmflow/docs/design.md
 | `crates/osmflow/fixtures/` | Test files from other projects, one directory per source with a README and its license; `generated/` is written by `tests/generated.rs` (`OSMFLOW_REGENERATE=1` rewrites it) |
 | `crates/osmflow/tests/`, `benches/` | Integration tests, with snapshots in `tests/snapshots/`; benchmarks of osmChange parsing and the node stores |
 | `crates/osmflow-cli` | The `osmflow` command: `dump` and `stats` |
-| `benches/` | One package per PBF reader, to compare osmflow with other crates; see `benches/README.md` |
+| `benches/` | One package per PBF reader, to compare osmflow with other crates, and `nodes`, which times the node stores on real files; see `benches/README.md` |
 | `.github/workflows/ci.yml` | Tests, MSRV, coverage, release-plz, and the release binaries |
 | `tmp/` | Ignored by git: scratch files and measurements |
 

@@ -775,6 +775,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "osm-bench-nodes"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "osm-bench",
+ "osmflow",
+]
+
+[[package]]
 name = "osm-bench-osmflow"
 version = "0.0.0"
 dependencies = [

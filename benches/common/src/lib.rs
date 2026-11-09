@@ -93,12 +93,15 @@ impl Summary {
 }
 
 /// Drops the file from the OS page cache and checks that at most 1% of it is still cached.
+///
+/// # Panics
+/// If the file cannot be opened or mapped, or more of it stays cached.
 #[cfg(target_os = "linux")]
 #[allow(
     unsafe_code,
     reason = "sysconf, posix_fadvise and mincore have no safe wrapper in std"
 )]
-fn evict(path: &Path) {
+pub fn evict(path: &Path) {
     use std::fs::File;
     use std::os::fd::AsRawFd as _;
     use std::{io, ptr};
@@ -153,12 +156,13 @@ fn evict(path: &Path) {
     );
 }
 
+/// Warns, once, that the file stays in the page cache: only Linux drops it.
 #[cfg(not(target_os = "linux"))]
 #[expect(
     clippy::print_stderr,
     reason = "a warning that the timings include cached reads"
 )]
-fn evict(path: &Path) {
+pub fn evict(path: &Path) {
     use std::sync::Once;
 
     static WARNED: Once = Once::new();
