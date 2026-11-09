@@ -771,6 +771,34 @@ mod tests {
     use super::*;
     use crate::{PbfReader, filter};
 
+    /// A zlib block larger than its blob declares is peeked at only as far as the declared size, and then read whole,
+    /// which reports the mismatch, rather than asked for more forever.
+    #[test]
+    fn a_block_larger_than_declared_is_not_peeked_at() {
+        use std::io::Write as _;
+
+        use flate2::write::ZlibEncoder;
+
+        // A string table of one empty string, then a group of one node.
+        let block = [0x0a, 0x02, 0x0a, 0x00, 0x12, 0x04, 0x0a, 0x02, 0x08, 0x02];
+        let mut z = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(&block).unwrap();
+        let blob = z.finish().unwrap();
+        for raw_size in [0, 1, 3] {
+            let layout = Layout {
+                raw_size,
+                data: (0, blob.len()),
+                zlib: true,
+            };
+            let (mut d, mut out) = (Decompress::new(true), Vec::new());
+            let peek = peek_start(&blob, &layout, &mut d, &mut out).unwrap();
+            assert!(
+                matches!(peek, Peek::Unknown),
+                "raw size {raw_size}: {peek:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_large_file_is_dropped_behind_the_reader() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))

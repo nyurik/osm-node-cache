@@ -35,15 +35,24 @@ pub(crate) enum Peek {
 pub(crate) fn peek(start: &[u8], raw_size: usize) -> Peek {
     // Room for a field's key and length, beyond what is known to be needed.
     const SLACK: usize = 32;
+    // Once `start` holds all the bytes the block declares, no more can come: a block that ends too soon, or declares
+    // too small a size, is read whole, which reports it.
+    let need = |n: usize| {
+        if start.len() >= raw_size {
+            Peek::Unknown
+        } else {
+            Peek::NeedMore(n)
+        }
+    };
     let mut p = 0;
     let Some(key) = varint(start, &mut p) else {
-        return Peek::NeedMore(SLACK);
+        return need(SLACK);
     };
     if key != (1 << 3 | 2) {
         return Peek::Unknown;
     }
     let Some(len) = varint(start, &mut p).and_then(|l| usize::try_from(l).ok()) else {
-        return Peek::NeedMore(p + SLACK);
+        return need(p + SLACK);
     };
     let Some(table_end) = p.checked_add(len).filter(|&e| e <= raw_size) else {
         return Peek::Unknown;
@@ -152,6 +161,9 @@ mod tests {
         let data = block(&[b"", b"highway"], &[(3, b"\x08\x01")]);
         assert!(matches!(peek(&data[..0], data.len()), Peek::NeedMore(_)));
         assert!(matches!(peek(&data[..5], data.len()), Peek::NeedMore(_)));
+        // A block declaring fewer bytes than its start needs: no more can come.
+        assert!(matches!(peek(&data[..0], 0), Peek::Unknown));
+        assert!(matches!(peek(&data[..1], 1), Peek::Unknown));
         // Granularity first, not the string table.
         assert!(matches!(peek(&[0x88, 0x01, 0x64], 3), Peek::Unknown));
         // A string table, then no group.
