@@ -117,6 +117,10 @@ impl<R: NodeReader> Locator<R> {
     }
 }
 
+/// The nodes [`PbfReader::load_nodes`] hands a store at once. A block holds about 8,000 nodes, and stores encode only
+/// large batches on all threads.
+const LOAD_BATCH: usize = 1 << 20;
+
 impl PbfReader {
     /// Loads the locations of the file's nodes into `store`, which must be empty or hold an interrupted load of the
     /// same file, and returns their number. The file must be sorted by type and ID, as published files are; the
@@ -129,21 +133,22 @@ impl PbfReader {
             .and_then(|s| u64::try_from(s).ok())
             .unwrap_or(0);
         let mut loader = store.bulk_load()?;
-        let mut batch = Vec::new();
+        let mut batch = Vec::with_capacity(LOAD_BATCH);
         let mut count = 0;
         for block in self
             .without_filters()
             .par_ordered(Select::node_locations())?
         {
             let block = block?;
-            batch.clear();
-            batch.extend(block.nodes().filter_map(|n| {
-                let id = u64::try_from(n.id()).ok()?;
-                Some((id, Location::new(n.decimicro_lat(), n.decimicro_lon())))
-            }));
-            loader.push_batch(&batch)?;
-            count += batch.len() as u64;
+            block.push_node_locations(&mut batch);
+            if batch.len() >= LOAD_BATCH {
+                loader.push_batch(&batch)?;
+                count += batch.len() as u64;
+                batch.clear();
+            }
         }
+        loader.push_batch(&batch)?;
+        count += batch.len() as u64;
         loader.finish(stamp)?;
         Ok(count)
     }

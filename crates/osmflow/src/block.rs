@@ -947,6 +947,25 @@ impl<T: TagMode> Block<T> {
         (0..self.c.nodes.objects.ids.len()).map(move |i| Node { block: self, i })
     }
 
+    /// Appends the block's nodes with IDs of 0 and up, in file order, as their IDs and locations in 1e-7 degrees: what
+    /// [`Node::id`], [`Node::decimicro_lat`] and [`Node::decimicro_lon`] give, read straight from the columns.
+    #[cfg(feature = "nodes")]
+    pub(crate) fn push_node_locations(&self, out: &mut Vec<(u64, crate::Location)>) {
+        let n = &self.c.nodes;
+        let (lat0, lon0) = (self.c.lat_offset, self.c.lon_offset);
+        out.reserve(n.objects.ids.len());
+        out.extend(n.objects.ids.iter().zip(&n.lats).zip(&n.lons).filter_map(
+            |((&id, &lat), &lon)| {
+                let id = u64::try_from(id).ok()?;
+                let loc = crate::Location::new(
+                    decimicro(self.nano(lat, lat0)),
+                    decimicro(self.nano(lon, lon0)),
+                );
+                Some((id, loc))
+            },
+        ));
+    }
+
     /// The block's ways, in file order.
     pub fn ways(&self) -> impl ExactSizeIterator<Item = Way<'_, T>> {
         (0..self.c.ways.objects.ids.len()).map(move |i| Way { block: self, i })
@@ -1256,5 +1275,36 @@ mod tests {
         // `é` split between two strings: the joined bytes are valid UTF-8, but neither string is.
         assert_eq!(bad_string(&[b"", b"a\xC3", b"\xA9b"]), Some(1));
         assert_eq!(bad_string(&[b"", b"\xC3", b""]), Some(1));
+    }
+
+    #[cfg(feature = "nodes")]
+    #[test]
+    fn node_locations_match_the_nodes() {
+        use std::path::Path;
+
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/generated");
+        // a granularity and offsets other than the default, negative IDs, and plain nodes beside dense ones
+        for name in ["granularity", "negative_ids", "mixed_groups", "packed"] {
+            let reader = crate::PbfReader::open(fixtures.join(format!("{name}.osm.pbf"))).unwrap();
+            let mut nodes = 0;
+            for block in reader.blocks(Select::node_locations()).unwrap() {
+                let block = block.unwrap();
+                let mut got = Vec::new();
+                block.push_node_locations(&mut got);
+                let want: Vec<_> = block
+                    .nodes()
+                    .filter_map(|n| {
+                        let id = u64::try_from(n.id()).ok()?;
+                        Some((
+                            id,
+                            crate::Location::new(n.decimicro_lat(), n.decimicro_lon()),
+                        ))
+                    })
+                    .collect();
+                assert_eq!(got, want, "{name}");
+                nodes += block.nodes().len();
+            }
+            assert!(nodes > 0, "{name} has nodes");
+        }
     }
 }

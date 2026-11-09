@@ -172,10 +172,11 @@ A way stores only its nodes' IDs. To build its geometry, osmflow looks the IDs u
 `geo-types` geometries the `geometry` feature.
 
 * **`PbfReader::load_nodes`** bulk loads a file's node locations into a store. It reads in file order, with only node
-  IDs and coordinates decoded and the other blocks skipped, and pushes each block's nodes as one batch. The file must be
-  sorted, as the stores take IDs in ascending order. Nodes with negative IDs, which only editors' files have, are left
-  out. The store's stamp becomes the file's replication sequence, or 0. A store holding an interrupted load of the same
-  file resumes it.
+  IDs and coordinates decoded and the other blocks skipped. It copies each block's nodes straight from its columns, and
+  hands the store about a million at a time, many blocks' worth, so the paged store encodes them on all threads. The
+  file must be sorted, as the stores take IDs in ascending order. Nodes with negative IDs, which only editors' files
+  have, are left out. The store's stamp becomes the file's replication sequence, or 0. A store holding an interrupted
+  load of the same file resumes it.
 * **`Locator`** looks up a way's nodes in a store, for one thread. `line_string` gives the way as a `LineString` in
   degrees, and `polygon` gives a closed way of four nodes or more as a `Polygon` without holes. A node the store does
   not have, as when a way leaves an extract, gives `GeometryError::MissingNode` with its ID.
