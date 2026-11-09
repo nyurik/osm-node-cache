@@ -8,12 +8,12 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[dependencies]
+criterion.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Each run evicts its input from the page cache, and checks that it is gone
 libc = { workspace = true }
-
-[dependencies]
-criterion.workspace = true
 
 [lints]
 workspace = true

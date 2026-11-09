@@ -6,6 +6,7 @@ table_order = [
     'bench',
     'features',
     'dependencies',
+    'target',
     'build-dependencies',
     'dev-dependencies',
     'profile',
