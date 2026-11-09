@@ -11,7 +11,12 @@
     reason = "a protobuf encoder reinterprets integers on purpose"
 )]
 
+use std::io::Write as _;
+use std::ops::Range;
 use std::path::Path;
+use std::{env, fs};
+
+use flate2::write::ZlibEncoder;
 
 /// A protobuf message being written.
 #[derive(Default)]
@@ -97,6 +102,54 @@ fn raw_blob(data: &[u8]) -> Pb {
     b
 }
 
+/// A zlib blob of `data`, its size first, as osmium writes it.
+fn zlib_blob(data: &[u8]) -> Pb {
+    let mut z = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    z.write_all(data).unwrap();
+    let mut b = Pb::default();
+    b.uint(2, data.len() as u64).bytes(3, &z.finish().unwrap());
+    b
+}
+
+fn read_varint(b: &[u8], p: &mut usize) -> usize {
+    let (mut v, mut shift) = (0, 0);
+    loop {
+        let byte = b[*p];
+        *p += 1;
+        v |= usize::from(byte & 0x7f) << shift;
+        if byte < 0x80 {
+            return v;
+        }
+        shift += 7;
+    }
+}
+
+/// The same file with every blob compressed with zlib, as `file` frames them from `raw_blob`s.
+fn zlib_file(raw: &[u8]) -> Vec<u8> {
+    let mut blobs = Vec::new();
+    let mut p = 0;
+    while p < raw.len() {
+        let header_len = u32::from_be_bytes(raw[p..p + 4].try_into().unwrap()) as usize;
+        let header = &raw[p + 4..p + 4 + header_len];
+        // A header is the type (field 1), then the blob's size (field 3); a `raw_blob` is the block (field 1) first.
+        let mut h = 1;
+        let kind_len = read_varint(header, &mut h);
+        let kind = if &header[h..h + kind_len] == b"OSMHeader" {
+            "OSMHeader"
+        } else {
+            "OSMData"
+        };
+        h += kind_len + 1;
+        let blob_len = read_varint(header, &mut h);
+        let blob = &raw[p + 4 + header_len..p + 4 + header_len + blob_len];
+        let mut b = 1;
+        let data_len = read_varint(blob, &mut b);
+        blobs.push((kind, zlib_blob(&blob[b..b + data_len])));
+        p += 4 + header_len + blob_len;
+    }
+    file(&blobs)
+}
+
 /// A file: each blob framed with its 4-byte length and `BlobHeader`.
 fn file(blobs: &[(&str, Pb)]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -113,12 +166,30 @@ fn file(blobs: &[(&str, Pb)]) -> Vec<u8> {
 }
 
 fn header(required: &[&str]) -> (&'static str, Pb) {
+    header_with(required, &[])
+}
+
+fn header_with(required: &[&str], optional: &[&str]) -> (&'static str, Pb) {
     let mut h = Pb::default();
     for f in required {
         h.bytes(4, f.as_bytes());
     }
+    for f in optional {
+        h.bytes(5, f.as_bytes());
+    }
     h.bytes(16, b"osmflow tests/generated.rs");
     ("OSMHeader", raw_blob(&h.0))
+}
+
+/// A plain node, after the dense ones in ID order.
+fn plain_node(id: i64) -> Pb {
+    let mut n = Pb::default();
+    n.sint(1, id)
+        .packed(2, &[3])
+        .packed(3, &[4])
+        .sint(8, 410_000_000)
+        .sint(9, -730_000_000);
+    n
 }
 
 const STRINGS: [&str; 7] = [
@@ -450,7 +521,7 @@ fn build_all() -> Vec<(&'static str, Vec<u8>)> {
     let versions = ints(&[1, 2, 3]);
     let times = deltas(&[1_600_000_000, 1_600_001_000, 1_600_002_000]);
     let (changesets, uids, users) = (deltas(&[7; 3]), deltas(&[42; 3]), deltas(&[6; 3]));
-    let dense_part = |nodes: std::ops::Range<usize>, keys_vals: &[u64]| {
+    let dense_part = |nodes: Range<usize>, keys_vals: &[u64]| {
         let r = || nodes.clone();
         let mut info = Pb::default();
         info.packed(1, &versions[r()])
@@ -526,10 +597,14 @@ fn build_all() -> Vec<(&'static str, Vec<u8>)> {
     // outside the table.
     let mut anonymous = Pb::default();
     anonymous.uint(1, 2).uint(2, 1_600_000_000).uint(3, 7);
-    let mut way = Pb::default();
-    way.int(1, 10).msg(4, &anonymous).packed(8, &deltas(&IDS));
+    let mut anonymous_way = Pb::default();
+    anonymous_way
+        .int(1, 10)
+        .msg(4, &anonymous)
+        .packed(8, &deltas(&IDS));
     let mut data = Pb::default();
-    data.msg(1, &Pb::default()).msg(2, &group(3, &[way]));
+    data.msg(1, &Pb::default())
+        .msg(2, &group(3, &[anonymous_way]));
     all.push((
         "info_without_user.osm.pbf",
         file(&[header(&["OsmSchema-V0.6"]), ("OSMData", raw_blob(&data.0))]),
@@ -538,16 +613,181 @@ fn build_all() -> Vec<(&'static str, Vec<u8>)> {
     // A string table entry that is not UTF-8, used as a tag value.
     let mut table = Pb::default();
     table.bytes(1, b"").bytes(1, b"name").bytes(1, b"\xff");
-    let mut way = Pb::default();
-    way.int(1, 10)
+    let mut bad_way = Pb::default();
+    bad_way
+        .int(1, 10)
         .packed(2, &[1])
         .packed(3, &[2])
         .packed(8, &deltas(&IDS));
     let mut data = Pb::default();
-    data.msg(1, &table).msg(2, &group(3, &[way]));
+    data.msg(1, &table).msg(2, &group(3, &[bad_way]));
     all.push((
         "invalid_utf8.osm.pbf",
         file(&[header(&["OsmSchema-V0.6"]), ("OSMData", raw_blob(&data.0))]),
+    ));
+
+    // Files sorted by type with several groups per block, as the planet's writer makes them: a block's later groups
+    // are inflated only after its first, so whether a block holds one type is known from the next block's first
+    // group. In `sorted_groups`, the first ways block is followed by another, so it holds only ways; in
+    // `sorted_boundary`, a block starts with ways and ends with relations, which a filter of ways must keep.
+    let sorted = || header_with(&["OsmSchema-V0.6", "DenseNodes"], &["Sort.Type_then_ID"]);
+    all.push((
+        "sorted_groups.osm.pbf",
+        file(&[
+            sorted(),
+            block(
+                &[group(2, &[dense(packed)]), group(1, &[plain_node(5)])],
+                |_| {},
+            ),
+            block(
+                &[
+                    group(3, &[way(10, &IDS, packed)]),
+                    group(3, &[way(11, &IDS, packed)]),
+                ],
+                |_| {},
+            ),
+            block(
+                &[
+                    group(3, &[way(12, &IDS, packed)]),
+                    group(3, &[way(13, &IDS, packed)]),
+                ],
+                |_| {},
+            ),
+            block(
+                &[
+                    group(4, &[relation(20, 10, packed)]),
+                    group(4, &[relation(21, 11, packed)]),
+                ],
+                |_| {},
+            ),
+        ]),
+    ));
+    all.push((
+        "sorted_boundary.osm.pbf",
+        file(&[
+            sorted(),
+            block(
+                &[
+                    group(2, &[dense(packed)]),
+                    group(3, &[way(10, &IDS, packed)]),
+                ],
+                |_| {},
+            ),
+            block(
+                &[
+                    group(3, &[way(11, &IDS, packed)]),
+                    group(4, &[relation(20, 10, packed)]),
+                ],
+                |_| {},
+            ),
+            block(&[group(4, &[relation(21, 11, packed)])], |_| {}),
+        ]),
+    ));
+
+    // A sorted zlib file with blocks larger than the start a reader reads first, and string tables larger than the
+    // first bytes a peek inflates: block starts are read in part, and the rest only when a block is kept.
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut random = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let extra: Vec<String> = (0..1000)
+        .map(|_| {
+            (0..16)
+                .map(|_| char::from(b'a' + random(26) as u8))
+                .collect()
+        })
+        .collect();
+    let big = |groups: &[Pb]| {
+        let mut table = strings();
+        for v in &extra {
+            table.bytes(1, v.as_bytes());
+        }
+        let mut b = Pb::default();
+        b.msg(1, &table);
+        for g in groups {
+            b.msg(2, g);
+        }
+        ("OSMData", zlib_blob(&b.0))
+    };
+    let ways: Vec<Pb> = (0..4000)
+        .map(|i| {
+            let refs: Vec<i64> = (0..10).map(|_| 1 + random(1 << 40) as i64).collect();
+            way(100 + i, &refs, packed)
+        })
+        .collect();
+    let small = |groups: &[Pb]| {
+        let (kind, raw) = block(groups, |_| {});
+        let mut p = 1;
+        let len = read_varint(&raw.0, &mut p);
+        (kind, zlib_blob(&raw.0[p..p + len]))
+    };
+    all.push((
+        "large_blocks_zlib.osm.pbf",
+        file(&[
+            sorted(),
+            big(&[group(2, &[dense(packed)]), group(1, &[plain_node(5)])]),
+            big(&[group(1, &[plain_node(6)])]),
+            big(&[group(3, &ways[..2000]), group(3, &ways[2000..])]),
+            small(&[group(3, &[way(9000, &IDS, packed)])]),
+            small(&[group(4, &[relation(20, 10, packed)])]),
+        ]),
+    ));
+
+    // zlib copies of the files the reader's block skipping is tested on: only zlib blocks are peeked at.
+    for (name, raw) in [
+        ("packed_zlib.osm.pbf", "packed.osm.pbf"),
+        ("mixed_groups_zlib.osm.pbf", "mixed_groups.osm.pbf"),
+        ("sorted_groups_zlib.osm.pbf", "sorted_groups.osm.pbf"),
+        ("sorted_boundary_zlib.osm.pbf", "sorted_boundary.osm.pbf"),
+    ] {
+        let raw = &all.iter().find(|(n, _)| *n == raw).unwrap().1;
+        all.push((name, zlib_file(raw)));
+    }
+
+    // A string table with a key twice, as no writer makes it but the format allows: each way uses another copy.
+    let mut table = Pb::default();
+    for v in ["", "name", "first", "name", "second"] {
+        table.bytes(1, v.as_bytes());
+    }
+    let ways: Vec<Pb> = [(10, 1, 2), (11, 3, 4)]
+        .iter()
+        .map(|&(id, key, value)| {
+            let mut way = Pb::default();
+            way.int(1, id)
+                .packed(2, &[key])
+                .packed(3, &[value])
+                .packed(8, &deltas(&IDS));
+            way
+        })
+        .collect();
+    let mut data = Pb::default();
+    data.msg(1, &table).msg(2, &group(3, &ways));
+    all.push((
+        "duplicate_strings.osm.pbf",
+        file(&[header(&["OsmSchema-V0.6"]), ("OSMData", raw_blob(&data.0))]),
+    ));
+
+    // A zlib block whose string table goes on after its group, as the format allows, since protobuf merges a
+    // message's occurrences: the way's tag is in the later part, which a peek at the block's start does not see.
+    let (mut first, mut rest) = (Pb::default(), Pb::default());
+    first.bytes(1, b"").bytes(1, b"building");
+    rest.bytes(1, b"highway").bytes(1, b"primary");
+    let mut tagged = Pb::default();
+    tagged
+        .int(1, 10)
+        .packed(2, &[2])
+        .packed(3, &[3])
+        .packed(8, &deltas(&IDS));
+    let mut data = Pb::default();
+    data.msg(1, &first)
+        .msg(2, &group(3, &[tagged]))
+        .msg(1, &rest);
+    all.push((
+        "split_string_table_zlib.osm.pbf",
+        file(&[header(&["OsmSchema-V0.6"]), ("OSMData", zlib_blob(&data.0))]),
     ));
 
     all
@@ -556,16 +796,16 @@ fn build_all() -> Vec<(&'static str, Vec<u8>)> {
 #[test]
 fn generated_fixtures_are_current() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/generated");
-    let regenerate = std::env::var_os("OSMFLOW_REGENERATE").is_some();
+    let regenerate = env::var_os("OSMFLOW_REGENERATE").is_some();
     if regenerate {
-        std::fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).unwrap();
     }
     for (name, bytes) in build_all() {
         let path = dir.join(name);
         if regenerate {
-            std::fs::write(&path, &bytes).unwrap();
+            fs::write(&path, &bytes).unwrap();
         } else {
-            let current = std::fs::read(&path).unwrap_or_default();
+            let current = fs::read(&path).unwrap_or_default();
             assert!(
                 current == bytes,
                 "{name} is out of date: run with OSMFLOW_REGENERATE=1"

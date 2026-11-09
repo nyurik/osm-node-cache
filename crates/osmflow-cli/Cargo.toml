@@ -1,0 +1,32 @@
+[package]
+name = "osmflow-cli"
+version = "0.11.0"
+description = "The osmflow command: dump OpenStreetMap PBF files as text or GeoJSON, and summarize them"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+keywords = ["osm", "openstreetmap", "pbf", "geojson", "cli"]
+categories = ["command-line-utilities", "science::geo"]
+rust-version.workspace = true
+
+# `cargo binstall osmflow-cli` downloads the archive the release workflow attaches to the `osmflow-cli-v<version>` release
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ name }-v{ version }/osmflow-{ target }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+
+[[bin]]
+name = "osmflow"
+path = "src/main.rs"
+# The library has the same name; the command needs no API docs
+doc = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+geo-types.workspace = true
+# Every feature: the reader, node stores, geometries, osmChange files and downloading replication diffs
+osmflow = { workspace = true, features = ["geometry", "http"] }
+
+[lints]
+workspace = true

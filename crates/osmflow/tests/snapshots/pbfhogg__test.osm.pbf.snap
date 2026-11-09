@@ -1,0 +1,15 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("pbfhogg"), source: None
+# bbox: Some((9000000000, 54000000000, 13000000000, 58000000000))
+# replication: None None None
+# 3 nodes, 1 ways, 1 relations, hash ac26f3541495684d
+n1 v1 dV c100 t1700000000000 i1 utest Tname=Test%20%Node x12560000000 y55600000000
+n2 v1 dV c100 t1700000000000 i1 utest T x12560100000 y55600100000
+n3 v1 dV c100 t1700000000000 i1 utest T x12560200000 y55600200000
+w1 v1 dV c100 t1700000000000 i1 utest Tbuilding=yes N1,2,3
+r1 v1 dV c100 t1700000000000 i1 utest Ttype=multipolygon Mw1@outer

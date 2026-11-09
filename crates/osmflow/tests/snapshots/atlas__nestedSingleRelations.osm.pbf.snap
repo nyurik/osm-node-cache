@@ -1,0 +1,21 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("0.44.1"), source: None
+# bbox: None
+# replication: None None None
+# 6 nodes, 1 ways, 4 relations, hash 379b1c2c10ae282b
+n126692 v1 dV c1 t1513719782000 i1 umyself Tduplicate=1 x62204675300 y4641066900
+n126693 v1 dV c1 t1513719782000 i1 umyself Tduplicate=2 x62204675300 y4641066900
+n126707 v1 dV c1 t1513719782000 i1 umyself T x62269909800 y5254871200
+n126708 v1 dV c1 t1513719782000 i1 umyself T x62552592500 y5269306700
+n126709 v1 dV c1 t1513719782000 i1 umyself T x62560434800 y5117007700
+n126710 v1 dV c1 t1513719782000 i1 umyself T x62277752200 y5102568800
+w126711 v1 dV c1 t1513719782000 i1 umyself Tbuilding=yes N126707,126708,126709,126710,126707
+r126699 v1 dV c1 t1513719782000 i1 umyself Ttype=parent1 Mn126692@child
+r126702 v1 dV c1 t1513719782000 i1 umyself Ttype=parent1-1 Mr126699@childrelation
+r126718 v1 dV c1 t1513719782000 i1 umyself Ttype=parent2 Mn126693@child
+r126725 v1 dV c1 t1513719782000 i1 umyself Ttype=parent2-2 Mr126718@childrelation

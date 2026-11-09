@@ -1,0 +1,14 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("osmium/1.6.0"), source: None
+# bbox: None
+# replication: None None None
+# 0 nodes, 4 ways, 0 relations, hash c903412ca2ae77c8
+w1 v1 dV c1 t1446404400000 i1 uDummy%20%User Thighway=primary,maxspeed=300,name=Hauptstra%df%e N1,2
+w2 v1 dV c1 t1446404400000 i1 uDummy%20%User Thighway=secondary,maxspeed=120,name=Nebenstra%df%e N3,4
+w3 v1 dV c1 t1446404400000 i1 uDummy%20%User Thighway=unclassified,maxspeed=50,name=Foo%20%Stra%df%e N5,6
+w4 v1 dV c1 t1446404400000 i1 uDummy%20%User Thighway=secondary,maxspeed=120,name=Bar%20%Stra%df%e N7,8

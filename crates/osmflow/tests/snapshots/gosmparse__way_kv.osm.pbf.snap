@@ -1,0 +1,17 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: 
+# writing program: Some("0.44.1"), source: None
+# bbox: None
+# replication: None None None
+# 4 nodes, 3 ways, 0 relations, hash e1b618e87df5eaee
+n1 v1 dV c1 t1446404400000 i1 uDummy%20%User T x1000000 y1000000
+n2 v1 dV c1 t1446404400000 i1 uDummy%20%User T x2000000 y2000000
+n3 v1 dV c1 t1446404400000 i1 uDummy%20%User T x2000000 y2000000
+n4 v1 dV c1 t1446404400000 i1 uDummy%20%User T x2000000 y2000000
+w1 v1 dV c1 t1446404400000 i1 uDummy%20%User Tname=line,highway=primary N1,2
+w2 v1 dV c1 t1446404400000 i1 uDummy%20%User Thighway=primary,foo=bar N2,3
+w3 v1 dV c1 t1446404400000 i1 uDummy%20%User Tunlogical=true,width=3,name=line N2,3,4

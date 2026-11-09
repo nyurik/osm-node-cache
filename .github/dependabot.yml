@@ -18,6 +18,10 @@ updates:
     directory: '/'
     schedule: { interval: daily, time: '02:00' }
     open-pull-requests-limit: 10
+    ignore:
+      # osmflow's checked-in generated code must match buffa's runtime: `just update-generated` moves them together
+      - dependency-name: buffa
+      - dependency-name: buffa-build
     groups:
       all-cargo-version-updates:
         applies-to: version-updates

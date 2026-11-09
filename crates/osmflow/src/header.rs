@@ -2,7 +2,7 @@
 
 use buffa::MessageView as _;
 
-use crate::error::{Error, FormatError, Position, Result};
+use crate::error::{BlobPosition, PbfError, PbfFormatError, Result};
 use crate::generated::osmpbf::OSMPBF::HeaderBlockView;
 
 /// The required features osmflow can read. Any other required feature makes [`Header::parse`] fail.
@@ -16,19 +16,29 @@ const SUPPORTED: [&str; 4] = [
 /// A bounding box, in nanodegrees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BBox {
+    /// The western edge's longitude.
     pub left: i64,
+    /// The eastern edge's longitude.
     pub right: i64,
+    /// The northern edge's latitude.
     pub top: i64,
+    /// The southern edge's latitude.
     pub bottom: i64,
 }
 
 /// The header of an OSM PBF file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Header {
+    /// The area the file covers, if its writer recorded one; objects may still lie outside it.
     pub bbox: Option<BBox>,
+    /// Features a reader must understand to read the file correctly, such as `DenseNodes` or
+    /// `HistoricalInformation`. Opening a file with one osmflow does not support fails.
     pub required_features: Vec<String>,
+    /// Features that tell what the file holds but are safe to ignore, such as `Sort.Type_then_ID`.
     pub optional_features: Vec<String>,
+    /// The program that wrote the file, such as `osmium/1.16.0`.
     pub writing_program: Option<String>,
+    /// Where the data came from, in the writer's own words.
     pub source: Option<String>,
     /// The replication timestamp, in seconds since 1970, of the diffs that continue this file.
     pub replication_timestamp: Option<i64>,
@@ -40,9 +50,9 @@ pub struct Header {
 
 impl Header {
     /// Parses a decompressed `HeaderBlock`, and checks that its required features are all supported.
-    pub(crate) fn parse(data: &[u8], position: Position) -> Result<Self> {
+    pub(crate) fn parse(data: &[u8], position: BlobPosition) -> Result<Self> {
         let view = HeaderBlockView::decode_view(data)
-            .map_err(|e| Error::format(position, FormatError::protobuf("file header")(e)))?;
+            .map_err(|e| PbfError::format(position, PbfFormatError::protobuf("file header")(e)))?;
         let header = Self {
             bbox: view.bbox.as_option().map(|b| BBox {
                 left: b.left,
@@ -71,7 +81,7 @@ impl Header {
             .iter()
             .find(|f| !SUPPORTED.contains(&f.as_str()))
         {
-            return Err(Error::UnsupportedFeature(feature.clone()));
+            return Err(PbfError::UnsupportedFeature(feature.clone()));
         }
         Ok(header)
     }

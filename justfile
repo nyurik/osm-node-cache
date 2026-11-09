@@ -1,6 +1,6 @@
 #!/usr/bin/env just --justfile
 
-main_crate := 'osmnodecache'
+main_crate := 'osmflow'
 # How to call the current just executable. Note that just_executable() may have `\` in Windows paths, so we need to quote it.
 just := quote(just_executable())
 # cargo-binstall needs a workaround due to caching when used in CI
@@ -18,10 +18,13 @@ export RUST_BACKTRACE := env('RUST_BACKTRACE', if ci_mode == '1' {'1'} else {'0'
 @_default:
     {{just}} --list
 
-# Run benchmarks
+# Time lookups and commits of the node stores
 bench:
-    cargo bench -p osmnodecache --bench bench --all-features
-    open target/criterion/bench/report/index.html
+    cargo bench -p osmflow --bench nodes
+
+# Time PBF readers on OSMFLOW_BENCH_PBF (benches/README.md), each package built on its own so their features never merge
+bench-pbf *packages='osmflow osmpbf osmpbfreader':
+    for p in {{packages}}; do cargo bench -p "osm-bench-$p" || exit 1; done
 
 # Build the project
 build:
@@ -54,9 +57,14 @@ clean:
     cargo clean
     rm -f Cargo.lock
 
-# Run cargo clippy to lint the code
+# Run cargo clippy to lint the code, also with each of osmflow's features alone
 clippy *args:
     cargo clippy --workspace --all-features --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features nodes --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features pbf --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features osc --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features geometry --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features http --all-targets {{args}}
 
 # Generate and open the HTML coverage report
 coverage:  (_coverage '--open')
@@ -125,11 +133,26 @@ _check-msrv-default:  (cargo-install 'cargo-minimal-versions') (cargo-install 'c
     toolchain="$(rustc --version | cut -d' ' -f2)"
     export RUSTUP_TOOLCHAIN="$toolchain"
     export CARGO="$(rustup which --toolchain "$toolchain" cargo)"
-    cargo minimal-versions check --direct --package {{main_crate}}
+    cargo minimal-versions check --direct --all-features --package {{main_crate}}
 
 # Run cargo-release
 release *args='':  (cargo-install 'release-plz')
     release-plz {{args}}
+
+# Run the osmflow command, built in release mode, with the given arguments: `just run stats dc.osm.pbf`
+[positional-arguments]
+run *args:
+    @cargo run --release --quiet -p osmflow-cli -- "$@"
+
+# Dump a PBF file as text or GeoJSON with the osmflow command: `just dump dc.osm.pbf dc.geojson`
+[positional-arguments]
+dump *args:
+    @cargo run --release --quiet -p osmflow-cli -- dump "$@"
+
+# Summarize a PBF file with the osmflow command: `just stats dc.osm.pbf`
+[positional-arguments]
+stats *args:
+    @cargo run --release --quiet -p osmflow-cli -- stats "$@"
 
 # Check semver compatibility with prior published version. Install it with `cargo install cargo-semver-checks`
 semver *args:  (cargo-install 'cargo-semver-checks')

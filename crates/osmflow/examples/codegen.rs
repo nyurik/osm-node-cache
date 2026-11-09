@@ -4,9 +4,10 @@
 //! differs from the checked-in code. This is a program rather than a build script, so building osmflow, even with
 //! `--all-features`, never runs `protoc`.
 
+use std::error;
 use std::path::Path;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn error::Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let proto = root.join("proto");
     let config = |files: &[&str], out_dir: &str| {

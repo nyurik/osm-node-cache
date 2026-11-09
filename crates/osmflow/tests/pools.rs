@@ -3,7 +3,9 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
+use std::thread;
 use std::time::Duration;
 
 use osmflow::{PbfReader, Select};
@@ -20,7 +22,7 @@ fn on_one_thread_pool(read: impl FnOnce(&PbfReader) -> usize + Send + 'static) -
     );
     let file = PbfReader::open(path).unwrap().with_pool(Arc::clone(&pool));
     let (tx, rx) = channel();
-    std::thread::spawn(move || tx.send(pool.install(|| read(&file))).unwrap());
+    thread::spawn(move || tx.send(pool.install(|| read(&file))).unwrap());
     rx.recv_timeout(Duration::from_secs(60))
         .expect("a read on its own pool's only thread did not finish")
 }
@@ -39,9 +41,9 @@ fn ordered_read_on_its_own_pool() {
 #[test]
 fn unordered_read_on_its_own_pool() {
     let nodes = on_one_thread_pool(|file| {
-        let nodes = std::sync::atomic::AtomicUsize::new(0);
+        let nodes = AtomicUsize::new(0);
         file.par_unordered(Select::all(), |block| {
-            nodes.fetch_add(block.nodes().len(), std::sync::atomic::Ordering::Relaxed);
+            nodes.fetch_add(block.nodes().len(), Ordering::Relaxed);
             Ok(())
         })
         .unwrap();

@@ -1,0 +1,6 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+osmflow error: the file starts with a "NSMHeader" blob, not OSMHeader
+osmpbf reads 4 objects

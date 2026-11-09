@@ -1,0 +1,14 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6, DenseNodes
+# optional: Sort.Type_then_ID
+# writing program: Some("osmconvert 0.8.4"), source: Some("http://www.openstreetmap.org/api/0.6")
+# bbox: None
+# replication: None None None
+# 2 nodes, 1 ways, 1 relations, hash f15307ed23c2269c
+n1 v1 dV c1 t1446404400000 i1 uDummy%20%User T x1000000 y1000000
+n2 v1 dV c1 t1446404400000 i1 uDummy%20%User T x2000000 y2000000
+w1 v1 dV c1 t1446404400000 i1 uDummy%20%User Tname=line N1,2
+r1 v1 dV c1 t1446404400000 i0 u T Mn1@,w1@

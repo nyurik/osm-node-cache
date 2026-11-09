@@ -1,23 +1,24 @@
 //! Reading a whole file: its header, then its blocks, one after another or on a pool of threads.
 
-use std::fs::File;
-use std::io::BufReader;
+use std::collections::VecDeque;
+use std::marker::PhantomData;
+use std::num::NonZero;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use std::{mem, panic};
 
 use rayon::{ThreadPool, Yield};
 
-use crate::blob::{BlobKind, BlobReader, RawBlob};
-use crate::block::{Block, Select};
-use crate::error::{Error, Result};
+use crate::blob::{BlobKind, BlobReader, DataBlobs, Loader, RawBlob, ReadMode, Want, open_once};
+use crate::block::{Block, Fields, Select, TagMode};
+use crate::error::{PbfError, Result};
+use crate::filter::{BlockStrings, Filters};
 use crate::header::Header;
 
-/// Bytes read from the file at once.
-const READ_BUFFER: usize = 8 << 20;
 /// The limit of bytes in flight between the reader and the consumer (compressed blobs, decoded or not): this much per
 /// pool thread, and at least the minimum.
 const BYTES_IN_FLIGHT_PER_THREAD: usize = 16 << 20;
@@ -36,6 +37,10 @@ pub struct PbfReader {
     header: Header,
     /// Where the parallel readers decode blocks; `None` for the shared default pool.
     pool: Option<Arc<ThreadPool>>,
+    filters: Filters,
+    mode: ReadMode,
+    /// Shared by the reader's clones and every read of them.
+    split_tables: Arc<AtomicU64>,
 }
 
 impl PbfReader {
@@ -43,23 +48,102 @@ impl PbfReader {
     /// format does not allow but some tools write, gets an empty [`Header`]; an empty file is an error.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let header = match blobs(&path)?.next().transpose()? {
-            Some(blob) if blob.kind == BlobKind::Header => {
-                blob.with_content(|data| Header::parse(data, blob.position))?
-            }
-            Some(blob) if blob.kind == BlobKind::Data => Header::default(),
-            Some(RawBlob {
-                kind: BlobKind::Other(kind),
-                ..
-            }) => return Err(Error::MissingHeader(kind)),
-            Some(_) => unreachable!("header and data blobs are matched above"),
-            None => return Err(Error::EmptyFile),
+        let Some(blob) = BlobReader::open(&path)?
+            .next_with(|_, _| Want::WHOLE)
+            .transpose()?
+        else {
+            return Err(PbfError::EmptyFile);
+        };
+        let header = match &blob.kind {
+            BlobKind::Header => blob.with_content(|data| Header::parse(data, blob.position))?,
+            BlobKind::Data => Header::default(),
+            BlobKind::Other(kind) => return Err(PbfError::MissingHeader(kind.clone())),
         };
         Ok(Self {
             path,
             header,
             pool: None,
+            filters: Filters::default(),
+            mode: ReadMode::default(),
+            split_tables: Arc::default(),
         })
+    }
+
+    /// How many blocks the reads of this reader, and of its clones, found with a string table that goes on after the
+    /// block's first group. The format allows this, but no writer osmflow knows of does it.
+    ///
+    /// Only reads with block filters ([`nodes_where`](Self::nodes_where) and the like) look, as only they can be
+    /// misled: a filter judges a block by the strings before its first group. Until a read finds the first such
+    /// block, a filter may have skipped a block whose later strings it would have kept, losing its objects. From then
+    /// on, reads look at the whole table of every block a filter would skip, which inflates it: they are correct, and
+    /// slower. So check this after a filtered pass over a new kind of file: if it is not 0, read the file again with
+    /// this reader or a clone of it, and please report the file and the program that wrote it at
+    /// <https://github.com/nyurik/osmflow/issues>.
+    #[must_use]
+    pub fn split_string_tables(&self) -> u64 {
+        self.split_tables.load(Ordering::Relaxed)
+    }
+
+    /// How a read with filters reads the blobs it may skip; see [`ReadMode`]. The default suits most storage.
+    #[must_use]
+    pub fn read_mode(mut self, mode: ReadMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Skips the nodes of every block whose strings `keep` rejects: as no object of such a block uses those strings,
+    /// none of its nodes can be wanted. Its nodes are not decoded, and if the block holds nothing else, it is not even
+    /// inflated past its string table, when the file proves that: the block has a single group, or the file is
+    /// sorted by type and the next block also starts with nodes. Blocks with nodes that `keep` accepts are read
+    /// whole, so their nodes still need checking one by one.
+    ///
+    /// [`BlockStrings`] says what such a test can know: only that a block might hold a wanted object.
+    #[must_use]
+    pub fn nodes_where(
+        mut self,
+        keep: impl Fn(&BlockStrings<'_>) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.filters.nodes = Some(Arc::new(keep));
+        self
+    }
+
+    /// Skips the ways of every block whose strings `keep` rejects; see [`nodes_where`](Self::nodes_where).
+    ///
+    /// ```
+    /// use osmflow::{PbfReader, Select};
+    ///
+    /// fn roads(path: &std::path::Path) -> Result<(), osmflow::PbfError> {
+    ///     let file = PbfReader::open(path)?
+    ///         .ways_where(|strings| strings.has("highway"))
+    ///         .relations_where(|_| false);
+    ///     file.par_unordered(Select::all(), |block| {
+    ///         let Some(highway) = block.tag_key("highway") else {
+    ///             return Ok(()); // a block of nodes, or of ways without roads
+    ///         };
+    ///         for way in block.ways() {
+    ///             if let Some(kind) = way.tag(highway) { /* a road */ }
+    ///         }
+    ///         Ok(())
+    ///     })
+    /// }
+    /// ```
+    #[must_use]
+    pub fn ways_where(
+        mut self,
+        keep: impl Fn(&BlockStrings<'_>) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.filters.ways = Some(Arc::new(keep));
+        self
+    }
+
+    /// Skips the relations of every block whose strings `keep` rejects; see [`nodes_where`](Self::nodes_where).
+    #[must_use]
+    pub fn relations_where(
+        mut self,
+        keep: impl Fn(&BlockStrings<'_>) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.filters.relations = Some(Arc::new(keep));
+        self
     }
 
     /// Decodes blocks on `pool` in the parallel readers, instead of the default: one pool shared by every reader, with
@@ -70,33 +154,69 @@ impl PbfReader {
         self
     }
 
+    /// The same file, without the filters, which some reads must not have.
+    #[cfg(feature = "nodes")]
+    pub(crate) fn without_filters(&self) -> Self {
+        Self {
+            filters: Filters::default(),
+            ..self.clone()
+        }
+    }
+
     /// The file's header.
     #[must_use]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
-    /// The file's blocks in file order, each decoded on the calling thread.
-    pub fn blocks(&self, select: Select) -> Result<impl Iterator<Item = Result<Block>> + use<>> {
-        Ok(data_blobs(&self.path)?.map(move |blob| blob?.decode(select)))
+    /// The file's blocks in file order, each decoded on the calling thread. Blocks the filters skip whole are left
+    /// out.
+    pub fn blocks<T: TagMode>(
+        &self,
+        select: Select<T>,
+    ) -> Result<impl Iterator<Item = Result<Block<T>>> + use<T>> {
+        let loader = self.loader(select.fields())?;
+        Ok(
+            DataBlobs::new(&self.path, Arc::clone(&loader))?.filter_map(move |blob| {
+                let block = blob.and_then(|blob| loader.load(&blob));
+                block.map(|b| b.map(Block::with_mode)).transpose()
+            }),
+        )
     }
 
-    /// Calls `f` for every block on the pool, unordered within each run of one object type, with a barrier wherever
-    /// the type changes in file order: the consecutive blocks holding the same types form a run, handed to `f` in
-    /// parallel and in no particular order, and a run starts only once `f` has returned for every block before it.
-    /// In a file sorted by type, as published files are, every node is handled before any way, and every way before
-    /// any relation, as resolving way geometry needs, at the speed of a read with no barriers: blocks are still read
-    /// and decoded ahead while a run's last blocks finish, so a barrier costs only that short tail. A file whose
-    /// types come back (nodes again after ways) gets a barrier at every change, so one whose types alternate block by
-    /// block is read nearly one block at a time. A block mixing types is a run of its own, and a block holding none
-    /// of the selected types joins the run it is in. Stops at the first error, from reading or from `f`.
-    pub fn par_unordered<F>(&self, select: Select, f: F) -> Result<()>
+    /// How a read with `select` loads its blocks.
+    fn loader(&self, select: Fields) -> Result<Arc<Loader>> {
+        Ok(Arc::new(Loader {
+            file: open_once(&self.path)?,
+            select,
+            filters: self.filters.clone(),
+            sorted: self.header.is_sorted(),
+            mode: self.mode,
+            kept: AtomicI8::new(0),
+            split_tables: Arc::clone(&self.split_tables),
+        }))
+    }
+
+    /// Calls `f` for every block on the pool. Consecutive blocks holding the same object types form a run: a run's
+    /// blocks are handed to `f` in parallel and in no particular order, and a run starts only once `f` has returned for
+    /// every block before it.
+    ///
+    /// In a file sorted by type, as published files are, every node is so handled before any way, and every way before
+    /// any relation, as resolving way geometry needs. Blocks are still read and decoded ahead while a run's last blocks
+    /// finish, so a barrier costs only that short tail. A file whose types come back (nodes again after ways) gets a
+    /// barrier at every change, and one whose types alternate block by block is read nearly one block at a time.
+    ///
+    /// A block mixing types is a run of its own, a block holding none of the selected types joins the run it is in, and
+    /// a block the filters skip whole is not handed to `f`. Stops at the first error, from reading or from `f`.
+    pub fn par_unordered<T, F>(&self, select: Select<T>, f: F) -> Result<()>
     where
-        F: Fn(Block) -> Result<()> + Sync,
+        T: TagMode,
+        F: Fn(Block<T>) -> Result<()> + Sync,
     {
         let pool = self.pool()?;
+        let loader = self.loader(select.fields())?;
         let run = Run {
-            f,
+            f: |block: Block| f(block.with_mode()),
             gate: Mutex::new(Gate::default()),
             budget: Budget::for_pool(&pool),
             failed: AtomicBool::new(false),
@@ -105,7 +225,8 @@ impl PbfReader {
         pool.in_place_scope(|scope| {
             let run = &run;
             let mut index = 0;
-            let read = admit(&self.path, &run.budget, &pool, |blob, permit| {
+            let loader = &loader;
+            let read = admit(&self.path, loader, &run.budget, &pool, |blob, permit| {
                 let i = index;
                 index += 1;
                 lock(&run.gate).admit();
@@ -113,10 +234,15 @@ impl PbfReader {
                     if run.failed.load(Ordering::Relaxed) {
                         return;
                     }
-                    match blob.decode(select) {
+                    match loader.load(&blob) {
                         Err(e) => run.fail(e),
-                        Ok(block) => {
+                        Ok(Some(block)) => {
                             let ready = lock(&run.gate).decoded(i, block, permit);
+                            run.spawn_all(scope, ready);
+                        }
+                        Ok(None) => {
+                            drop(permit);
+                            let ready = lock(&run.gate).skipped(i);
                             run.spawn_all(scope, ready);
                         }
                     }
@@ -134,9 +260,14 @@ impl PbfReader {
 
     /// The file's blocks in file order, decoded ahead on the pool and handed out on the calling thread. The consumer
     /// works on one thread, so this is slower than [`par_unordered`](Self::par_unordered) when it does much per
-    /// block.
-    pub fn par_ordered(&self, select: Select) -> Result<ParOrdered> {
-        ParOrdered::start(self.path.clone(), select, self.pool()?)
+    /// block. Way refs are decoded as they are iterated, so reading them here decodes them on the calling thread.
+    // Ordered reads are rare. If they come to need refs, an option could decode refs on the pool for them.
+    pub fn par_ordered<T: TagMode>(&self, select: Select<T>) -> Result<ParOrdered<T>> {
+        ParOrdered::start(
+            self.path.clone(),
+            self.loader(select.fields())?,
+            self.pool()?,
+        )
     }
 
     fn pool(&self) -> Result<Arc<ThreadPool>> {
@@ -154,12 +285,12 @@ fn default_pool() -> Result<Arc<ThreadPool>> {
     if let Some(pool) = &*shared {
         return Ok(Arc::clone(pool));
     }
-    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let cores = thread::available_parallelism().map_or(1, NonZero::get);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(cores.saturating_sub(2).max(1))
         .thread_name(|i| format!("osmflow-{i}"))
         .build()
-        .map_err(|e| Error::ThreadPool(e.to_string()))?;
+        .map_err(|e| PbfError::ThreadPool(e.to_string()))?;
     Ok(Arc::clone(shared.insert(Arc::new(pool))))
 }
 
@@ -173,11 +304,11 @@ struct Run<F> {
     gate: Mutex<Gate>,
     budget: Arc<Budget>,
     failed: AtomicBool,
-    first_error: Mutex<Option<Error>>,
+    first_error: Mutex<Option<PbfError>>,
 }
 
 impl<F: Fn(Block) -> Result<()> + Sync> Run<F> {
-    fn fail(&self, e: Error) {
+    fn fail(&self, e: PbfError) {
         self.failed.store(true, Ordering::Relaxed);
         self.budget.close();
         lock(&self.first_error).get_or_insert(e);
@@ -211,7 +342,7 @@ impl<F: Fn(Block) -> Result<()> + Sync> Run<F> {
 struct Gate {
     /// The number of the first block in `blocks`; every block before it is finished.
     first: usize,
-    blocks: std::collections::VecDeque<Entry>,
+    blocks: VecDeque<Entry>,
     checked: usize,
     finished: usize,
     /// The types of the run the checked blocks end with, and the number of its first block.
@@ -252,6 +383,15 @@ impl Gate {
         let entry = self.entry(i);
         entry.types = Some(types(&block));
         entry.waiting = Some((block, permit));
+        self.release()
+    }
+
+    /// Block `i` was skipped whole by the filters: it has no callback, and joins the run it is in. Returns the blocks
+    /// now ready.
+    fn skipped(&mut self, i: usize) -> Vec<Ready> {
+        let entry = self.entry(i);
+        entry.types = Some(0);
+        entry.finished = true;
         self.release()
     }
 
@@ -298,27 +438,16 @@ impl Gate {
     }
 }
 
-fn blobs(path: &Path) -> Result<BlobReader<BufReader<File>>> {
-    Ok(BlobReader::new(BufReader::with_capacity(
-        READ_BUFFER,
-        File::open(path)?,
-    )))
-}
-
-/// The file's data blobs, read but not decompressed.
-fn data_blobs(path: &Path) -> Result<impl Iterator<Item = Result<RawBlob>> + use<>> {
-    Ok(blobs(path)?.filter(|b| !matches!(b, Ok(blob) if blob.kind != BlobKind::Data)))
-}
-
 /// Reads the file's data blobs and hands each to `spawn` with its share of the budget, until the end of the file,
 /// a read error, or the budget is closed.
 fn admit(
     path: &Path,
+    loader: &Arc<Loader>,
     budget: &Arc<Budget>,
     pool: &ThreadPool,
     mut spawn: impl FnMut(RawBlob, Permit),
 ) -> Result<()> {
-    for blob in data_blobs(path)? {
+    for blob in DataBlobs::new(path, Arc::clone(loader))? {
         let blob = blob?;
         let Some(permit) = budget.acquire(blob.content_len() * DECODED_FACTOR, pool) else {
             break;
@@ -406,43 +535,45 @@ impl Drop for Permit {
     fn drop(&mut self) {
         let mut state = lock(&self.budget.state);
         state.0 -= self.cost;
-        state.1 |= std::thread::panicking();
+        state.1 |= thread::panicking();
         self.budget.changed.notify_all();
     }
 }
 
-/// A block's place in the output order, filled when it is decoded. The permit keeps its bytes counted until the
-/// consumer takes it.
-type Slot = Receiver<(Result<Block>, Option<Permit>)>;
+/// A block's place in the output order, filled when it is decoded (`None` if the filters skipped it whole). The
+/// permit keeps its bytes counted until the consumer takes it.
+type Slot = Receiver<(Result<Option<Block>>, Option<Permit>)>;
 
 /// Blocks in file order, decoded in parallel. See [`PbfReader::par_ordered`].
 ///
 /// A reader thread reads the blobs and, for each, reserves a slot at the back of a queue, then has the pool decode
 /// the blob into its slot. The iterator takes slots from the front, so blocks come out in file order however the
 /// pool finishes them. Bytes in flight are bounded, so the reader waits when the consumer falls behind.
-pub struct ParOrdered {
+pub struct ParOrdered<T: TagMode = crate::Tags> {
     slots: Receiver<Slot>,
     budget: Arc<Budget>,
     reader: Option<JoinHandle<()>>,
     /// The pool that decodes the blocks, whose work a consumer on one of its threads runs while it waits
     pool: Arc<ThreadPool>,
+    tags: PhantomData<T>,
 }
 
-impl ParOrdered {
-    fn start(path: PathBuf, select: Select, pool: Arc<ThreadPool>) -> Result<Self> {
+impl<T: TagMode> ParOrdered<T> {
+    fn start(path: PathBuf, loader: Arc<Loader>, pool: Arc<ThreadPool>) -> Result<Self> {
         let budget = Budget::for_pool(&pool);
         // The budget bounds the queue of slots; this bound only keeps the channel itself small.
         let (slots_tx, slots) = sync_channel::<Slot>(1024);
         let (reader_budget, reader_pool) = (Arc::clone(&budget), Arc::clone(&pool));
-        let reader = std::thread::Builder::new()
+        let reader = thread::Builder::new()
             .name("osmflow-reader".to_owned())
             .spawn(move || {
                 let pool = reader_pool;
-                let read = admit(&path, &reader_budget, &pool, |blob, permit| {
+                let read = admit(&path, &loader, &reader_budget, &pool, |blob, permit| {
                     let (tx, slot) = sync_channel(1);
                     if slots_tx.send(slot).is_ok() {
+                        let loader = Arc::clone(&loader);
                         pool.spawn(move || {
-                            let _ = tx.send((blob.decode(select), Some(permit)));
+                            let _ = tx.send((loader.load(&blob), Some(permit)));
                         });
                     }
                 });
@@ -457,12 +588,13 @@ impl ParOrdered {
             budget,
             reader: Some(reader),
             pool,
+            tags: PhantomData,
         })
     }
 
     /// Waits for a block. On a thread of the decoding pool, it runs the pool's work while it waits, as the block may
     /// be waiting for that very thread.
-    fn wait_for(&self, slot: &Slot) -> Option<(Result<Block>, Option<Permit>)> {
+    fn wait_for(&self, slot: &Slot) -> Option<(Result<Option<Block>>, Option<Permit>)> {
         if self.pool.current_thread_index().is_none() {
             return slot.recv().ok();
         }
@@ -484,27 +616,32 @@ impl ParOrdered {
     }
 }
 
-impl Iterator for ParOrdered {
-    type Item = Result<Block>;
+impl<T: TagMode> Iterator for ParOrdered<T> {
+    type Item = Result<Block<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Ok(slot) = self.slots.recv() else {
-            // The reader is done: re-raise its panic, if it had one, rather than end as if the file had.
-            if let Some(Err(panic)) = self.reader.take().map(JoinHandle::join) {
-                std::panic::resume_unwind(panic);
+        loop {
+            let Ok(slot) = self.slots.recv() else {
+                // The reader is done: re-raise its panic, if it had one, rather than end as if the file had.
+                if let Some(Err(panic)) = self.reader.take().map(JoinHandle::join) {
+                    panic::resume_unwind(panic);
+                }
+                return None;
+            };
+            let (block, _permit) = self.wait_for(&slot)?;
+            // A block the filters skipped whole has no place in the output.
+            if let Some(block) = block.transpose() {
+                return Some(block.map(Block::with_mode));
             }
-            return None;
-        };
-        let (block, _permit) = self.wait_for(&slot)?;
-        Some(block)
+        }
     }
 }
 
-impl Drop for ParOrdered {
+impl<T: TagMode> Drop for ParOrdered<T> {
     fn drop(&mut self) {
         // Stop the reader: wake it if it waits for the budget, and fail its next send by dropping the queue.
         self.budget.close();
-        drop(std::mem::replace(&mut self.slots, sync_channel(0).1));
+        drop(mem::replace(&mut self.slots, sync_channel(0).1));
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }

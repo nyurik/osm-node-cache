@@ -2,9 +2,11 @@
 
 - **Source:** <https://github.com/astro/rust-osm-pbf-iter>, `tests/data/`, commit
   `75afbab854ff5749271a939630fd3f8d81a88aa9` (2026-10-31).
-- **License:** the code is MIT (`LICENSE`, copied from the repository). The data comes from
+- **License:** the code is MIT (`LICENSE`, copied from the repository). The repository says the data comes from
   [osm-testdata](https://github.com/osmcode/osm-testdata), released into the public domain, converted to PBF with
-  `osmium cat`; see `UPSTREAM-README.md`, the repository's own note.
+  `osmium cat`; see `UPSTREAM-README.md`, the repository's own note. But `64bit_ids` holds OpenStreetMap data: real
+  objects in Antigua, with the names of the users who edited them. It is © OpenStreetMap contributors, available
+  under the [Open Database License](https://opendatacommons.org/licenses/odbl/).
 
 | File | What it tests |
 |---|---|
