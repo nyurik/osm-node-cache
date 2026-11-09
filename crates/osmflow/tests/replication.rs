@@ -342,7 +342,7 @@ impl Fetch for Mock {
     }
 }
 
-/// Every file under `dir`, relative to it, sorted.
+/// Every file under `dir`, relative to it with `/` between its parts on every OS, sorted.
 fn files_in(dir: &Path) -> Vec<String> {
     fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
         for entry in fs::read_dir(dir).unwrap() {
@@ -350,12 +350,13 @@ fn files_in(dir: &Path) -> Vec<String> {
             if path.is_dir() {
                 walk(&path, root, out);
             } else {
-                out.push(
-                    path.strip_prefix(root)
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+                let parts: Vec<_> = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .iter()
+                    .map(|part| part.to_string_lossy())
+                    .collect();
+                out.push(parts.join("/"));
             }
         }
     }
