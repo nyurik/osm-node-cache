@@ -1,7 +1,11 @@
 [workspace]
 dependencies_update = true
+# Libraries get a tag and a CHANGELOG.md in their directory, but no GitHub release: only the CLI has one, with the
+# binaries. Each library's `repository` points at its directory, so Dependabot PRs show that library's changelog.
+git_release_enable = false
 
-# The library's releases hold only its changelog; the CLI's release, with the binaries, stays the latest on GitHub
 [[package]]
-name = "osmflow"
-git_release_latest = false
+name = "osmflow-cli"
+git_release_enable = true
+# The CLI's changelog and release notes also list the changes of the libraries it uses
+changelog_include = ["osmflow"]

@@ -3,7 +3,8 @@ name = "osmflow"
 version = "0.11.0"
 description = "Fast, parallel reading of OpenStreetMap PBF files, and node location stores, from a city extract to the planet"
 authors.workspace = true
-repository.workspace = true
+# The crate's own directory, ending in `/`: Dependabot then shows this crate's CHANGELOG.md in its PRs
+repository = "https://github.com/nyurik/osmflow/tree/main/crates/osmflow/"
 edition.workspace = true
 license.workspace = true
 keywords = ["osm", "openstreetmap", "pbf", "parser", "cache"]
