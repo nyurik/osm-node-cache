@@ -17,18 +17,24 @@ pub(crate) fn int<T: TryFrom<i64>>(s: &[u8]) -> Option<T> {
     if digits.is_empty() {
         return None;
     }
-    let mut v = 0i64;
-    if digits.len() <= 18 {
-        // 18 digits cannot overflow an i64.
+    // The magnitude is a u64, so that `i64::MIN`, one past `i64::MAX`, fits before its sign is applied.
+    let mut v = 0u64;
+    if digits.len() <= 19 {
+        // 19 digits cannot overflow a u64.
         for &b in digits {
-            v = v * 10 + digit(b)?;
+            v = v * 10 + digit(b)?.unsigned_abs();
         }
     } else {
         for &b in digits {
-            v = v.checked_mul(10)?.checked_add(digit(b)?)?;
+            v = v.checked_mul(10)?.checked_add(digit(b)?.unsigned_abs())?;
         }
     }
-    T::try_from(if negative { -v } else { v }).ok()
+    let v = if negative {
+        0i64.checked_sub_unsigned(v)?
+    } else {
+        i64::try_from(v).ok()?
+    };
+    T::try_from(v).ok()
 }
 
 /// A coordinate in degrees as 1e-7 degrees, the unit PBF files store, parsed as a fixed-point decimal and never as a
@@ -208,7 +214,12 @@ mod tests {
         assert_eq!(int::<i64>(b"0042"), Some(42));
         assert_eq!(int::<i64>(b"9223372036854775807"), Some(i64::MAX));
         assert_eq!(int::<i64>(b"-9223372036854775807"), Some(-i64::MAX));
+        assert_eq!(int::<i64>(b"-9223372036854775808"), Some(i64::MIN));
+        assert_eq!(int::<i64>(b"-9223372036854775809"), None);
         assert_eq!(int::<i64>(b"9223372036854775808"), None);
+        assert_eq!(int::<i64>(b"18446744073709551615"), None);
+        assert_eq!(int::<i64>(b"-18446744073709551616"), None);
+        assert_eq!(int::<i32>(b"-2147483648"), Some(i32::MIN));
         assert_eq!(int::<i64>(b"00000000000000000000001"), Some(1));
         assert_eq!(int::<i32>(b"2147483647"), Some(i32::MAX));
         assert_eq!(int::<i32>(b"2147483648"), None);
