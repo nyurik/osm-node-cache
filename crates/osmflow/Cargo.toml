@@ -33,7 +33,7 @@ geometry = ["dep:geo-types", "nodes", "pbf"]
 # The node location stores, in `osmflow::nodes`
 nodes = ["dep:crc32fast", "dep:memmap2", "dep:rayon"]
 # The PBF reader
-pbf = ["dep:buffa", "dep:flate2", "dep:rayon"]
+pbf = ["dep:buffa", "dep:flate2", "dep:rayon", "dep:rustix"]
 # Reading osmChange files and replication diffs
 osc = ["dep:flate2", "dep:memchr"]
 # Downloading replication diffs and state files over HTTP
@@ -49,6 +49,9 @@ memmap2 = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 ureq = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, optional = true }
 
 [dev-dependencies]
 # For the `codegen` example, which regenerates src/generated (`just update-generated`, needs protoc)

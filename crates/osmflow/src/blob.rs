@@ -196,20 +196,94 @@ pub(crate) struct BlobReader {
     chunk: usize,
     position: BlobPosition,
     done: bool,
+    /// For a file too large to stay cached: how far from the start it is dropped from the page cache.
+    dropped: Option<u64>,
 }
+
+/// A file larger than this share of the machine's memory is dropped from the page cache behind the reader.
+const CACHED_SHARE: u64 = 2;
+/// How far behind the reader its file is dropped: past the blobs the pool may still be reading.
+const DROP_LAG: u64 = if cfg!(test) { 64 << 10 } else { 1 << 30 };
+/// How much of the file is dropped at once.
+const DROP_STEP: u64 = if cfg!(test) { 16 << 10 } else { 64 << 20 };
+
+/// Opens the PBF file at `path` to read each part of it once. On Linux 6.3 and later, its pages are then the first the
+/// page cache gives up when memory runs short, so a large file read through does not push out what other code keeps
+/// in memory, such as a node store; while memory is free, they stay cached. Elsewhere it is a plain open.
+pub(crate) fn open_once(path: &Path) -> io::Result<File> {
+    let file = File::open(path)?;
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::{Advice, fadvise};
+
+        // only a hint: older kernels accept it and do nothing
+        let _ = fadvise(&file, 0, None, Advice::NoReuse);
+    }
+    Ok(file)
+}
+
+/// The machine's memory in bytes, where the OS tells it.
+#[cfg(target_os = "linux")]
+#[allow(
+    clippy::useless_conversion,
+    reason = "`totalram` is a C `unsigned long`, 32 bits on 32-bit systems"
+)]
+fn memory() -> Option<u64> {
+    use rustix::system::sysinfo;
+
+    let info = sysinfo();
+    u64::from(info.totalram).checked_mul(u64::from(info.mem_unit))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn memory() -> Option<u64> {
+    None
+}
+
+/// Drops `len` bytes of the file at `offset` from the page cache, where the OS allows it.
+#[cfg(target_os = "linux")]
+fn drop_cached(file: &File, offset: u64, len: u64) {
+    use std::num::NonZeroU64;
+
+    use rustix::fs::{Advice, fadvise};
+
+    // only advice: the pages are read from the disk again if they are needed
+    let _ = fadvise(file, offset, NonZeroU64::new(len), Advice::DontNeed);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn drop_cached(_file: &File, _offset: u64, _len: u64) {}
 
 impl BlobReader {
     pub(crate) fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)?;
+        let file = open_once(path)?;
+        let file_len = file.metadata()?.len();
         Ok(Self {
-            file_len: file.metadata()?.len(),
+            file_len,
             file,
             buf: Vec::new(),
             buf_start: 0,
             chunk: READ_BUFFER,
             position: BlobPosition { blob: 0, offset: 0 },
             done: false,
+            dropped: memory()
+                .is_some_and(|m| file_len > m / CACHED_SHARE)
+                .then_some(0),
         })
+    }
+
+    /// Drops the file from the page cache up to `DROP_LAG` behind the reader, once that is `DROP_STEP` past where it
+    /// was dropped to: a file larger than half the memory would otherwise push out of it what other code keeps there,
+    /// such as a node store, to keep pages that are not read again.
+    fn drop_read(&mut self) {
+        let Some(dropped) = self.dropped else {
+            return;
+        };
+        let until = self.position.offset.saturating_sub(DROP_LAG);
+        if until >= dropped + DROP_STEP {
+            drop_cached(&self.file, dropped, until - dropped);
+            self.dropped = Some(until);
+        }
     }
 
     fn error(&self, kind: PbfFormatError) -> PbfError {
@@ -292,6 +366,7 @@ impl BlobReader {
             blob: position.blob + 1,
             offset: end,
         };
+        self.drop_read();
         Ok(Some(RawBlob {
             position,
             kind,
@@ -695,6 +770,30 @@ impl Loader {
 mod tests {
     use super::*;
     use crate::{PbfReader, filter};
+
+    #[test]
+    fn a_large_file_is_dropped_behind_the_reader() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/osm-io/history-niue-230109.osm.pbf");
+        let all = |dropped| {
+            let mut reader = BlobReader::open(&path).unwrap();
+            reader.dropped = dropped;
+            let mut blobs = Vec::new();
+            while let Some(blob) = reader.next_with(|_, _| Want::WHOLE) {
+                blobs.push(blob.unwrap().span.data);
+            }
+            (blobs, reader.dropped, reader.file_len)
+        };
+        let (kept, none, _) = all(None);
+        let (dropped, until, len) = all(Some(0));
+        assert_eq!(kept, dropped, "the blobs read are the same");
+        assert_eq!(none, None);
+        let until = until.unwrap();
+        assert!(
+            until + DROP_LAG + DROP_STEP > len && until + DROP_LAG <= len,
+            "dropped to {until} of {len}"
+        );
+    }
 
     /// A loader of a generated fixture, rejecting every way (or every node), and its data blobs as read in `mode`.
     fn read(name: &str, mode: ReadMode, reject_nodes: bool) -> (Arc<Loader>, Vec<RawBlob>) {

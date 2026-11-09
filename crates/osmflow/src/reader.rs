@@ -1,7 +1,6 @@
 //! Reading a whole file: its header, then its blocks, one after another or on a pool of threads.
 
 use std::collections::VecDeque;
-use std::fs::File;
 use std::marker::PhantomData;
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
@@ -14,7 +13,7 @@ use std::{mem, panic};
 
 use rayon::{ThreadPool, Yield};
 
-use crate::blob::{BlobKind, BlobReader, DataBlobs, Loader, RawBlob, ReadMode, Want};
+use crate::blob::{BlobKind, BlobReader, DataBlobs, Loader, RawBlob, ReadMode, Want, open_once};
 use crate::block::{Block, Fields, Select, TagMode};
 use crate::error::{PbfError, Result};
 use crate::filter::{BlockStrings, Filters};
@@ -170,7 +169,7 @@ impl PbfReader {
     /// How a read with `select` loads its blocks.
     fn loader(&self, select: Fields) -> Result<Arc<Loader>> {
         Ok(Arc::new(Loader {
-            file: File::open(&self.path)?,
+            file: open_once(&self.path)?,
             select,
             filters: self.filters.clone(),
             sorted: self.header.is_sorted(),

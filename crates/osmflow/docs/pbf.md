@@ -92,6 +92,11 @@ A read skips what it does not want before decoding it, and where it can, before 
   larger of its stored size and its declared uncompressed size, until its block is handed out, or its callback
   returns. The reader waits when the limit is reached, so memory stays the same whatever the file's size. A blob larger
   than the whole limit is admitted alone.
+* **A file larger than half the memory does not crowd the page cache** (Linux). The reader opens every file with
+  `POSIX_FADV_NOREUSE`, so its pages are the first the kernel gives up, and drops such a file from the page cache 1 GiB
+  behind the read position. A node store kept in memory then stays there: on a host of 61 GiB, resolving the planet's
+  ways with its 55.6 GB paged store took 400 s when the 95.5 GB file went through the cache, and 68 s with it dropped.
+  A smaller file stays cached for the next read.
 * **A read started from a thread of its own pool** does not block that thread: while it waits for bytes or for a
   block, the thread runs the pool's other work, so even a pool of one thread finishes.
 * **A panic stops the read.** A panicking task closes the budget, so the reader stops, and a panic of `par_ordered`'s

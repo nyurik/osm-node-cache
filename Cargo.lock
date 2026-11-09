@@ -815,6 +815,7 @@ dependencies = [
  "osmpbfreader",
  "rand",
  "rayon",
+ "rustix 1.1.6",
  "test_each_file",
  "thiserror 2.0.21",
  "ureq",
