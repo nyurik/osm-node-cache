@@ -1,0 +1,13 @@
+---
+source: crates/osmflow/tests/fixtures.rs
+expression: snapshot
+---
+# required: OsmSchema-V0.6
+# optional: 
+# writing program: Some("osmflow tests/generated.rs"), source: None
+# bbox: None
+# replication: None None None
+# 0 nodes, 1 ways, 0 relations, hash 6cc2c20276738810
+w10 v-1 dV c0 t0 i0 u Thighway=primary N1,2,3
+# osmpbf is not compared: it keeps only the last occurrence of a message field, where protobuf merges them
+# osmpbfreader is not compared: it keeps only the last occurrence of a message field, where protobuf merges them

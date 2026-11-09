@@ -87,6 +87,37 @@ pub(crate) fn peek(start: &[u8], raw_size: usize) -> Peek {
     }
 }
 
+/// Whether a whole block has a string table after its first group, which protobuf merges into the first one: a
+/// field 1 past the first one, or a field it cannot step over, which might hide one.
+pub(crate) fn strings_follow(block: &[u8]) -> bool {
+    let mut p = 0;
+    let mut tables = 0;
+    while p < block.len() {
+        let Some(key) = varint(block, &mut p) else {
+            return true;
+        };
+        let next = match key & 7 {
+            0 => varint(block, &mut p).map(|_| p),
+            2 => varint(block, &mut p)
+                .and_then(|l| usize::try_from(l).ok())
+                .and_then(|l| p.checked_add(l))
+                .filter(|&e| e <= block.len()),
+            _ => None,
+        };
+        let Some(next) = next else {
+            return true;
+        };
+        if key >> 3 == 1 {
+            tables += 1;
+            if tables > 1 {
+                return true;
+            }
+        }
+        p = next;
+    }
+    false
+}
+
 /// The strings of a string table message at `start..end`: every field 1, as the format writes them.
 fn strings(block: &[u8], start: usize, end: usize) -> Option<Vec<Range<usize>>> {
     let mut out = Vec::new();
@@ -154,6 +185,19 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_string_table_after_a_group_is_found() {
+        let one = block(&[b"", b"highway"], &[(3, b"\x08\x01"), (3, b"\x08\x02")]);
+        assert!(!strings_follow(&one));
+        // Granularity, a varint field, is stepped over.
+        assert!(!strings_follow(&[&one[..], &[0x88, 0x01, 0x64]].concat()));
+        let later = [&one[..], &block(&[b"name"], &[])].concat();
+        assert!(strings_follow(&later));
+        // A field it cannot step over might hide one.
+        assert!(strings_follow(&[&one[..], &[0x0d, 0, 0, 0, 0]].concat()));
+        assert!(strings_follow(&one[..one.len() - 1]));
     }
 
     #[test]

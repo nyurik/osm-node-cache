@@ -19,7 +19,7 @@ use crate::filter::Filters;
 use crate::generated::raw::osmflow_raw::__buffa::view::oneof::blob::Data;
 use crate::generated::raw::osmflow_raw::{BlobHeaderView, BlobView};
 use crate::packed::varint;
-use crate::peek::{Kind, Peek, peek};
+use crate::peek::{Kind, Peek, peek, strings_follow};
 
 type FResult<T> = result::Result<T, PbfFormatError>;
 
@@ -705,7 +705,31 @@ impl Loader {
                     return Ok(None);
                 };
                 let strings: Vec<&[u8]> = strings.iter().map(|r| &out[r.clone()]).collect();
-                let select = self.filters.narrow(self.select, &strings);
+                let mut select = self.filters.narrow(self.select, &strings);
+                let mut filters = None;
+                let mut have = Some(have);
+                // The string table may go on after the first group, as protobuf merges a message's occurrences, so
+                // when the strings at the start reject a type and more follows that group, the rest is inflated and
+                // looked at. A table that goes on is filtered whole as the block is decoded.
+                if !alone && select != self.select {
+                    let all = self.more(
+                        blob.position,
+                        &blob.span,
+                        have.take().unwrap(),
+                        blob.span.len,
+                    )?;
+                    inflate(
+                        d,
+                        &all[layout.data.0 + total_in(d)..layout.data.1],
+                        out,
+                        layout.raw_size,
+                    )
+                    .map_err(err)?;
+                    if strings_follow(out) {
+                        select = self.select;
+                        filters = Some(&self.filters);
+                    }
+                }
                 let first_kept = match kind {
                     Kind::Nodes => select.nodes,
                     Kind::Ways => select.ways,
@@ -718,15 +742,17 @@ impl Loader {
                     return Ok(Some(None));
                 }
                 self.note(true);
-                let all = self.more(blob.position, &blob.span, have, blob.span.len)?;
-                inflate(
-                    d,
-                    &all[layout.data.0 + total_in(d)..layout.data.1],
-                    out,
-                    layout.raw_size,
-                )
-                .map_err(err)?;
-                Block::decode(blob.position, blob.span.len, true, out, select, None)
+                if let Some(have) = have {
+                    let all = self.more(blob.position, &blob.span, have, blob.span.len)?;
+                    inflate(
+                        d,
+                        &all[layout.data.0 + total_in(d)..layout.data.1],
+                        out,
+                        layout.raw_size,
+                    )
+                    .map_err(err)?;
+                }
+                Block::decode(blob.position, blob.span.len, true, out, select, filters)
                     .map(|b| Some(Some(b)))
             })?;
             if let Some(block) = decided {

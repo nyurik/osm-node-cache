@@ -770,6 +770,26 @@ fn build_all() -> Vec<(&'static str, Vec<u8>)> {
         file(&[header(&["OsmSchema-V0.6"]), ("OSMData", raw_blob(&data.0))]),
     ));
 
+    // A zlib block whose string table goes on after its group, as the format allows, since protobuf merges a
+    // message's occurrences: the way's tag is in the later part, which a peek at the block's start does not see.
+    let (mut first, mut rest) = (Pb::default(), Pb::default());
+    first.bytes(1, b"").bytes(1, b"building");
+    rest.bytes(1, b"highway").bytes(1, b"primary");
+    let mut tagged = Pb::default();
+    tagged
+        .int(1, 10)
+        .packed(2, &[2])
+        .packed(3, &[3])
+        .packed(8, &deltas(&IDS));
+    let mut data = Pb::default();
+    data.msg(1, &first)
+        .msg(2, &group(3, &[tagged]))
+        .msg(1, &rest);
+    all.push((
+        "split_string_table_zlib.osm.pbf",
+        file(&[header(&["OsmSchema-V0.6"]), ("OSMData", zlib_blob(&data.0))]),
+    ));
+
     all
 }
 

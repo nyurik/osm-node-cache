@@ -35,6 +35,16 @@ const MISREAD: &[(&str, &str, &str)] = &[
         "osmpbfreader",
         LAST_OCCURRENCE,
     ),
+    (
+        "generated__split_string_table_zlib.osm.pbf",
+        "osmpbf",
+        LAST_OCCURRENCE,
+    ),
+    (
+        "generated__split_string_table_zlib.osm.pbf",
+        "osmpbfreader",
+        LAST_OCCURRENCE,
+    ),
 ];
 const LAST_OCCURRENCE: &str =
     "it keeps only the last occurrence of a message field, where protobuf merges them";
