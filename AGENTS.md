@@ -56,6 +56,14 @@ The crates are MIT OR Apache-2.0, so what they take from other projects must all
   `absolute_paths` lint checks; code behind a feature flag imports what it uses inside the function.
 - Performance claims come from measurements with the repository's own tools, and say where they were taken.
 
+## Releases
+
+release-plz publishes the crates, tags each one `<crate>-v<version>` and keeps a `CHANGELOG.md` in each crate's
+directory (`release-plz.toml`). Only `osmflow-cli` gets a GitHub release, with the binaries; its notes include the
+changes of the libraries it uses. A library's `repository` is its directory with a trailing `/`
+(`https://github.com/nyurik/osmflow/tree/main/crates/<crate>/`), so Dependabot shows that crate's changelog in its PRs.
+A new library needs the same `repository`, and its name in `changelog_include` if the CLI uses it.
+
 ## Checks
 
 Use the `just` recipes (`just` lists them):
