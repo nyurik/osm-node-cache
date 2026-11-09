@@ -118,14 +118,20 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
-/// Appends an attribute value's text to `out`, checking that it is UTF-8. A value with `&`, `<` or a control
-/// character takes the slow path, [`unescape`].
+/// Whether an attribute value's text is its raw bytes: it has no `&`, `<` or control character, which [`unescape`]
+/// replaces or rejects.
+pub(crate) fn is_plain(raw: &[u8]) -> bool {
+    !raw.iter().any(|&b| b == b'&' || b == b'<' || b < b' ')
+}
+
+/// Appends an attribute value's text to `out`, checking that it is UTF-8. A value that is not plain takes the slow
+/// path, [`unescape`].
 pub(crate) fn push_text(raw: &[u8], out: &mut String) -> Result<(), XmlError> {
-    if raw.iter().any(|&b| b == b'&' || b == b'<' || b < b' ') {
-        unescape(raw, out)
-    } else {
+    if is_plain(raw) {
         out.push_str(str::from_utf8(raw).map_err(|_| XmlError::Utf8)?);
         Ok(())
+    } else {
+        unescape(raw, out)
     }
 }
 

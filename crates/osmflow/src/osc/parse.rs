@@ -11,7 +11,7 @@ use memchr::{memchr, memmem};
 
 use crate::model::{Location, MemberType};
 use crate::osc::error::{OscError, Result, XmlError, XmlPosition};
-use crate::osc::value::{decimicro, int, push_text, timestamp_ms};
+use crate::osc::value::{decimicro, int, is_plain, push_text, timestamp_ms};
 use crate::osc::{Action, Change, Meta, Node, Object, Relation, StringsBuf, Tags, Way};
 
 /// The bytes read from the input at once.
@@ -756,12 +756,12 @@ fn set<'a, T>(
     Ok(())
 }
 
-/// A user name, shared with the last object's when it is the same. A name with a reference is never compared raw, as
-/// its unescaped text differs.
+/// A user name, shared with the last object's when it is the same. Only a plain name is compared raw: a reference, a
+/// line break or a `<` makes its text differ from its bytes, or makes it an error.
 fn user(last: &mut Option<Arc<str>>, text: &mut String, raw: &[u8]) -> Result<Arc<str>, XmlError> {
     if let Some(last) = last
+        && is_plain(raw)
         && last.as_bytes() == raw
-        && !raw.contains(&b'&')
     {
         return Ok(Arc::clone(last));
     }

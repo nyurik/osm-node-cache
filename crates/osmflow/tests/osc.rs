@@ -316,6 +316,26 @@ fn users_are_shared() {
     assert!(!Arc::ptr_eq(&user(3), &user(4)));
 }
 
+/// A user name equal, byte for byte, to the text of the previous one is still read by XML's rules.
+#[test]
+fn shared_users_keep_xml_rules() {
+    let xml = "<osmChange><create>\
+        <node id='1' lat='0' lon='0' user='a&#9;b'/><node id='2' lat='0' lon='0' user='a\tb'/>\
+        <node id='3' lat='0' lon='0' user='a&lt;b'/><node id='4' lat='0' lon='0' user='a<b'/>\
+        </create></osmChange>";
+    let mut changes = OscReader::new(xml.as_bytes());
+    let mut user = || {
+        changes
+            .next()
+            .unwrap()
+            .map(|c| c.object.meta().user.as_deref().map(str::to_owned))
+    };
+    assert_eq!(user().unwrap().as_deref(), Some("a\tb"));
+    assert_eq!(user().unwrap().as_deref(), Some("a b"));
+    assert_eq!(user().unwrap().as_deref(), Some("a<b"));
+    user().unwrap_err();
+}
+
 /// The text of the first object of each type in a file, from a plain scan: (`<node `, `<way `, `<relation `, `<tag `,
 /// `<nd `, `<member `) counts.
 fn count_elements(xml: &str) -> [usize; 6] {

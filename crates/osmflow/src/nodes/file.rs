@@ -22,8 +22,13 @@ impl<T> At<T> for io::Result<T> {
     }
 }
 
+/// The most a store's file holds before its header is written: a store grows its new file to one
+/// header page, then writes the header, so a crash in between leaves this many zeros.
+const UNWRITTEN_HEADER: u64 = 4096;
+
 /// Opens `path` to read and write, creating it if it is missing, and locks it for this store
-/// alone. Returns the file, and whether it is new or empty.
+/// alone. Returns the file, and whether it is new: empty, or holding only the zeros of a store
+/// whose creation stopped before its header was written. A header is never all zeros.
 pub(crate) fn open_rw(path: &Path) -> Result<(File, bool)> {
     let file = OpenOptions::new()
         .read(true)
@@ -33,8 +38,14 @@ pub(crate) fn open_rw(path: &Path) -> Result<(File, bool)> {
         .open(path)
         .at(path)?;
     lock(&file, path, false)?;
-    let empty = file.metadata().at(path)?.len() == 0;
-    Ok((file, empty))
+    let len = file.metadata().at(path)?.len();
+    let new = len == 0
+        || len <= UNWRITTEN_HEADER && {
+            let mut start = vec![0; usize::try_from(len).unwrap_or(0)];
+            read_at(&file, &mut start, 0).at(path)?;
+            start.iter().all(|&b| b == 0)
+        };
+    Ok((file, new))
 }
 
 /// Opens an existing `path` to read, and locks it against writers.
@@ -73,9 +84,11 @@ fn lock(file: &File, path: &Path, shared: bool) -> Result<()> {
     reason = "a memory map of a file is unsafe: the file may change under it"
 )]
 pub(crate) fn map_file(file: &File) -> io::Result<Mmap> {
-    // SAFETY: the stores lock their files and only ever grow them, so the mapped bytes stay valid. A
-    // process that ignores the lock and truncates the file could still break the map, which no
-    // memory map can prevent.
+    // SAFETY: a store writes to its file only through `&mut self`, so no slice of its map is alive
+    // while the mapped bytes change, and it shrinks the file only after replacing the map. Other
+    // stores keep to the file's lock. A process that ignores the lock, which is only advisory on
+    // Unix, and changes or truncates the file could still break the map, which no memory map can
+    // prevent.
     unsafe { Mmap::map(file) }
 }
 

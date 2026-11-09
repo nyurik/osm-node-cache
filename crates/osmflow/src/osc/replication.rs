@@ -280,7 +280,11 @@ impl Replication {
                 }
             }
         })?;
-        Ok(Diffs { rx, done: false })
+        Ok(Diffs {
+            rx,
+            left: latest.checked_sub(start).map_or(0, |n| n + 1),
+            done: false,
+        })
     }
 }
 
@@ -294,6 +298,9 @@ fn spawn(f: impl FnOnce() + Send + 'static) -> Result<()> {
 /// The diffs of a replication stream, in order; see [`Replication::diffs`].
 pub struct Diffs {
     rx: Receiver<Receiver<Result<Diff>>>,
+    /// The diffs still to come, so a thread that stops early, as by a panic in a [`Fetch`], is an error rather than
+    /// the end of the stream.
+    left: u64,
     done: bool,
 }
 
@@ -301,15 +308,14 @@ impl Iterator for Diffs {
     type Item = Result<Diff>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
+        if self.done || self.left == 0 {
             return None;
         }
-        let diff = self
-            .rx
-            .recv()
-            .ok()?
-            .recv()
-            .unwrap_or(Err(OscError::ReadAhead));
+        let diff = match self.rx.recv() {
+            Ok(diff) => diff.recv().unwrap_or(Err(OscError::ReadAhead)),
+            Err(_) => Err(OscError::ReadAhead),
+        };
+        self.left -= 1;
         self.done = diff.is_err();
         Some(diff)
     }

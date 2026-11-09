@@ -107,6 +107,7 @@ jobs:
           zip: windows
           include: LICENSE-MIT,LICENSE-APACHE
           checksum: sha256
+          locked: true
           dry-run: true
 
   # This job checks if any of the previous jobs failed or were canceled.
@@ -196,4 +197,5 @@ jobs:
           zip: windows
           include: LICENSE-MIT,LICENSE-APACHE
           checksum: sha256
+          locked: true
           token: ${{ secrets.GITHUB_TOKEN }}

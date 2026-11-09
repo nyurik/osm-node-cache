@@ -475,21 +475,12 @@ impl<M: Mode> PagedStore<M> {
     #[must_use]
     pub fn stats(&self) -> PagedStats {
         let mut s = PagedStats {
-            pages: self.dir.len(),
             file_bytes: self.file_len,
             ..PagedStats::default()
         };
-        self.advise(true);
-        let mut buf = Vec::new();
-        for &p in &self.dir.pages {
-            let page = match self.changed.get(&p) {
-                Some((first, blocks)) => {
-                    encode_page(*first, blocks, &mut buf);
-                    &buf
-                }
-                None => self.page(p),
-            };
+        let mut tally = |page: &[u8]| {
             let h = page_header(page);
+            s.pages += 1;
             s.used_bytes += h.used as u64;
             for i in 0..h.n_blocks {
                 let head = read_block(page, &h, i);
@@ -497,6 +488,18 @@ impl<M: Mode> PagedStore<M> {
                 s.nodes += u64::from(head.mask.count_ones());
                 s.masks[usize::from(head.mask_kind)] += 1;
                 s.codecs[usize::from(head.codec)] += 1;
+            }
+        };
+        self.advise(true);
+        for &p in &self.dir.pages {
+            match self.changed.get(&p) {
+                // as the next commit writes it: split into pages that fit, where it grew past one
+                Some((first, blocks)) => {
+                    for (_, page) in encode_changed(*first, blocks, self.fill_limit) {
+                        tally(&page);
+                    }
+                }
+                None => tally(self.page(p)),
             }
         }
         self.advise(false);
@@ -1743,6 +1746,40 @@ mod tests {
         drop(store);
         // the rolled back commit's undo applies no more
         check(&PagedStore::open_read_only(&f.0).unwrap(), &expected);
+    }
+
+    #[test]
+    fn stats_split_pages_grown_past_their_size() {
+        let f = TestFile::new("stats_grown");
+        let mut store = PagedStore::open(&f.0).unwrap();
+        let mut load = store.bulk_load().unwrap();
+        // one node per block, so a page holds many blocks
+        for k in 0..4000 {
+            load.push(k * 64 + 1, Location::new(1, 1)).unwrap();
+        }
+        load.finish(1).unwrap();
+        let before = store.stats();
+        // filling every block with scattered locations, which hardly compress, grows each page far
+        // past 64 KiB until the commit splits it
+        for id in 1..4000 * 64_u64 {
+            let h = id.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let lat = i32::try_from(h % 1_800_000_001).unwrap() - 900_000_000;
+            let lon = i32::try_from((h >> 32) % 1_800_000_001).unwrap() - 900_000_000;
+            store.set(id, Location::new(lat, lon)).unwrap();
+        }
+        let after = store.stats();
+        assert_eq!(after.nodes, 4000 * 64 - 1);
+        assert!(after.used_bytes > 16 * 65_536, "{before:?} {after:?}");
+        // the commit writes the pages as counted; only the file has grown
+        store.commit(2).unwrap();
+        let committed = store.stats();
+        assert_eq!(
+            committed,
+            PagedStats {
+                file_bytes: committed.file_bytes,
+                ..after
+            }
+        );
     }
 
     #[test]

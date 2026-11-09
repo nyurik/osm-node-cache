@@ -579,6 +579,44 @@ pub(crate) mod tests {
         drop(S::open(&f.0).unwrap());
     }
 
+    /// A creation cut short after the file grew but before its header was written leaves only zeros,
+    /// which opening the store for writing starts again.
+    fn finishes_an_unfinished_creation<S: FileStore>(name: &str) {
+        let f = TestFile::new(name);
+        fs::write(&f.0, [0_u8; 4096]).unwrap();
+        assert!(matches!(
+            S::open_read_only(&f.0),
+            Err(NodeStoreError::NotAStore(_))
+        ));
+        let mut store = S::open(&f.0).unwrap();
+        check(&store, &BTreeMap::new());
+        store.set(5, Location::new(1, 2)).unwrap();
+        store.commit(1).unwrap();
+        drop(store);
+        let expected = BTreeMap::from([(5, Location::new(1, 2))]);
+        check(&S::open_read_only(&f.0).unwrap(), &expected);
+    }
+
+    /// A load dropped before its first checkpoint starts over, and keeps none of the nodes it wrote
+    /// when the new input lacks them.
+    fn restarts_a_load_cut_short<S: FileStore>(name: &str) {
+        let f = TestFile::new(name);
+        let mut store = S::open(&f.0).unwrap();
+        let mut load = store.bulk_load().unwrap();
+        // far enough apart to be written to the file before the first checkpoint
+        for id in 1..=10 {
+            load.push(id * 1000, Location::new(1, 1)).unwrap();
+        }
+        drop(load);
+        drop(store);
+        let mut store = S::open(&f.0).unwrap();
+        let mut load = store.bulk_load().unwrap();
+        assert_eq!(load.resume_after(), None);
+        load.push(5, Location::new(2, 2)).unwrap();
+        load.finish(1).unwrap();
+        check(&store, &BTreeMap::from([(5, Location::new(2, 2))]));
+    }
+
     fn rejects_other_files<S: FileStore>(name: &str) {
         let f = TestFile::new(name);
         assert!(matches!(
@@ -618,6 +656,9 @@ pub(crate) mod tests {
         }
         store.set(MAX_NODE_ID, ok).unwrap();
         assert_eq!(store.get(MAX_NODE_ID), Some(ok));
+        for id in [MAX_NODE_ID + 1, 1 << 61, u64::MAX] {
+            assert_eq!(store.get(id), None, "{id}");
+        }
         assert!(matches!(
             store.bulk_load().err(),
             Some(NodeStoreError::NotEmpty)
@@ -776,6 +817,8 @@ pub(crate) mod tests {
             changes_match_a_map,
             drops_uncommitted,
             locks,
+            finishes_an_unfinished_creation,
+            restarts_a_load_cut_short,
             rejects_other_files,
             rejects_bad_nodes,
             resumes_a_load,
@@ -792,6 +835,8 @@ pub(crate) mod tests {
             empty,
             changes_match_a_map,
             locks,
+            finishes_an_unfinished_creation,
+            restarts_a_load_cut_short,
             rejects_other_files,
             rejects_bad_nodes,
             resumes_a_load,

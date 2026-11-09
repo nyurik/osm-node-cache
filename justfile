@@ -63,6 +63,8 @@ clippy *args:
     cargo clippy -p osmflow --no-default-features --features nodes --all-targets {{args}}
     cargo clippy -p osmflow --no-default-features --features pbf --all-targets {{args}}
     cargo clippy -p osmflow --no-default-features --features osc --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features geometry --all-targets {{args}}
+    cargo clippy -p osmflow --no-default-features --features http --all-targets {{args}}
 
 # Generate and open the HTML coverage report
 coverage:  (_coverage '--open')

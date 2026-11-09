@@ -11,14 +11,14 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 
-use memmap2::Mmap;
+use memmap2::{Mmap, MmapMut, MmapOptions};
 
 use super::codec::{u32_at, u64_at};
 use super::file::{At as _, crc, map_file, open_ro, open_rw, read_at, sync_dir, write_at};
 use super::store::{check, check_order, check_resumed};
 use super::{
-    BulkLoad, FileStore, FixReport, LoadState, Metadata, Mode, NodeRead, NodeReader, NodeStore,
-    NodeStoreError, ReadOnly, ReadWrite, Result,
+    BulkLoad, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead, NodeReader,
+    NodeStore, NodeStoreError, ReadOnly, ReadWrite, Result,
 };
 use crate::Location;
 
@@ -211,11 +211,12 @@ impl<M: Mode> DenseStore<M> {
 
     #[inline]
     fn value(&self, id: u64) -> Option<Location> {
-        let at = usize::try_from(id)
-            .ok()?
-            .checked_mul(8)?
-            .checked_add(PAGE_SIZE)?;
-        let bytes = self.map.get(at..at + 8)?;
+        if id > MAX_NODE_ID {
+            return None;
+        }
+        // Below the highest ID, the offset fits a u64; it may not fit a 32-bit usize.
+        let at = usize::try_from(PAGE_SIZE as u64 + id * 8).ok()?;
+        let bytes = self.map.get(at..)?.get(..8)?;
         decode(u64::from_le_bytes(bytes.try_into().unwrap()))
     }
 
@@ -329,6 +330,12 @@ impl NodeStore for DenseStore<ReadWrite> {
 
     fn bulk_load(&mut self) -> Result<DenseLoader<'_>> {
         let resume = match self.committed.state {
+            LoadState::Loading { last_id: None } => {
+                // The load was cut short before its first checkpoint: it starts over, so nothing it
+                // wrote may stay for the nodes the new input lacks.
+                self.discard_values()?;
+                None
+            }
             LoadState::Loading { last_id } => last_id,
             LoadState::Complete if self.capacity() > 0 => return Err(NodeStoreError::NotEmpty),
             LoadState::Complete => {
@@ -378,6 +385,22 @@ impl DenseStore<ReadWrite> {
             self.map = map_file(&self.file).at(&self.path)?;
             self.advise();
         }
+        Ok(())
+    }
+
+    /// Truncates the file to its header page, dropping every value in it.
+    fn discard_values(&mut self) -> Result<()> {
+        if self.capacity() == 0 {
+            return Ok(());
+        }
+        // Windows does not shrink a mapped file, so the file is unmapped first.
+        self.map = MmapOptions::new()
+            .len(PAGE_SIZE)
+            .map_anon()
+            .and_then(MmapMut::make_read_only)
+            .at(&self.path)?;
+        self.file.set_len(PAGE_SIZE as u64).at(&self.path)?;
+        self.map = map_file(&self.file).at(&self.path)?;
         Ok(())
     }
 

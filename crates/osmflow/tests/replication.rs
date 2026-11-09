@@ -365,6 +365,31 @@ fn files_in(dir: &Path) -> Vec<String> {
     out
 }
 
+/// Panics when asked for a URL ending in its suffix, as a buggy fetcher might.
+struct Panicking(Mock, &'static str);
+
+impl Fetch for Panicking {
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "the panic is what the test needs"
+    )]
+    fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>> {
+        assert!(!url.ends_with(self.1), "a buggy fetcher");
+        self.0.fetch(url)
+    }
+}
+
+#[test]
+fn a_panicking_fetcher_is_an_error_not_the_end() {
+    let cache = temp_dir("replication-panic");
+    let mock = Mock::new(&stream(5, 1..=5, 1));
+    let repl = Replication::remote(BASE, &cache, Panicking(mock, "000/000/004.state.txt"));
+    let diffs: Vec<_> = repl.diffs(3).unwrap().collect();
+    assert_eq!(diffs.len(), 2, "{diffs:?}");
+    assert_eq!(diffs[0].as_ref().unwrap().state.sequence, 3);
+    assert!(matches!(diffs[1], Err(OscError::ReadAhead)), "{diffs:?}");
+}
+
 #[test]
 fn remote_stream_is_cached() {
     let cache = temp_dir("replication-remote");
