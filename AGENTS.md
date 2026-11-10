@@ -17,7 +17,8 @@ coding agents alike. How the library works is in [`crates/osmflow/docs/design.md
 | `crates/osmflow/docs/` | How the library works: `design.md`, `pbf.md`, `osc.md`, `nodes.md` |
 | `crates/osmflow/fixtures/` | Test files from other projects, one directory per source with a README and its license; `generated/` is written by `tests/generated.rs` (`OSMFLOW_REGENERATE=1` rewrites it) |
 | `crates/osmflow/tests/`, `benches/` | Integration tests, with snapshots in `tests/snapshots/`; benchmarks of osmChange parsing and the node stores |
-| `crates/osmflow-cli` | The `osmflow` command: `dump` and `stats` |
+| `crates/osmflow-sync` | OSM data in PostgreSQL, kept current from replication: the `osm` schema (`src/schema.sql`), the import, updates, and the node file and reverse index beside the database |
+| `crates/osmflow-cli` | The `osmflow` command: `dump`, `stats`, `seq` and `sync` |
 | `benches/` | One package per PBF reader, to compare osmflow with other crates, and `nodes`, which times the node stores on real files; see `benches/README.md` |
 | `.github/workflows/ci.yml` | Tests, MSRV, coverage, release-plz, and the release binaries |
 | `tmp/` | Ignored by git: scratch files and measurements |
@@ -71,7 +72,9 @@ A new library needs the same `repository`, and its name in `changelog_include` i
 Use the `just` recipes (`just` lists them):
 
 - `just fmt`, then `just clippy`, which lints each package with `cargo hack`: with all its features, with none, and with each one alone
-- `just test` and `just test-doc`
+- `just test` and `just test-doc`; `osmflow-sync`'s database test runs only with `OSMFLOW_SYNC_TEST_DB` set to a
+  PostgreSQL database with PostGIS, whose `osm` schema it replaces: `just test-sync-db` runs it in Docker, and CI's
+  Linux job runs it against a PostGIS service
 - `just cpd` finds copied code with jscpd (`.jscpd.json`); on a pull request, CI comments with the clones it adds
 - `just ci-test` runs what CI runs
 - `just run …`, `just dump …`, `just stats …` and `just seq …` run the `osmflow` command

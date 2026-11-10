@@ -11,4 +11,7 @@ disallowed-methods = [
 ]
 
 # Words in docs that are not code, so they need no backticks
-doc-valid-idents = ["NVMe", "GeoJSON", "FeatureCollection", ".."]
+doc-valid-idents = ["NVMe", "GeoJSON", "FeatureCollection", "PostGIS", ".."]
+
+# Two versions each, one through `postgres` and one through `ureq`, which neither crate lets us unify
+allowed-duplicate-crates = ["base64", "getrandom", "wasi"]

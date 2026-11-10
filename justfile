@@ -182,6 +182,13 @@ test:
 # Test documentation generation
 test-doc:  (docs '')
 
+# Run osmflow-sync's database test against PostGIS in Docker, in the container `osmflow-sync-pg` on port 5434, started
+# if it is not running. Its `postgres` database's `osm` schema is replaced.
+test-sync-db:  (assert-cmd 'docker')
+    docker start osmflow-sync-pg 2>/dev/null || docker run -d --name osmflow-sync-pg -p 5434:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgis/postgis:18-3.6-alpine
+    until docker exec osmflow-sync-pg pg_isready -h localhost -U postgres -q; do sleep 1; done
+    OSMFLOW_SYNC_TEST_DB=postgresql://postgres@localhost:5434/postgres cargo test -p osmflow-sync --test sync
+
 # Test code formatting
 test-fmt: && (fmt-toml '--check' '--check-format')
     cargo fmt --all -- --check

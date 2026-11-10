@@ -1,8 +1,8 @@
 # osmflow-cli
 
 The `osmflow` command, built on the [`osmflow`](https://crates.io/crates/osmflow) crate: it dumps the objects of
-OpenStreetMap PBF files and the changes of osmChange files and replication streams as text or GeoJSON, and summarizes
-them.
+OpenStreetMap PBF files and the changes of osmChange files and replication streams as text or GeoJSON, summarizes
+them, and keeps them in PostgreSQL, current from replication.
 
 ```sh
 cargo install --path crates/osmflow-cli
@@ -205,6 +205,46 @@ The changes after it are in diffs 4955 to 4966 (12 diffs). Read them with --seq 
 - **`--since`** of `dump` and `stats` reads the same diffs as `--seq` with the number given. With `-f json`, `seq`
   gives them as `read_from` and `diffs`.
 - **A time before the stream's oldest diff**, or a file whose diff the server no longer keeps, is an error.
+
+## `osmflow sync`
+
+Keeps OpenStreetMap data in PostgreSQL with PostGIS, with the
+[`osmflow-sync`](https://github.com/nyurik/osmflow/tree/main/crates/osmflow-sync) crate: it imports a PBF file into the
+database's `osm` schema, applies the replication diffs after it, and makes the two files kept beside the database
+again when they are lost. Every command takes the database as `--db` or `DATABASE_URL`, and the directory of the
+files as `--dir` or `OSMFLOW_SYNC_DIR`.
+
+```sh
+export DATABASE_URL=postgresql://postgres@localhost/osm OSMFLOW_SYNC_DIR=dc-files
+osmflow sync import dc.osm.pbf                  # the extract, its replication stream from its header
+osmflow sync update                             # every diff after it, up to the stream's latest
+osmflow sync update --until 4960 --max-diffs 1  # up to diff 4960, one diff per transaction
+osmflow sync status                             # where the database and its files are
+osmflow sync rebuild                            # the files again, from the database
+osmflow sync rebuild --pbf dc-new.osm.pbf       # the node file from a new download and the diffs after it
+osmflow sync import planet.osm.pbf --replication https://planet.openstreetmap.org/replication/minute
+```
+
+```text
+database      revision 13, sequence 4966 at 2026-11-08T21:21:00Z of https://download.geofabrik.de/north-america/us/district-of-columbia-updates
+node file     revision 13, up to date
+reverse index revision 13, up to date
+```
+
+- **`import`** creates the `osm` schema, and fails if there is one; `--replace` drops it first. A Geofabrik extract's
+  header names its stream and sequence. A planet file has neither: give the stream, and the import finds the sequence
+  from the file's timestamp, as `osmflow seq` does, from 6 minutes before it. A `--sequence` given is checked against
+  the header's, or that: a later one, which would skip changes, is an error, and an earlier one a warning.
+  `--connections` sets how many database connections copy the rows at once: half the cores, up to 8, by default.
+- **`update`** checks that the stream is the database's, downloads the diffs into `--cache`, `<dir>/replication` by
+  default, where a diff is never downloaded again, and applies up to `--max-diffs` of them (60 by default) per transaction. A stream given as a directory is read
+  where it is. If a crash left the files behind the database, it brings them up to it first.
+- **`rebuild`** only reads the database. Without `--pbf`, the node locations come from the database's way geometries
+  and tagged nodes, which have every node a way uses, but not an untagged node in no way (2 of District of
+  Columbia's 1.96 million), which matters only if a later edit adds it to a way; with it, from the PBF file and the
+  diffs after it, which have every node.
+- **`status`** shows the database's revision and sequence, and each file's revision: up to date, behind (the next
+  update catches it up), ahead or of another database (`rebuild` makes it again).
 
 ## Logging
 
