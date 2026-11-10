@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::{panic, thread};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use osmflow::Timestamp;
 use osmflow::osc::{COMMIT_DELAY, Located, Start, State, StateSource, locate, plan};
 
@@ -110,7 +110,7 @@ impl Root {
     }
 }
 
-/// A catch-up from the point through the streams of the layout, as the plan reads it.
+/// A catch-up from the point through the streams of a root, as the plan reads it.
 struct CatchUp {
     /// The streams it reads from, coarsest first.
     streams: Vec<&'static str>,
@@ -227,7 +227,13 @@ fn open(input: &Input, cache: Option<&Path>) -> Result<(Opened, Option<Root>)> {
             (_, Err(e)) => return Err(e),
         }
     };
-    Ok((opened(root.stream("minute"), cache)?, Some(root)))
+    let minute = opened(root.stream("minute"), cache).map_err(|e| match &root {
+        Root::Url(url) if is_no_stream(&e) => anyhow!(
+            "neither {url}/state.txt nor {url}/minute/state.txt is on the server; is the replication URL right?"
+        ),
+        Root::Url(_) | Root::Dir(_) => e,
+    })?;
+    Ok((minute, Some(root)))
 }
 
 /// The state files of the stream `name` of a root, or `None` if it is not there: a directory that does not exist,
@@ -266,6 +272,7 @@ fn catch_up(root: &Root, minute: Source, start: Start) -> Result<Option<CatchUp>
     }
     streams.push(("minute", minute));
     let start = match start {
+        // `find` planned over the minute stream alone, as stream 0; here it is the last of the root's streams.
         Start::After { state, .. } => Start::After {
             stream: streams.len() - 1,
             state,
@@ -536,12 +543,12 @@ mod tests {
         });
         write_stream(&root.join("day"), 0..=0, |_| t0);
 
-        let (opened, root_found) = open(&Input::Dir(root.to_owned()), None).unwrap();
+        let (opened, streams) = open(&Input::Dir(root.to_owned()), None).unwrap();
         assert_eq!(opened.input, Input::Dir(root.join("minute")));
         assert_eq!(opened.latest.sequence, 180);
-        let root_found = root_found.unwrap();
+        let streams = streams.unwrap();
         let legs = |source, start| {
-            let plan = catch_up(&root_found, source, start).unwrap().unwrap();
+            let plan = catch_up(&streams, source, start).unwrap().unwrap();
             assert_eq!(plan.streams, ["day", "hour", "minute"]);
             plan.legs
                 .iter()
@@ -565,13 +572,13 @@ mod tests {
             [("minute", 101, 120), ("hour", 3, 3)]
         );
         // A stream of the root is read alone.
-        let (hour, root_found) = open(&Input::Dir(root.join("hour")), None).unwrap();
+        let (hour, streams) = open(&Input::Dir(root.join("hour")), None).unwrap();
         assert_eq!(hour.input, Input::Dir(root.join("hour")));
-        assert!(root_found.is_none());
+        assert!(streams.is_none());
     }
 
     #[test]
-    fn a_stream_beside_that_cannot_be_read_is_an_error() {
+    fn a_coarser_stream_that_cannot_be_read_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         write_stream(&root.join("minute"), 0..=10, |n| {
@@ -580,11 +587,11 @@ mod tests {
         // The hour stream's state.txt is not a state file.
         fs::create_dir_all(root.join("hour")).unwrap();
         fs::write(root.join("hour").join("state.txt"), "not a state\n").unwrap();
-        let (opened, root_found) = open(&Input::Dir(root.to_owned()), None).unwrap();
+        let (opened, streams) = open(&Input::Dir(root.to_owned()), None).unwrap();
         let start = Start::Time {
             at: Timestamp::EPOCH,
         };
-        let e = catch_up(&root_found.unwrap(), opened.source, start)
+        let e = catch_up(&streams.unwrap(), opened.source, start)
             .err()
             .unwrap();
         assert!(
