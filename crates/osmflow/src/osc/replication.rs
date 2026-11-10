@@ -3,6 +3,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
+use std::ops::{Bound, RangeBounds};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +13,7 @@ use std::time::Duration;
 use std::{process, thread};
 
 use flate2::bufread::MultiGzDecoder;
+use tracing::{debug, debug_span, warn};
 
 use crate::osc::error::{OscError, Result, StateError};
 use crate::osc::value::timestamp_ms;
@@ -34,7 +36,7 @@ pub struct State {
 
 impl State {
     /// Reads a state file.
-    pub fn read(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn read(path: impl AsRef<Path>) -> Result<Self, OscError> {
         let path = path.as_ref();
         let text = fs::read_to_string(path).map_err(|source| OscError::File {
             path: path.to_owned(),
@@ -230,35 +232,54 @@ impl Replication {
     }
 
     /// The stream's latest state: the local `state.txt`, or the server's, fetched now and saved in the cache.
-    pub fn state(&self) -> Result<State> {
+    pub fn state(&self) -> Result<State, OscError> {
         self.source.latest()
     }
 
     /// The state file of one diff, downloaded first if needed. A file that names another sequence, whether downloaded,
     /// cached or local, is an [`OscError::State`] error for its `sequenceNumber`, and a downloaded one is not cached.
-    pub fn sequence_state(&self, sequence: u64) -> Result<State> {
-        self.source.state_file(sequence)
+    pub fn sequence_state(&self, sequence: u64) -> Result<State, OscError> {
+        let state = self.source.state_file(sequence)?;
+        debug!(
+            path = %self.source.path(sequence, ".state.txt").1.display(),
+            "read"
+        );
+        Ok(state)
     }
 
     /// The local path of one diff, downloaded first if needed.
-    pub fn diff_file(&self, sequence: u64) -> Result<PathBuf> {
+    pub fn diff_file(&self, sequence: u64) -> Result<PathBuf, OscError> {
         self.source.diff_file(sequence)
     }
 
     /// One diff, with its state, downloaded first if needed and decoded on the calling thread.
-    pub fn diff(&self, sequence: u64) -> Result<Diff> {
+    pub fn diff(&self, sequence: u64) -> Result<Diff, OscError> {
         self.source.diff(sequence)
     }
 
-    /// The diffs from `start` up to the latest state (none if `start` is past it), in order. Each diff is downloaded
-    /// in turn, one at a time, on a background thread, and decoded on a thread of its own, up to
-    /// [`with_read_ahead`](Self::with_read_ahead) diffs ahead of the one being read. The iterator ends after an error.
-    pub fn diffs(&self, start: u64) -> Result<Diffs> {
-        let latest = self.state()?.sequence;
+    /// The diffs of `sequences`, in order: `5..=9`, or `5..` up to the latest state. A range with an end reads no
+    /// `state.txt`, so it also reads a local directory that has none; an unbounded start is sequence 0. Each diff is
+    /// downloaded in turn, one at a time, on a background thread, and decoded on a thread of its own, up to
+    /// [`with_read_ahead`](Self::with_read_ahead) diffs ahead of the one being read. A diff missing from a local
+    /// directory, or not yet published by a server, is an error in its turn, and the iterator ends after an error.
+    pub fn diffs(&self, sequences: impl RangeBounds<u64>) -> Result<Diffs, OscError> {
+        let start = match sequences.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s.saturating_add(1),
+            Bound::Unbounded => 0,
+        };
+        // `None` for an empty range: one that ends before sequence 0.
+        let end = match sequences.end_bound() {
+            Bound::Included(&e) => Some(e),
+            Bound::Excluded(&e) => e.checked_sub(1),
+            Bound::Unbounded => Some(self.state()?.sequence),
+        };
+        let left = end.map_or(0, |end| end.saturating_add(1).saturating_sub(start));
+        debug!(first = start, count = left, "reading diffs");
         let source = Arc::clone(&self.source);
         let (tx, rx) = sync_channel(self.read_ahead - 1);
         spawn(move || {
-            for sequence in start..=latest {
+            for sequence in start..start.saturating_add(left) {
                 let (diff_tx, diff_rx) = sync_channel(1);
                 // A failed download is handed out in its turn; a thread that cannot start drops its sender, which
                 // the iterator reports.
@@ -283,7 +304,7 @@ impl Replication {
         })?;
         Ok(Diffs {
             rx,
-            left: latest.checked_sub(start).map_or(0, |n| n + 1),
+            left,
             done: false,
         })
     }
@@ -306,7 +327,7 @@ pub struct Diffs {
 }
 
 impl Iterator for Diffs {
-    type Item = Result<Diff>;
+    type Item = Result<Diff, OscError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done || self.left == 0 {
@@ -332,6 +353,7 @@ impl Source {
     fn latest(&self) -> Result<State> {
         let path = self.dir.join("state.txt");
         let Some(remote) = &self.remote else {
+            debug!(path = %path.display(), "read");
             return State::read(&path);
         };
         let (_, body, state) = remote
@@ -395,8 +417,11 @@ impl Source {
     }
 
     fn diff(&self, sequence: u64) -> Result<Diff> {
+        let _span = debug_span!("diff", sequence).entered();
         let state = self.state_file(sequence)?;
-        let changes = OscReader::open(self.diff_file(sequence)?)?.collect::<Result<_>>()?;
+        let path = self.diff_file(sequence)?;
+        debug!(path = %path.display(), "read");
+        let changes = OscReader::open(path)?.collect::<Result<_>>()?;
         Ok(Diff { state, changes })
     }
 
@@ -434,7 +459,10 @@ impl Remote {
             match check(&url, &body) {
                 Ok(checked) => return Ok((url, body, checked)),
                 Err(e) if tries >= CHECKED_TRIES => return Err(e),
-                Err(_) => thread::sleep(CHECK_RETRY_PAUSE),
+                Err(e) => {
+                    warn!(error = %e, "fetching it again");
+                    thread::sleep(CHECK_RETRY_PAUSE);
+                }
             }
         }
     }

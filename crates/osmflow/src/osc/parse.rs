@@ -460,7 +460,7 @@ pub struct OscReader<R> {
 
 impl OscReader<Box<dyn Read + Send>> {
     /// Opens an osmChange file, decompressing it if it is gzipped, whatever its name.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, OscError> {
         let path = path.as_ref();
         let file = File::open(path).map_err(|source| OscError::File {
             path: path.to_owned(),
@@ -736,7 +736,7 @@ impl<R: Read> OscReader<R> {
 }
 
 impl<R: Read> Iterator for OscReader<R> {
-    type Item = Result<Change>;
+    type Item = Result<Change, OscError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.level == Level::Done {

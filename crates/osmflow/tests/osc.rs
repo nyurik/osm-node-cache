@@ -344,7 +344,7 @@ fn count_elements(xml: &str) -> [usize; 6] {
 
 #[test]
 fn planet_minute_diff() {
-    let path = fixture("planet-minute-7363600.osc.gz");
+    let path = fixture("planet/minute/007/363/600.osc.gz");
     let mut xml = String::new();
     MultiGzDecoder::new(File::open(&path).unwrap())
         .read_to_string(&mut xml)
@@ -947,8 +947,6 @@ fn others(suffixes: &[&str]) -> Vec<PathBuf> {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             if path.is_dir() {
                 dirs.push(path);
-            } else if dir.ends_with("fixtures/osc") {
-                // The planet's minute diff and its state, checked one by one.
             } else if suffixes.iter().any(|s| name.ends_with(s)) {
                 out.push(path);
             }

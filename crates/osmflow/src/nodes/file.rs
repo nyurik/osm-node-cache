@@ -6,6 +6,7 @@ use std::{io, thread};
 
 use memmap2::Mmap;
 
+use super::codec::u32_at;
 use super::{NodeStoreError, Result};
 
 /// Adds the file path to I/O errors.
@@ -207,6 +208,32 @@ pub(crate) fn preload(file: &File, path: &Path) -> Result<()> {
             .try_for_each(|r| r.join().expect("preload thread panicked"))
             .at(path)
     })
+}
+
+/// The two copies of a store's header, the halves of its first page, once the page is checked to be of the store
+/// whose files start with `magic`: an error if neither copy starts with its first 7 bytes, as the file is not such a
+/// store, or if one has them with another version, `expected` being the version `magic` ends with.
+pub(crate) fn header_copies<'a>(
+    page: &'a [u8],
+    path: &Path,
+    magic: [u8; 8],
+    expected: u32,
+) -> Result<[&'a [u8]; 2]> {
+    let (prefix, half) = (&magic[..7], page.len() / 2);
+    let copies = [&page[..half], &page[half..]];
+    if !copies.iter().any(|h| h.starts_with(prefix)) {
+        return Err(NodeStoreError::NotAStore(path.to_path_buf()));
+    }
+    for h in copies {
+        if h.starts_with(prefix) && h[..8] != magic {
+            return Err(NodeStoreError::UnsupportedVersion {
+                path: path.to_path_buf(),
+                found: u32_at(h, 8),
+                expected,
+            });
+        }
+    }
+    Ok(copies)
 }
 
 #[cfg(test)]

@@ -59,9 +59,10 @@ the two forms.
   * `Replication::local` reads a directory, and downloads nothing;
   * `Replication::remote` reads a server through a `Fetch`, with a directory as its cache;
   * `Replication::http` does the same over HTTP, with the `http` feature.
-* **`Replication::diffs`** gives the diffs from a sequence up to the latest state, in order, each a `Diff` with its own
-  state and all its changes. One background thread downloads the next diffs, one file at a time, and each diff is
-  decoded on a thread of its own as soon as it is in the directory. The iterator holds up to
+* **`Replication::diffs`** gives the diffs of a range of sequences in order: `5..=9`, or `5..` up to the latest
+  state. A range with an end reads no `state.txt`. Each is a `Diff` with its own state and all its changes. One
+  background thread downloads the next diffs, one file at a time, and each diff is decoded on a thread of its own as
+  soon as it is in the directory. The iterator holds up to
   `Replication::with_read_ahead` diffs ahead of the one being read, by default as many as the cores, from 2 to 4. Each
   is held whole in memory until it is read, so a stream of large diffs needs a small read-ahead. After an error, the
   iterator ends.
@@ -86,8 +87,69 @@ A remote stream's directory is its cache, and once filled it can be read with `R
 
 * **`Fetch`** is the one thing a server needs: the body of a URL, or `None` for a file the server does not have. The
   replication code depends on no HTTP crate, and a program can implement `Fetch` with the client it already uses.
+* **Logging:** events and spans go through [`tracing`](https://docs.rs/tracing), without its proc macros. Each
+  download is an `info` event of `osmflow::osc::http`, with its URL, size and time, and each retry a `warn`.
+  `Replication` reads of files on disk and `plan` steps are `debug` events, inside `locate`, `plan` and `diff` spans,
+  and each state a search reads is a `trace` event. Nothing is logged unless the program sets a subscriber.
 * **`HttpFetch`** implements it with `ureq`, which is blocking and has a small dependency tree. It makes one request at
   a time, follows redirects, and names itself `osmflow/<version>` in the `User-Agent`. It retries a request answered
   with 408, 429 or a 5xx status, or failing to connect or to read, up to 8 times by default: after the pause the
   server's `Retry-After` asks for (at most 10 minutes), or else after 1, 2, 4 and up to 60 seconds, each with a small
   random addition so clients do not retry in step.
+
+## Finding a time, and catching up over several streams
+
+Each stream numbers its diffs from its own start, so a sequence of one stream says nothing about another's; only
+their times line up. `locate` and `plan` work from state files alone, read through `StateSource`: the stream's latest
+state, and the state of one sequence, or `None` if the stream does not have it. `Replication` implements it, from a
+directory or a server through its cache, and a program that keeps state files elsewhere, as in a database,
+implements it in a few lines. Neither function does any I/O of its own, so both are tested on streams in memory.
+
+What a diff holds, and what its state's time means, comes from how the planet's are made (the
+[`planet` cookbook](https://github.com/openstreetmap/chef/tree/master/cookbooks/planet) of the OSM servers):
+
+* **A minute diff holds every version committed since the one before it,** from the database's log of commits
+  (`osmdbt`), sorted by type, ID and version: an object edited three times that minute is in it three times. Its
+  state's time is the newest timestamp of its changes, which the API server sets while it saves them, so a change
+  that commits late is in a later diff than changes made after it: by up to 42 seconds over the 1842 diffs 7364100 to
+  7365941 of November 2026, in which no state was older than the one before it. `LATE_MS`, ten minutes, is how late a
+  change is taken to show.
+* **An hour diff is its minute diffs merged, every version kept** (`osmosis --merge-replication-files`, run every 15
+  minutes): it holds the minute diffs after the previous hour's, up to the last before the first whose state is past
+  the hour, and its state's time is the hour. A day is made of hours the same way. Four hour diffs of November 2026
+  held exactly the changes of their 59 or 60 minute diffs each, and up to 21 versions of one object.
+* **A planet file says only when it was taken:** its header's replication timestamp is the newest timestamp in it
+  (`planet-dump-ng`), and it has no sequence. A Geofabrik extract's header gives the sequence and the base URL of its
+  own stream, which it is up to date with.
+
+* **`locate(source, time)`** gives the last state at or before a time: `Located::At(state)`, or
+  `Located::BeforeOldest(state)` when the stream no longer goes back that far, as Geofabrik's keep only some months.
+  It reads no diff. Diffs come at nearly fixed intervals, so it estimates the sequence from the times of the states it
+  has read, and a regular stream takes the latest state and 2 to 5 more. An estimate that misses doubles the next
+  step, and a range an estimate does not halve is halved instead, which bounds a stream with outages to about twice
+  the reads of a binary search. A stream's states must be one run of sequences, of which only the oldest may be gone;
+  a state missing between two the search has read is an `OscError::StateGap`.
+* **`plan(streams, start, to)`** takes streams from the coarsest to the finest, such as the planet's day, hour and
+  minute streams, and gives the `Step`s that read the changes after `start` up to `to` (or the finest stream's latest
+  state): each is a stream and a range of its diffs, `Step::sequences`, which `Replication::diffs` takes. Finer diffs
+  lead up to where a coarser one starts, as many coarser diffs follow as fit whole, and finer diffs end the plan, so
+  ten days behind takes about 10 day diffs and some tens of hour and minute diffs, instead of 14,400 minute diffs.
+* **A plan starts after a state, a time, or a snapshot.** `Start::After { stream, state }` is exact: where a step of
+  an earlier plan ended, or a Geofabrik extract's sequence on its stream. `Start::Time { timestamp_ms }` reads every
+  change made after a time and none before, from the first diff whose state is after it, as a diff's state is the
+  newest change it holds. `Start::Snapshot { timestamp_ms }` is a planet file's timestamp: a change the planet does
+  not have committed after it was taken and can be up to `LATE_MS` older than that, so the plan starts as from the
+  time `LATE_MS` before it, and its first diffs may repeat changes the planet has.
+* **No change is read twice where a plan changes streams:** it finds where each coarser diff ends among the finest
+  diffs, from the finest states around its time, by the rule the merge cuts it by. After an outage of the stream a
+  coarser one is merged from, longer than the coarser interval, the coarser diff in which it resumes may have been cut
+  early, holding only the first diff after the outage, which no state shows; the plan then reads up to an interval of
+  finer diffs that the coarser ones hold too, rather than miss any. Changes read twice come as whole versions of their
+  objects, so applying them again changes nothing, and a reader that counts changes drops each (type, ID, version) it
+  has seen. The tests model the merge run by run, outages included, and check that every plan reads every finest
+  diff.
+* **A plan reads only state files,** each a few hundred bytes: the latest state of each stream, and some around each
+  place it changes streams, some 130 for ten days of the planet's three streams in the tests. A `Replication` caches
+  the ones it downloads, so the diffs read after the plan come from the same cache, and planning again downloads only
+  the latest states. A coarser stream with no whole diff in a stretch is left out of it; the finest must go back to
+  the start, or the plan is an `OscError::TooOld`.

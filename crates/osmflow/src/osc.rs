@@ -3,7 +3,8 @@
 //! [`OscReader`] streams the changes of one file in file order, each an [`Action`] and an owned [`Object`] with all
 //! the metadata the file has. [`Replication`] reads a replication stream, from a local directory laid out as the
 //! servers lay theirs out or (with the `http` feature) from a server through a local cache, and decodes the next
-//! diffs ahead on background threads.
+//! diffs ahead on background threads. [`locate`] finds the diff a time falls in, and [`plan`] lays out a catch-up over
+//! day, hour and minute streams, both from state files read through any [`StateSource`].
 //!
 //! ```
 //! use osmflow::osc::{Action, Object, OscError, OscReader};
@@ -41,6 +42,7 @@ mod error;
 #[cfg(feature = "http")]
 mod http;
 mod parse;
+mod plan;
 mod replication;
 mod value;
 
@@ -51,8 +53,16 @@ pub use self::error::{OscError, StateError, XmlError, XmlPosition};
 #[cfg(feature = "http")]
 pub use self::http::HttpFetch;
 pub use self::parse::OscReader;
+pub use self::plan::{LATE_MS, Located, Start, StateSource, Step, locate, plan};
 pub use self::replication::{Diff, Diffs, Fetch, Replication, State, path_sequence, sequence_path};
 use crate::model::{Location, Member, MemberType};
+
+/// Parses a time written `YYYY-MM-DDThh:mm:ssZ`, as osmChange and state files write it, into milliseconds since 1970;
+/// `None` if it is not in that form, or names no real date or time.
+#[must_use]
+pub fn parse_timestamp(s: &str) -> Option<i64> {
+    value::timestamp_ms(s.as_bytes())
+}
 
 /// What a change does to its object: the section of the file it is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

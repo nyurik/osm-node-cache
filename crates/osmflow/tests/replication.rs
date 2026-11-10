@@ -11,7 +11,8 @@ use std::{fs, mem};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use osmflow::osc::{
-    Diff, Fetch, Object, OscError, Replication, State, StateError, path_sequence, sequence_path,
+    Diff, Fetch, Located, Object, OscError, Replication, State, StateError, StateSource as _,
+    locate, path_sequence, sequence_path,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -35,7 +36,7 @@ fn state_files() {
         timestamp_ms: 1_794_124_821_000,
     };
     assert_eq!(
-        State::read(fixture("planet-minute-7363600.state.txt")).unwrap(),
+        State::read(fixture("planet/minute/007/363/600.state.txt")).unwrap(),
         planet
     );
     // The same state with what Java properties allow: CRLF line ends, `!` comments, blank lines, white space around
@@ -236,13 +237,23 @@ fn local_stream() {
     assert_eq!(repl.sequence_state(3).unwrap(), state(3));
     assert_eq!(repl.diff_file(3).unwrap(), dir.join("000/000/003.osc.gz"));
     check(&repl.diff(4).unwrap(), 4, 1);
-    let diffs: Vec<Diff> = repl.diffs(2).unwrap().map(Result::unwrap).collect();
+    let diffs: Vec<Diff> = repl.diffs(2..).unwrap().map(Result::unwrap).collect();
     assert_eq!(diffs.len(), 4);
     for (diff, sequence) in diffs.iter().zip(2..) {
         check(diff, sequence, 1);
     }
-    assert_eq!(repl.diffs(6).unwrap().count(), 0);
-    assert_eq!(repl.diffs(5).unwrap().count(), 1);
+    assert_eq!(repl.diffs(6..).unwrap().count(), 0);
+    assert_eq!(repl.diffs(5..).unwrap().count(), 1);
+    // A range with an end reads just its diffs, past the latest state too, and needs no `state.txt`.
+    assert_eq!(sequences(repl.diffs(5..7).unwrap()), [5, 6]);
+    assert_eq!(repl.diffs(4..4).unwrap().count(), 0);
+    fs::rename(dir.join("state.txt"), dir.join("state.bak")).unwrap();
+    assert_eq!(sequences(repl.diffs(2..=3).unwrap()), [2, 3]);
+    assert!(
+        repl.diffs(2..).is_err(),
+        "an open range needs the latest state"
+    );
+    fs::rename(dir.join("state.bak"), dir.join("state.txt")).unwrap();
 
     // A state file naming another sequence is an error, as it is from a server.
     fs::write(dir.join("000/000/004.state.txt"), state_text(3)).unwrap();
@@ -265,7 +276,7 @@ fn read_ahead_keeps_order() {
     for read_ahead in [1, 2, 4, 16] {
         let mut diffs = Replication::local(&dir)
             .with_read_ahead(read_ahead)
-            .diffs(1)
+            .diffs(1..)
             .unwrap();
         check(&diffs.next().unwrap().unwrap(), 1, 200_000);
         assert_eq!(
@@ -275,7 +286,7 @@ fn read_ahead_keeps_order() {
         );
     }
     // Dropping the iterator early stops the threads reading ahead.
-    let first = Replication::local(&dir).diffs(1).unwrap().take(2).count();
+    let first = Replication::local(&dir).diffs(1..).unwrap().take(2).count();
     assert_eq!(first, 2);
 }
 
@@ -283,7 +294,7 @@ fn read_ahead_keeps_order() {
 fn errors_end_the_stream() {
     let dir = temp_dir("replication-missing");
     write_stream(&dir, &stream(5, [1, 2, 4, 5], 1));
-    let mut diffs = Replication::local(&dir).diffs(1).unwrap();
+    let mut diffs = Replication::local(&dir).diffs(1..).unwrap();
     assert_eq!(diffs.next().unwrap().unwrap().state.sequence, 1);
     assert_eq!(diffs.next().unwrap().unwrap().state.sequence, 2);
     let error = diffs.next().unwrap().unwrap_err();
@@ -295,7 +306,7 @@ fn errors_end_the_stream() {
 
     let empty = temp_dir("replication-empty");
     assert!(matches!(
-        Replication::local(&empty).diffs(1),
+        Replication::local(&empty).diffs(1..),
         Err(OscError::File { .. })
     ));
 }
@@ -397,7 +408,7 @@ fn a_panicking_fetcher_is_an_error_not_the_end() {
     let cache = temp_dir("replication-panic");
     let mock = Mock::new(&stream(5, 1..=5, 1));
     let repl = Replication::remote(BASE, &cache, Panicking(mock, "000/000/004.state.txt"));
-    let diffs: Vec<_> = repl.diffs(3).unwrap().collect();
+    let diffs: Vec<_> = repl.diffs(3..).unwrap().collect();
     assert_eq!(diffs.len(), 2, "{diffs:?}");
     assert_eq!(diffs[0].as_ref().unwrap().state.sequence, 3);
     assert!(matches!(diffs[1], Err(OscError::ReadAhead)), "{diffs:?}");
@@ -418,7 +429,7 @@ fn remote_stream_is_cached() {
     let files = stream(5, 1..=6, 1);
     let mock = Mock::new(&files);
     let repl = Replication::remote(&format!("{BASE}/"), &cache, mock.clone());
-    assert_eq!(sequences(repl.diffs(3).unwrap()), [3, 4, 5]);
+    assert_eq!(sequences(repl.diffs(3..).unwrap()), [3, 4, 5]);
     let mut expected = vec!["state.txt".to_owned()];
     for s in 3..=5 {
         expected.push(format!("000/000/00{s}.state.txt"));
@@ -427,7 +438,7 @@ fn remote_stream_is_cached() {
     assert_eq!(mock.requests(), expected);
 
     // Cached files are never downloaded again; only the latest state is.
-    assert_eq!(sequences(repl.diffs(3).unwrap()), [3, 4, 5]);
+    assert_eq!(sequences(repl.diffs(3..).unwrap()), [3, 4, 5]);
     assert_eq!(mock.requests(), ["state.txt"]);
     check(&repl.diff(4).unwrap(), 4, 1);
     assert_eq!(mock.requests(), Vec::<String>::new());
@@ -456,7 +467,7 @@ fn remote_stream_is_cached() {
         }
     }
     assert_eq!(
-        sequences(Replication::local(&cache).diffs(3).unwrap()),
+        sequences(Replication::local(&cache).diffs(3..).unwrap()),
         [3, 4, 5]
     );
 
@@ -466,11 +477,38 @@ fn remote_stream_is_cached() {
         .unwrap()
         .files
         .insert(format!("{BASE}/state.txt"), state_text(6).into_bytes());
-    assert_eq!(sequences(repl.diffs(5).unwrap()), [5, 6]);
+    assert_eq!(sequences(repl.diffs(5..).unwrap()), [5, 6]);
     assert_eq!(
         mock.requests(),
         ["state.txt", "000/000/006.state.txt", "000/000/006.osc.gz"]
     );
+}
+
+#[test]
+fn a_search_by_time_downloads_state_files_once_and_no_diff() {
+    // Diffs 10 to 59 are on the server, the older ones deleted.
+    let cache = temp_dir("replication-locate");
+    let mock = Mock::new(&stream(59, 10..=59, 1));
+    let repl = Replication::remote(BASE, &cache, mock.clone());
+    let t = state(30).timestamp_ms + 1000;
+    assert_eq!(locate(&repl, t).unwrap(), Located::At(state(30)));
+    let requests = mock.requests();
+    assert!(
+        requests.len() <= 6 && requests.iter().all(|r| r.ends_with("state.txt")),
+        "{requests:?}"
+    );
+    // Searched again, only the latest state is downloaded: the rest are in the cache.
+    assert_eq!(locate(&repl, t).unwrap(), Located::At(state(30)));
+    assert_eq!(mock.requests(), ["state.txt"]);
+    // Before the oldest diff kept, the server answers 404 for the older states.
+    assert_eq!(
+        locate(&repl, state(5).timestamp_ms).unwrap(),
+        Located::BeforeOldest(state(10))
+    );
+    // A local directory has no state for a diff it lacks.
+    let local = Replication::local(&cache);
+    assert_eq!(local.get(30).unwrap(), Some(state(30)));
+    assert_eq!(local.get(1000).unwrap(), None);
 }
 
 #[test]
@@ -520,7 +558,7 @@ fn remote_files_are_checked() {
         .unwrap()
         .files
         .remove(&format!("{BASE}/000/000/003.osc.gz"));
-    let mut diffs = repl.diffs(2).unwrap();
+    let mut diffs = repl.diffs(2..).unwrap();
     assert_eq!(diffs.next().unwrap().unwrap().state.sequence, 2);
     let error = diffs.next().unwrap().unwrap_err();
     assert!(
@@ -632,7 +670,7 @@ mod http {
         ]);
         let cache = temp_dir("replication-http");
         let repl = Replication::http(&format!("{base}/minute"), &cache);
-        let diffs: Vec<_> = repl.diffs(7).unwrap().map(Result::unwrap).collect();
+        let diffs: Vec<_> = repl.diffs(7..).unwrap().map(Result::unwrap).collect();
         assert_eq!(diffs.len(), 1);
         super::check(&diffs[0], 7, 3);
         assert_eq!(

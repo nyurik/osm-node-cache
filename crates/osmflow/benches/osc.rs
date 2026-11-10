@@ -65,7 +65,7 @@ fn path() -> PathBuf {
     env::var_os("OSMFLOW_BENCH_OSC").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("fixtures/osc/planet-minute-7363600.osc.gz")
+                .join("fixtures/osc/planet/minute/007/363/600.osc.gz")
         },
         PathBuf::from,
     )

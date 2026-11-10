@@ -1,8 +1,19 @@
-//! Writing values as JSON and as text: strings, coordinates, timestamps, counts, sizes and group kinds.
+//! Writing values as JSON and as text: strings, coordinates, timestamps, counts, sizes and group kinds; and widening
+//! ranges of them.
 
 use std::io::{self, Write};
 
 use osmflow::GroupKind;
+
+/// How `stats` and `seq` write what they find.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum Format {
+    /// Lines of text.
+    #[default]
+    Text,
+    /// One JSON object.
+    Json,
+}
 
 /// The names of the kinds of groups, in the order of [`group_index`].
 pub const GROUP_NAMES: [&str; 5] = ["plain nodes", "dense nodes", "ways", "relations", "empty"];
@@ -132,6 +143,115 @@ pub fn size(bytes: u64) -> String {
         || format!("{bytes} B"),
         |&(unit, name)| format!("{:.1} {name}", b / unit),
     )
+}
+
+/// Widens `range` to hold `low` and `high`.
+pub fn widen<T: Ord + Copy>(range: &mut Option<(T, T)>, low: T, high: T) {
+    *range = Some(match *range {
+        Some((a, b)) => (a.min(low), b.max(high)),
+        None => (low, high),
+    });
+}
+
+/// Writes `s` as a JSON string, or `null`.
+pub fn opt_str(o: &mut impl Write, s: Option<&str>) -> io::Result<()> {
+    match s {
+        Some(s) => json_str(o, s),
+        None => o.write_all(b"null"),
+    }
+}
+
+/// Writes `n` as a JSON number, or `null`.
+pub fn opt_num(o: &mut impl Write, n: Option<i64>) -> io::Result<()> {
+    match n {
+        Some(n) => write!(o, "{n}"),
+        None => o.write_all(b"null"),
+    }
+}
+
+/// West, south, east and north, from the ranges of latitudes and longitudes.
+fn bounds(lat: Option<(i32, i32)>, lon: Option<(i32, i32)>) -> Option<[i32; 4]> {
+    let ((south, north), (west, east)) = (lat?, lon?);
+    Some([west, south, east, north])
+}
+
+/// Writes the line `node extent   lon W .. E, lat S .. N` of a summary, if there are nodes.
+pub fn extent_line(
+    o: &mut impl Write,
+    lat: Option<(i32, i32)>,
+    lon: Option<(i32, i32)>,
+) -> io::Result<()> {
+    let Some([west, south, east, north]) = bounds(lat, lon) else {
+        return Ok(());
+    };
+    o.write_all(b"node extent   lon ")?;
+    degrees(o, west)?;
+    o.write_all(b" .. ")?;
+    degrees(o, east)?;
+    o.write_all(b", lat ")?;
+    degrees(o, south)?;
+    o.write_all(b" .. ")?;
+    degrees(o, north)?;
+    writeln!(o)
+}
+
+/// Writes the extent of a JSON summary: `[west,south,east,north]`, or `null` without nodes.
+pub fn extent_json(
+    o: &mut impl Write,
+    lat: Option<(i32, i32)>,
+    lon: Option<(i32, i32)>,
+) -> io::Result<()> {
+    let Some(bounds) = bounds(lat, lon) else {
+        return o.write_all(b"null");
+    };
+    o.write_all(b"[")?;
+    for (i, v) in bounds.into_iter().enumerate() {
+        if i > 0 {
+            o.write_all(b",")?;
+        }
+        degrees(o, v)?;
+    }
+    o.write_all(b"]")
+}
+
+/// Writes `"first_timestamp":…,"last_timestamp":…` of a JSON summary, `null` without timestamps.
+pub fn time_span_json(o: &mut impl Write, time: Option<(i64, i64)>) -> io::Result<()> {
+    o.write_all(br#""first_timestamp":"#)?;
+    opt_time(o, time.map(|t| t.0))?;
+    o.write_all(br#","last_timestamp":"#)?;
+    opt_time(o, time.map(|t| t.1))
+}
+
+/// Writes the start of a summary's timestamps line, `timestamps    FIRST .. LAST`, without its end of line.
+pub fn time_span(o: &mut impl Write, (first, last): (i64, i64)) -> io::Result<()> {
+    o.write_all(b"timestamps    ")?;
+    timestamp(o, first)?;
+    o.write_all(b" .. ")?;
+    timestamp(o, last)
+}
+
+/// Writes milliseconds since 1970 as a quoted ISO 8601 time, or `null`.
+pub fn opt_time(o: &mut impl Write, ms: Option<i64>) -> io::Result<()> {
+    match ms {
+        Some(ms) => {
+            o.write_all(b"\"")?;
+            timestamp(o, ms)?;
+            o.write_all(b"\"")
+        }
+        None => o.write_all(b"null"),
+    }
+}
+
+/// Writes strings as a JSON array.
+pub fn str_array(o: &mut impl Write, items: &[String]) -> io::Result<()> {
+    o.write_all(b"[")?;
+    for (i, s) in items.iter().enumerate() {
+        if i > 0 {
+            o.write_all(b",")?;
+        }
+        json_str(o, s)?;
+    }
+    o.write_all(b"]")
 }
 
 #[cfg(test)]
