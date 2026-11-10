@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str;
 
-use super::codec::u16_at;
+use super::codec::{u16_at, u64_at};
 use super::{MAX_NODE_ID, NodeStoreError, Result};
 use crate::Location;
 
@@ -132,6 +132,28 @@ pub enum LoadState {
         /// The highest node ID the interrupted load kept, if it kept any.
         last_id: Option<u64>,
     },
+}
+
+impl LoadState {
+    /// Writes the state into a file store's header at `at`: the last loaded ID (u64), then whether a bulk load is
+    /// unfinished (1) and has kept nodes (2). The header is zero there before.
+    pub(crate) fn encode(self, h: &mut [u8], at: usize) {
+        if let Self::Loading { last_id } = self {
+            h[at..at + 8].copy_from_slice(&last_id.unwrap_or(0).to_le_bytes());
+            h[at + 8] = 1 + u8::from(last_id.is_some());
+        }
+    }
+
+    /// The state that [`encode`](Self::encode) wrote at `at`.
+    pub(crate) fn decode(h: &[u8], at: usize) -> Self {
+        match h[at + 8] {
+            0 => Self::Complete,
+            1 => Self::Loading { last_id: None },
+            _ => Self::Loading {
+                last_id: Some(u64_at(h, at)),
+            },
+        }
+    }
 }
 
 /// What [`FileStore::open_and_fix`] repaired.
@@ -315,6 +337,14 @@ pub(crate) fn check_order(last: Option<u64>, id: u64) -> Result<()> {
         Some(last) if id <= last => Err(NodeStoreError::NotAscending { id, last }),
         _ => Ok(()),
     }
+}
+
+/// Checks a bulk loaded node, and that it comes after `last`, which it then becomes.
+pub(crate) fn check_next(last: &mut Option<u64>, id: u64, loc: Location) -> Result<()> {
+    check(id, loc)?;
+    check_order(*last, id)?;
+    *last = Some(id);
+    Ok(())
 }
 
 /// Checks a node a resumed load was given again against the stored one.

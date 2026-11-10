@@ -13,11 +13,11 @@ use std::thread::{self, JoinHandle};
 
 use memmap2::{Mmap, MmapMut, MmapOptions};
 
-use super::codec::{u32_at, u64_at};
+use super::codec::u64_at;
 use super::file::{
-    At as _, crc, header_copies, map_file, open_ro, open_rw, read_at, sync_dir, write_at,
+    At as _, header_copies, map_file, open_ro, open_rw, read_at, seal, sealed, sync_dir, write_at,
 };
-use super::store::{check, check_order, check_resumed};
+use super::store::{check, check_next, check_resumed};
 use super::{
     BulkLoad, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead, NodeReader,
     NodeStore, NodeStoreError, ReadOnly, ReadWrite, Result,
@@ -61,30 +61,18 @@ impl Header {
         h[8..12].copy_from_slice(&VERSION.to_le_bytes());
         h[16..24].copy_from_slice(&self.generation.to_le_bytes());
         h[24..32].copy_from_slice(&self.stamp.to_le_bytes());
-        if let LoadState::Loading { last_id } = self.state {
-            h[32..40].copy_from_slice(&last_id.unwrap_or(0).to_le_bytes());
-            h[40] = 1 + u8::from(last_id.is_some());
-        }
+        self.state.encode(&mut h, 32);
         metadata.encode(&mut h);
-        h.resize(SLOT - 4, 0);
-        let crc = crc(&h);
-        h.extend_from_slice(&crc.to_le_bytes());
-        h
+        seal(h, SLOT)
     }
 
     fn decode(h: &[u8]) -> Option<(Self, Metadata)> {
-        let intact = &h[..8] == MAGIC && crc(&h[..SLOT - 4]) == u32_at(h, SLOT - 4);
-        let metadata = Metadata::decode(&h[METADATA_AT..SLOT - 4]).filter(|_| intact)?;
+        let metadata =
+            Metadata::decode(&h[METADATA_AT..SLOT - 4]).filter(|_| sealed(h, *MAGIC, SLOT))?;
         let header = Self {
             generation: u64_at(h, 16),
             stamp: u64_at(h, 24),
-            state: match h[40] {
-                0 => LoadState::Complete,
-                1 => LoadState::Loading { last_id: None },
-                _ => LoadState::Loading {
-                    last_id: Some(u64_at(h, 32)),
-                },
-            },
+            state: LoadState::decode(h, 32),
         };
         Some((header, metadata))
     }
@@ -493,9 +481,7 @@ impl BulkLoad for DenseLoader<'_> {
     }
 
     fn push(&mut self, id: u64, loc: Location) -> Result<()> {
-        check(id, loc)?;
-        check_order(self.last_id, id)?;
-        self.last_id = Some(id);
+        check_next(&mut self.last_id, id, loc)?;
         if self.resume.is_some_and(|r| id <= r) {
             return check_resumed(self.store.value(id), id, loc);
         }

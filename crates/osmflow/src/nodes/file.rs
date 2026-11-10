@@ -175,6 +175,19 @@ pub(crate) fn crc(bytes: &[u8]) -> u32 {
     crc32fast::hash(bytes)
 }
 
+/// Pads a copy of a store's header to `slot` bytes, the last 4 being the CRC-32 of the bytes before them.
+pub(crate) fn seal(mut h: Vec<u8>, slot: usize) -> Vec<u8> {
+    h.resize(slot - 4, 0);
+    let crc = crc(&h);
+    h.extend_from_slice(&crc.to_le_bytes());
+    h
+}
+
+/// Whether a copy of a store's header, `slot` bytes [`seal`]ed, starts with `magic` and is intact.
+pub(crate) fn sealed(h: &[u8], magic: [u8; 8], slot: usize) -> bool {
+    h[..8] == magic && crc(&h[..slot - 4]) == u32_at(h, slot - 4)
+}
+
 /// Reads all of `file`, the store's file at `path`, into the page cache, with as many threads as
 /// cores reading chunks of it in turn: the OS's own read-ahead keeps too few requests in flight for
 /// one reader to get the most from a network disk. It reads through the store's own handle, as
