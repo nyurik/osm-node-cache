@@ -9,6 +9,10 @@ binstall_args := if env('CI', '') != '' {'--no-confirm --no-track --disable-tele
 coverage_lcov := 'target/llvm-cov/lcov.info'
 # location of the jscpd copy/paste detection reports, used by CI
 cpd_output := 'target/jscpd'
+# Where `dist` puts the release asset: osmflow-<target>.tar.gz, or .zip for Windows, with the binary and the licenses,
+# as crates/osmflow-cli/Cargo.toml's binstall metadata expects
+dist_dir := 'target/dist'
+dist_build := 'cargo build --release --locked --package osmflow-cli --bin osmflow --target'
 
 # if running in CI, treat warnings as errors by setting CARGO_BUILD_WARNINGS to 'deny' unless it is already set
 # Use `CI=true just ci-test` to run the same tests as in GitHub CI.
@@ -80,6 +84,25 @@ _coverage *report_args:  (cargo-install 'cargo-llvm-cov')
 # Find copy/pasted code with jscpd, configured in .jscpd.json. See `just cpd --help` for all options
 cpd *args:  (cargo-install 'jscpd' 'jscpd --bin jscpd' '--bin-dir={bin}{binary-ext}')
     jscpd {{args}}
+
+# Build osmflow-cli's release binary for `target`, on Linux or macOS, and pack it as the release asset in `target/dist`
+[unix]
+dist target:
+    rustup target add {{quote(target)}}
+    {{dist_build}} {{quote(target)}}
+    rm -rf {{quote(dist_dir / 'osmflow-' + target)}}* && mkdir -p {{quote(dist_dir / 'osmflow-' + target)}}
+    cp {{quote('target' / target / 'release/osmflow')}} LICENSE-MIT LICENSE-APACHE {{quote(dist_dir / 'osmflow-' + target)}}/
+    cd {{quote(dist_dir / 'osmflow-' + target)}} && tar acf {{quote('../osmflow-' + target + '.tar.gz')}} osmflow LICENSE-MIT LICENSE-APACHE
+
+# Build osmflow-cli's release binary for `target`, on Windows, and pack it as the release asset in `target/dist`, with
+# the C runtime linked in, so the binary needs no Visual C++ redistributable
+[windows]
+dist target:
+    rustup target add {{quote(target)}}
+    RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static" {{dist_build}} {{quote(target)}}
+    rm -rf {{quote(dist_dir / 'osmflow-' + target)}}* && mkdir -p {{quote(dist_dir / 'osmflow-' + target)}}
+    cp {{quote('target' / target / 'release/osmflow.exe')}} LICENSE-MIT LICENSE-APACHE {{quote(dist_dir / 'osmflow-' + target)}}/
+    cd {{quote(dist_dir / 'osmflow-' + target)}} && 7z a {{quote('../osmflow-' + target + '.zip')}} osmflow.exe LICENSE-MIT LICENSE-APACHE
 
 # Build and open code documentation
 docs *args='--open':
@@ -176,8 +199,11 @@ semver *args:  (cargo-install 'cargo-semver-checks')
 
 # Run all tests
 test:
-    cargo test --workspace --all-features --all-targets
-    cargo test --doc --workspace --all-features
+    # The osmpbf bench builds flate2 with zlib-ng, which flate2 prefers over osmflow's zlib-rs in every crate built with it:
+    # it is tested on its own, so that osmflow's tests use the zlib-rs that osmflow's users get
+    cargo test --workspace --exclude osm-bench-osmpbf --all-features --all-targets
+    cargo test --package osm-bench-osmpbf --all-features --all-targets
+    cargo test --doc --workspace --exclude osm-bench-osmpbf --all-features
 
 # Test documentation generation
 test-doc:  (docs '')

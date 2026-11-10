@@ -14,7 +14,7 @@ harness = false
 
 [dev-dependencies]
 osm-bench.workspace = true
-osmpbf.workspace = true
+osmpbf = { workspace = true, features = ["zlib-ng"] }
 
 [lints]
 workspace = true

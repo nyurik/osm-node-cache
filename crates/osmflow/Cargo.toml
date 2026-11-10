@@ -60,7 +60,8 @@ rustix = { workspace = true, optional = true }
 buffa-build.workspace = true
 criterion.workspace = true
 insta.workspace = true
-osmpbf.workspace = true
+# The pure Rust backend: flate2 then decodes with osmflow's zlib-rs in the tests, as for osmflow's users
+osmpbf = { workspace = true, features = ["rust-zlib"] }
 osmpbfreader.workspace = true
 rand.workspace = true
 test_each_file.workspace = true

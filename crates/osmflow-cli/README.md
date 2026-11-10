@@ -1,5 +1,12 @@
 # osmflow-cli
 
+[![GitHub repo](https://img.shields.io/badge/github-nyurik/osmflow-8da0cb?logo=github)](https://github.com/nyurik/osmflow)
+[![crates.io version](https://img.shields.io/crates/v/osmflow-cli)](https://crates.io/crates/osmflow-cli)
+[![crate usage](https://img.shields.io/crates/d/osmflow-cli)](https://crates.io/crates/osmflow-cli)
+[![crates.io license](https://img.shields.io/crates/l/osmflow-cli)](https://github.com/nyurik/osmflow/blob/main/LICENSE-APACHE)
+[![CI build status](https://github.com/nyurik/osmflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osmflow/actions)
+[![Codecov](https://img.shields.io/codecov/c/github/nyurik/osmflow?component=osmflow-cli)](https://app.codecov.io/gh/nyurik/osmflow/components)
+
 The `osmflow` command, built on the [`osmflow`](https://crates.io/crates/osmflow) crate: it dumps the objects of
 OpenStreetMap PBF files and the changes of osmChange files and replication streams as text or GeoJSON, summarizes
 them, and keeps them in PostgreSQL, current from replication.

@@ -9,3 +9,13 @@ coverage:
   status:
     patch: off
     project: off
+
+# One component per crate, for the coverage badges in README.md
+component_management:
+  individual_components:
+    - component_id: osmflow
+      paths: [ "crates/osmflow/**" ]
+    - component_id: osmflow-sync
+      paths: [ "crates/osmflow-sync/**" ]
+    - component_id: osmflow-cli
+      paths: [ "crates/osmflow-cli/**" ]

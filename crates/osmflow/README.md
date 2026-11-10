@@ -1,5 +1,13 @@
 # osmflow
 
+[![GitHub repo](https://img.shields.io/badge/github-nyurik/osmflow-8da0cb?logo=github)](https://github.com/nyurik/osmflow)
+[![crates.io version](https://img.shields.io/crates/v/osmflow)](https://crates.io/crates/osmflow)
+[![crate usage](https://img.shields.io/crates/d/osmflow)](https://crates.io/crates/osmflow)
+[![docs.rs status](https://img.shields.io/docsrs/osmflow)](https://docs.rs/osmflow)
+[![crates.io license](https://img.shields.io/crates/l/osmflow)](https://github.com/nyurik/osmflow/blob/main/LICENSE-APACHE)
+[![CI build status](https://github.com/nyurik/osmflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osmflow/actions)
+[![Codecov](https://img.shields.io/codecov/c/github/nyurik/osmflow?component=osmflow)](https://app.codecov.io/gh/nyurik/osmflow/components)
+
 Fast, parallel reading of [OpenStreetMap](https://www.openstreetmap.org) PBF files, from a city extract to the planet.
 
 ```rust
