@@ -435,7 +435,8 @@ impl<'a> Known<'a> {
     }
 
     /// [`locate`], starting between the states already read nearest `t` when there is one at or before it, rather
-    /// than from the latest state: the plan locates several times a few minutes apart.
+    /// than from the latest state: the plan locates several times a few minutes apart. Where states are older than
+    /// ones before them, the state found, at or before `t` with the next after it, may differ from [`locate`]'s.
     fn locate(&self, t: i64) -> Result<Located, OscError> {
         let near = {
             let seen = self.seen.borrow();
@@ -1056,6 +1057,31 @@ mod tests {
 
     fn after(stream: usize, state: State) -> Start {
         Start::After { stream, state }
+    }
+
+    #[test]
+    fn a_search_near_states_read_before_finds_a_state_at_the_time() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let mut times = minutes(&mut rng, 2);
+        // Some minutes older than the minute before, by up to `COMMIT_DELAY`.
+        for _ in 0..200 {
+            let m = rng.random_range(1..times.len());
+            times[m] = times[m - 1] - rng.random_range(0..DELAY_MS);
+        }
+        let stream = Stream::of(1, times.into());
+        let known = Known::new(0, &stream).unwrap();
+        // Times a few minutes apart, as a plan locates them, each after the reads of the ones before.
+        let mut t = 30 * MINUTE;
+        for _ in 0..300 {
+            t += rng.random_range(-10..20) * MINUTE + rng.random_range(0..60) * SECOND;
+            let Located::At(state) = known.locate(t).unwrap() else {
+                panic!("{t} is in the stream");
+            };
+            assert!(state.timestamp.as_millis() <= t, "{t}");
+            if let Some(next) = known.next(state).unwrap() {
+                assert!(next.timestamp.as_millis() > t, "{t}");
+            }
+        }
     }
 
     #[test]

@@ -19,8 +19,9 @@ pub struct Args {
     /// A replication directory or server URL.
     ///
     /// A directory laid out as the servers lay theirs out, or a server's URL: one stream, as
-    /// `https://planet.openstreetmap.org/replication/minute`, or a root of `day`, `hour` and `minute` streams, as
-    /// `https://planet.openstreetmap.org/replication`, which `--stream` chooses from.
+    /// `https://planet.openstreetmap.org/replication/minute`, which is searched alone, or a root of `day`, `hour` and
+    /// `minute` streams, as `https://planet.openstreetmap.org/replication`, whose `minute` stream is searched, with a
+    /// catch-up planned through all three.
     input: PathBuf,
     /// A time, a PBF file, a state file, or `latest`.
     ///
@@ -30,45 +31,13 @@ pub struct Args {
     when: When,
     /// Where to keep a server's downloaded state files.
     ///
-    /// Without it, the few state files the search reads are downloaded each time. The streams beside it, which a
-    /// catch-up reads, are read without it.
+    /// Without it, the few state files the search reads are downloaded each time. A root's `day` and `hour` streams,
+    /// which a catch-up reads, are read without it.
     #[arg(long, value_name = "DIR")]
     cache: Option<PathBuf>,
-    /// Which stream to search, for a server laid out as `day`, `hour` and `minute` streams.
-    ///
-    /// Default: `auto` when the input is the directory or URL holding the three streams, and only the stream given
-    /// otherwise.
-    #[arg(long, value_enum)]
-    stream: Option<Streams>,
     /// The output format.
     #[arg(short, long, value_enum, default_value_t)]
     format: SummaryFormat,
-}
-
-/// The streams to read, of `--stream`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Streams {
-    /// Search the `minute` stream, or the stream given, and also plan the fewest diffs to catch up through all three
-    /// streams. Reads some 35 state files more, about 12 s more on the planet's server.
-    Auto,
-    /// Search the `day` stream only.
-    Day,
-    /// Search the `hour` stream only.
-    Hour,
-    /// Search the `minute` stream only.
-    Minute,
-}
-
-impl Streams {
-    /// The name of the one stream chosen, as the layout names it: `None` for `auto`.
-    fn name(self) -> Option<&'static str> {
-        match self {
-            Self::Auto => None,
-            Self::Day => Some("day"),
-            Self::Hour => Some("hour"),
-            Self::Minute => Some("minute"),
-        }
-    }
 }
 
 /// The point of a stream to find.
@@ -126,20 +95,19 @@ struct Opened {
     url: Option<String>,
 }
 
-/// The streams of a replication server's layout, coarsest first.
-const LAYOUT: [&str; 3] = ["day", "hour", "minute"];
-
-/// A stream of a server's layout.
-struct Member {
-    name: &'static str,
-    input: Input,
+/// A root of `day`, `hour` and `minute` streams.
+enum Root {
+    Dir(PathBuf),
+    Url(String),
 }
 
-/// The streams of a layout a catch-up reads through, and which of them was searched.
-struct Layout {
-    members: Vec<Member>,
-    /// The index in `members` of the stream searched.
-    searched: usize,
+impl Root {
+    fn stream(&self, name: &str) -> Input {
+        match self {
+            Self::Dir(dir) => Input::Dir(dir.join(name)),
+            Self::Url(url) => Input::Url(format!("{url}/{name}")),
+        }
+    }
 }
 
 /// A catch-up from the point through the streams of the layout, as the plan reads it.
@@ -167,7 +135,7 @@ pub fn run(args: &Args) -> Result<()> {
             input.name()
         );
     }
-    let (opened, layout) = open(&input, args.stream, args.cache.as_deref())?;
+    let (opened, root) = open(&input, args.cache.as_deref())?;
     let Opened {
         input,
         source,
@@ -175,9 +143,9 @@ pub fn run(args: &Args) -> Result<()> {
         url,
     } = opened;
     let found = find(source.as_ref(), latest, url.as_deref(), &args.when)?;
-    let catch_up = match layout {
-        Some(layout) if !matches!(found.point, Point::Latest) => {
-            catch_up(&layout, source, found.start)?
+    let catch_up = match root {
+        Some(root) if !matches!(found.point, Point::Latest) => {
+            catch_up(&root, source, found.start)?
         }
         _ => None,
     };
@@ -233,179 +201,73 @@ fn find(source: &dyn StateSource, latest: State, url: Option<&str>, when: &When)
     })
 }
 
-/// The name of the layout a stream has, `day`, `hour` or `minute`, as the last part of its path or URL.
-fn layout_name(input: &Input) -> Option<&'static str> {
-    let last = match input {
-        Input::Url(url) => url.rsplit('/').next(),
-        Input::Dir(dir) => dir.file_name().and_then(|n| n.to_str()),
-        Input::Pbf(_) | Input::Osc(_) | Input::State(_) => None,
-    };
-    LAYOUT.into_iter().find(|&name| last == Some(name))
+fn opened(input: Input, cache: Option<&Path>) -> Result<Opened> {
+    let (source, latest, url) = stream_states(&input, cache)?;
+    Ok(Opened {
+        input,
+        source,
+        latest,
+        url,
+    })
 }
 
-/// The stream `name` inside `root`.
-fn inside(root: &Input, name: &str) -> Option<Input> {
-    match root {
-        Input::Url(url) => Some(Input::Url(format!("{url}/{name}"))),
-        Input::Dir(dir) => Some(Input::Dir(dir.join(name))),
-        Input::Pbf(_) | Input::Osc(_) | Input::State(_) => None,
-    }
-}
-
-/// The root of a stream named by the layout, which holds it and the others.
-fn root_of(stream: &Input) -> Option<Input> {
-    match stream {
-        Input::Url(url) => Some(Input::Url(url.rsplit_once('/')?.0.to_owned())),
-        Input::Dir(dir) => Some(Input::Dir(dir.parent()?.to_owned())),
-        Input::Pbf(_) | Input::Osc(_) | Input::State(_) => None,
-    }
-}
-
-/// The streams of the layout inside `root`, coarsest first.
-fn members(root: &Input) -> Vec<Member> {
-    LAYOUT
-        .iter()
-        .filter_map(|&name| {
-            Some(Member {
-                name,
-                input: inside(root, name)?,
-            })
-        })
-        .collect()
-}
-
-/// Opens a stream input for searching, with the layout a catch-up reads through, if `streams` asks for one.
-///
-/// A stream named by `streams` is the one of that name inside a root, or beside a stream the layout names. Otherwise
-/// a root of streams, which is no stream itself, is searched as its `minute` stream with a catch-up through the
-/// streams it holds, and a stream alone, unless `streams` is `auto` and the layout names it.
-fn open(
-    input: &Input,
-    streams: Option<Streams>,
-    cache: Option<&Path>,
-) -> Result<(Opened, Option<Layout>)> {
-    let opened = |input: Input| -> Result<Opened> {
-        let (source, latest, url) = stream_states(&input, cache)?;
-        Ok(Opened {
-            input,
-            source,
-            latest,
-            url,
-        })
-    };
-    let in_root = |root: &Input| -> Result<(Opened, Option<Layout>)> {
-        let minute = inside(root, "minute").expect("a directory or URL has streams inside it");
-        let layout = Layout {
-            members: members(root),
-            searched: layout_index("minute"),
-        };
-        Ok((opened(minute)?, Some(layout)))
-    };
-    if let Some(name) = streams.and_then(Streams::name) {
-        let root = match layout_name(input) {
-            Some(_) => root_of(input).expect("a stream the layout names has a root"),
-            None => input.clone(),
-        };
-        let stream = inside(&root, name).expect("a directory or URL has streams inside it");
-        return Ok((opened(stream)?, None));
-    }
-    if is_root(input) {
-        return in_root(input);
-    }
-    match opened(input.clone()) {
-        Ok(stream) => {
-            let layout = match (streams, layout_name(input)) {
-                (None, _) => None,
-                (Some(_), Some(name)) => Some(Layout {
-                    members: members(
-                        &root_of(input).expect("a stream the layout names has a root"),
-                    ),
-                    searched: layout_index(name),
-                }),
-                (Some(_), None) => bail!(
-                    "--stream auto plans through the day, hour and minute streams, and {} is not one of them",
-                    input.name()
-                ),
-            };
-            Ok((stream, layout))
+/// Opens a stream input for searching: a stream alone, or a root of streams, which is no stream itself, as its
+/// `minute` stream, with the root for a catch-up.
+fn open(input: &Input, cache: Option<&Path>) -> Result<(Opened, Option<Root>)> {
+    let root = if let Input::Dir(dir) = input
+        && !dir.join("state.txt").exists()
+        && dir.join("minute").is_dir()
+    {
+        Root::Dir(dir.clone())
+    } else {
+        match (input, opened(input.clone(), cache)) {
+            (_, Ok(stream)) => return Ok((stream, None)),
+            // A server's root of streams has no `state.txt` of its own.
+            (Input::Url(url), Err(e)) if is_no_stream(&e) => Root::Url(url.clone()),
+            (_, Err(e)) => return Err(e),
         }
-        // A server's root of streams has no `state.txt` of its own.
-        Err(e) if is_no_stream(&e) && matches!(input, Input::Url(_)) => in_root(input),
-        Err(e) => Err(e),
-    }
+    };
+    Ok((opened(root.stream("minute"), cache)?, Some(root)))
 }
 
-/// Where the layout has `name`.
-fn layout_index(name: &str) -> usize {
-    LAYOUT
-        .iter()
-        .position(|&n| n == name)
-        .expect("a name of the layout")
-}
-
-/// Whether a directory is a root of streams: it holds a `minute` stream, and has no state of its own.
-fn is_root(input: &Input) -> bool {
-    matches!(input, Input::Dir(dir) if !dir.join("state.txt").exists() && dir.join("minute").is_dir())
-}
-
-/// The state files and latest state of a stream beside the one searched, or `None` if it is not there: a directory
-/// that does not exist, or a server's stream without a `state.txt`.
-fn open_member(member: &Member) -> Result<Option<(Source, State)>> {
-    if let Input::Dir(dir) = &member.input
+/// The state files of the stream `name` of a root, or `None` if it is not there: a directory that does not exist,
+/// or a server's stream without a `state.txt`.
+fn open_coarser(root: &Root, name: &'static str) -> Result<Option<(&'static str, Source)>> {
+    let input = root.stream(name);
+    if let Input::Dir(dir) = &input
         && !dir.is_dir()
     {
         return Ok(None);
     }
-    match stream_states(&member.input, None) {
-        Ok((source, latest, _)) => Ok(Some((source, latest))),
+    match stream_states(&input, None) {
+        Ok((source, _, _)) => Ok(Some((name, source))),
         Err(e) if is_no_stream(&e) => Ok(None),
-        Err(e) => Err(e.context(format!(
-            "cannot read the {} stream {}",
-            member.name,
-            member.input.name()
-        ))),
+        Err(e) => Err(e.context(format!("cannot read the {name} stream {}", input.name()))),
     }
 }
 
-/// The catch-up from `start` in the stream searched, read through `source`, through the streams of `layout` that are
-/// there: `None` if the stream searched is the only one. The others' latest states are read at once.
-fn catch_up(layout: &Layout, source: Source, start: Start) -> Result<Option<CatchUp>> {
-    let opened: Vec<Option<Source>> = thread::scope(|scope| {
-        let reading: Vec<_> = layout
-            .members
-            .iter()
-            .enumerate()
-            .map(|(i, member)| (i != layout.searched).then(|| scope.spawn(|| open_member(member))))
-            .collect();
-        let mut source = Some(source);
-        reading
+/// The catch-up from `start` in the `minute` stream of `root`, read through `minute`, through the `day` and `hour`
+/// streams that are there, whose latest states are read at once: `None` if neither is.
+fn catch_up(root: &Root, minute: Source, start: Start) -> Result<Option<CatchUp>> {
+    let coarser: Vec<_> = thread::scope(|scope| {
+        ["day", "hour"]
+            .map(|name| scope.spawn(move || open_coarser(root, name)))
             .into_iter()
-            .map(|reading| match reading {
-                None => Ok(source.take()),
-                Some(handle) => handle
+            .map(|handle| {
+                handle
                     .join()
                     .unwrap_or_else(|panic| panic::resume_unwind(panic))
-                    .map(|opened| opened.map(|(source, _)| source)),
             })
             .collect::<Result<_>>()
     })?;
-    // The stream searched is there, so it is after as many as are there before it.
-    let searched = opened[..layout.searched]
-        .iter()
-        .filter(|s| s.is_some())
-        .count();
-    let streams: Vec<(&'static str, Source)> = layout
-        .members
-        .iter()
-        .zip(opened)
-        .filter_map(|(member, source)| Some((member.name, source?)))
-        .collect();
-    if streams.len() < 2 {
+    let mut streams: Vec<(&'static str, Source)> = coarser.into_iter().flatten().collect();
+    if streams.is_empty() {
         return Ok(None);
     }
+    streams.push(("minute", minute));
     let start = match start {
         Start::After { state, .. } => Start::After {
-            stream: searched,
+            stream: streams.len() - 1,
             state,
         },
         start @ (Start::Time { .. } | Start::Snapshot { .. }) => start,
@@ -674,86 +536,38 @@ mod tests {
         });
         write_stream(&root.join("day"), 0..=0, |_| t0);
 
-        let (opened, layout) = open(&Input::Dir(root.to_owned()), None, None).unwrap();
+        let (opened, root_found) = open(&Input::Dir(root.to_owned()), None).unwrap();
         assert_eq!(opened.input, Input::Dir(root.join("minute")));
         assert_eq!(opened.latest.sequence, 180);
-        let layout = layout.unwrap();
-        assert_eq!(
-            layout.members.iter().map(|m| m.name).collect::<Vec<_>>(),
-            LAYOUT
-        );
-        assert_eq!(layout.searched, 2);
+        let root_found = root_found.unwrap();
+        let legs = |source, start| {
+            let plan = catch_up(&root_found, source, start).unwrap().unwrap();
+            assert_eq!(plan.streams, ["day", "hour", "minute"]);
+            plan.legs
+                .iter()
+                .map(|l| (l.stream, l.first, l.last))
+                .collect::<Vec<_>>()
+        };
         // Half an hour in: minutes to the first hour's end, then the two hours after it.
         let start = Start::Time {
             at: Timestamp::from_millis(t0 + 30 * 60_000),
         };
-        let plan = catch_up(&layout, opened.source, start).unwrap().unwrap();
-        assert_eq!(plan.streams, LAYOUT);
-        let legs: Vec<_> = plan
-            .legs
-            .iter()
-            .map(|l| (l.stream, l.first, l.last))
-            .collect();
-        assert_eq!(legs, [("minute", 31, 60), ("hour", 2, 3)]);
-        // From a diff of the hour stream: the hours after it, then the minutes after the last hour.
-        let (hour, layout) =
-            open(&Input::Dir(root.join("hour")), Some(Streams::Auto), None).unwrap();
-        let layout = layout.unwrap();
-        assert_eq!(layout.searched, 1);
-        let start = Start::After {
-            stream: 0,
-            state: hour.source.get(1).unwrap().unwrap(),
-        };
-        let plan = catch_up(&layout, hour.source, start).unwrap().unwrap();
-        let legs: Vec<_> = plan
-            .legs
-            .iter()
-            .map(|l| (l.stream, l.first, l.last))
-            .collect();
-        assert_eq!(legs, [("hour", 2, 3)]);
-    }
-
-    #[test]
-    fn stream_chooses_one_stream_or_the_layout() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        for name in LAYOUT {
-            write_stream(&root.join(name), 0..=2, |n| {
-                i64::try_from(n).unwrap() * HOUR
-            });
-        }
-        let open_in = |path: &Path, streams| {
-            let (opened, layout) = open(&Input::Dir(path.to_owned()), streams, None).unwrap();
-            (opened.input, layout.map(|l| l.searched))
-        };
-        let (hour, minute) = (root.join("hour"), root.join("minute"));
-        assert_eq!(open_in(root, None), (Input::Dir(minute.clone()), Some(2)));
         assert_eq!(
-            open_in(root, Some(Streams::Auto)),
-            (Input::Dir(minute.clone()), Some(2))
+            legs(opened.source, start),
+            [("minute", 31, 60), ("hour", 2, 3)]
         );
+        // After a minute diff, as a state file gives it.
+        let (opened, _) = open(&Input::Dir(root.to_owned()), None).unwrap();
+        let state = opened.source.get(100).unwrap().unwrap();
+        let start = Start::After { stream: 0, state };
         assert_eq!(
-            open_in(root, Some(Streams::Hour)),
-            (Input::Dir(hour.clone()), None)
+            legs(opened.source, start),
+            [("minute", 101, 120), ("hour", 3, 3)]
         );
-        // A stream is read alone, unless `auto` asks for the others beside it, or `--stream` names one of them.
-        assert_eq!(open_in(&hour, None), (Input::Dir(hour.clone()), None));
-        assert_eq!(
-            open_in(&hour, Some(Streams::Auto)),
-            (Input::Dir(hour.clone()), Some(1))
-        );
-        assert_eq!(
-            open_in(&hour, Some(Streams::Day)),
-            (Input::Dir(root.join("day")), None)
-        );
-        // A stream the layout does not name has none beside it.
-        let other = root.join("other");
-        write_stream(&other, 0..=2, |n| i64::try_from(n).unwrap() * HOUR);
-        assert_eq!(open_in(&other, None), (Input::Dir(other.clone()), None));
-        let e = open(&Input::Dir(other), Some(Streams::Auto), None)
-            .err()
-            .unwrap();
-        assert!(e.to_string().contains("is not one of them"), "{e}");
+        // A stream of the root is read alone.
+        let (hour, root_found) = open(&Input::Dir(root.join("hour")), None).unwrap();
+        assert_eq!(hour.input, Input::Dir(root.join("hour")));
+        assert!(root_found.is_none());
     }
 
     #[test]
@@ -766,11 +580,11 @@ mod tests {
         // The hour stream's state.txt is not a state file.
         fs::create_dir_all(root.join("hour")).unwrap();
         fs::write(root.join("hour").join("state.txt"), "not a state\n").unwrap();
-        let (opened, layout) = open(&Input::Dir(root.to_owned()), None, None).unwrap();
+        let (opened, root_found) = open(&Input::Dir(root.to_owned()), None).unwrap();
         let start = Start::Time {
             at: Timestamp::EPOCH,
         };
-        let e = catch_up(&layout.unwrap(), opened.source, start)
+        let e = catch_up(&root_found.unwrap(), opened.source, start)
             .err()
             .unwrap();
         assert!(
