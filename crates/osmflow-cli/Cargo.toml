@@ -22,15 +22,18 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["http"]
+default = ["http", "sync"]
 # Reading replication streams from servers; without it, an http:// or https:// input is an error
 http = ["osmflow/http"]
+# `osmflow sync`: OpenStreetMap data in PostgreSQL
+sync = ["dep:osmflow-sync"]
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 geo-types.workspace = true
 osmflow = { workspace = true, features = ["geometry", "osc"] }
+osmflow-sync = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

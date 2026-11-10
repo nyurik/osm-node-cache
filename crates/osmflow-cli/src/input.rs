@@ -366,7 +366,7 @@ pub fn after_file(path: &Path, source: &dyn StateSource, url: Option<&str>) -> R
     clippy::unnecessary_wraps,
     reason = "it fails without the http feature"
 )]
-fn fetch(_url: &str) -> Result<Box<dyn Fetch>> {
+pub fn fetch(_url: &str) -> Result<Box<dyn Fetch>> {
     use std::sync::OnceLock;
 
     use osmflow::osc::HttpFetch;
@@ -378,7 +378,7 @@ fn fetch(_url: &str) -> Result<Box<dyn Fetch>> {
 }
 
 #[cfg(not(feature = "http"))]
-fn fetch(url: &str) -> Result<Box<dyn Fetch>> {
+pub fn fetch(url: &str) -> Result<Box<dyn Fetch>> {
     bail!("{url}: this osmflow was built without the http feature, so it reads no servers")
 }
 

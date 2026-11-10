@@ -14,6 +14,8 @@ mod output;
 mod select;
 mod seq;
 mod stats;
+#[cfg(feature = "sync")]
+mod sync;
 mod write;
 
 #[derive(Debug, Parser)]
@@ -51,6 +53,12 @@ enum Command {
     /// Reads state files only: the latest, and a few more for a time. Prints the last state at or before the time, or
     /// where the file is up to, and where `--since` of `dump` and `stats` starts from it.
     Seq(seq::Args),
+    /// Keeps OpenStreetMap data in PostgreSQL, current from replication.
+    ///
+    /// Imports a PBF file into the database's osm schema, applies the replication diffs after it, and rebuilds the
+    /// node file and reverse index kept beside the database if they are lost.
+    #[cfg(feature = "sync")]
+    Sync(sync::Args),
 }
 
 #[expect(clippy::print_stderr, reason = "errors are reported on standard error")]
@@ -61,16 +69,34 @@ fn main() -> ExitCode {
         Command::Dump(args) => dump::run(&args),
         Command::Stats(args) => stats::run(&args),
         Command::Seq(args) => seq::run(&args),
+        #[cfg(feature = "sync")]
+        Command::Sync(args) => sync::run(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         // The reader of the output went away, as `head` does once it has its lines: nothing is left to do.
         Err(e) if is_broken_pipe(&e) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("osmflow: {e:#}");
+            eprintln!("osmflow: {}", message(&e));
             ExitCode::FAILURE
         }
     }
+}
+
+/// The error and its causes, joined by `: `, without a cause the message before it already ends with: some errors put
+/// their source in their own message, which `{e:#}` would print twice.
+fn message(e: &anyhow::Error) -> String {
+    let mut out = String::new();
+    for cause in e.chain() {
+        let s = cause.to_string();
+        if !out.ends_with(&s) {
+            if !out.is_empty() {
+                out.push_str(": ");
+            }
+            out.push_str(&s);
+        }
+    }
+    out
 }
 
 /// Whether `e` comes from writing to a pipe whose reader has closed it.
@@ -82,11 +108,35 @@ fn is_broken_pipe(e: &anyhow::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+    use std::fmt;
+
     use anyhow::Context as _;
     use clap::CommandFactory as _;
     use osmflow::osc::COMMIT_DELAY;
 
     use super::*;
+
+    #[test]
+    fn a_cause_in_its_errors_message_is_printed_once() {
+        /// An error that puts its source in its message, and returns it as its source too.
+        #[derive(Debug)]
+        struct Wrapped(io::Error);
+        impl fmt::Display for Wrapped {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "a.osc.gz: {}", self.0)
+            }
+        }
+        impl Error for Wrapped {
+            fn source(&self) -> Option<&(dyn Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let e = Err::<(), _>(Wrapped(io::Error::other("gone")))
+            .context("updating")
+            .unwrap_err();
+        assert_eq!(message(&e), "updating: a.osc.gz: gone");
+    }
 
     #[test]
     fn the_help_and_readme_give_the_commit_delay() {

@@ -8,4 +8,4 @@ git_release_enable = false
 name = "osmflow-cli"
 git_release_enable = true
 # The CLI's changelog and release notes also list the changes of the libraries it uses
-changelog_include = ["osmflow"]
+changelog_include = ["osmflow", "osmflow-sync"]

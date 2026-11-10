@@ -1,0 +1,29 @@
+[package]
+name = "osmflow-sync"
+version = "0.12.0"
+description = "Imports OpenStreetMap PBF files into PostgreSQL and keeps them current from replication diffs"
+authors.workspace = true
+# The crate's own directory, ending in `/`: Dependabot then shows this crate's CHANGELOG.md in its PRs
+repository = "https://github.com/nyurik/osmflow/tree/main/crates/osmflow-sync/"
+edition.workspace = true
+license.workspace = true
+keywords = ["osm", "openstreetmap", "postgres", "postgis", "replication"]
+categories = ["science::geo", "database"]
+readme = "README.md"
+rust-version.workspace = true
+
+[dependencies]
+crossbeam-channel.workspace = true
+osmflow = { workspace = true, features = ["nodes", "osc", "pbf"] }
+postgres.workspace = true
+rayon.workspace = true
+redb.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+postgres.workspace = true
+
+[lints]
+workspace = true
