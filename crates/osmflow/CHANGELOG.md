@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/nyurik/osmflow/compare/osmflow-v0.12.0...osmflow-v0.13.0) - 2026-11-10
+
+### Other
+
+- The node stores share their header code; the files they write are unchanged
+  ([#52](https://github.com/nyurik/osmflow/pull/52))
+
 ## [0.12.0](https://github.com/nyurik/osmflow/compare/osmflow-v0.11.0...osmflow-v0.12.0) - 2026-11-10
 
 ### Added
