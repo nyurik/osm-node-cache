@@ -54,6 +54,8 @@ The crates are MIT OR Apache-2.0, so what they take from other projects must all
   `// SAFETY:` comment.
 - A path that starts at a crate has at most two segments (`fs::write`, `io::Error`, or an imported type), as the
   `absolute_paths` lint checks; code behind a feature flag imports what it uses inside the function.
+- Logging goes through `tracing`, whose macros are imported (`use tracing::{debug, info};`) and called bare, as
+  `info!(url, bytes, "downloaded")`, with the values as fields rather than in the message.
 - Performance claims come from measurements with the repository's own tools, and say where they were taken.
 
 ## Releases
@@ -68,9 +70,10 @@ A new library needs the same `repository`, and its name in `changelog_include` i
 
 Use the `just` recipes (`just` lists them):
 
-- `just fmt`, then `just clippy`, which lints with all features and with each of osmflow's features alone
+- `just fmt`, then `just clippy`, which lints each package with `cargo hack`: with all its features, with none, and with each one alone
 - `just test` and `just test-doc`
+- `just cpd` finds copied code with jscpd (`.jscpd.json`); on a pull request, CI comments with the clones it adds
 - `just ci-test` runs what CI runs
-- `just run …`, `just dump …` and `just stats …` run the `osmflow` command
+- `just run …`, `just dump …`, `just stats …` and `just seq …` run the `osmflow` command
 
 Commit messages use conventional prefixes: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.

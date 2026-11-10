@@ -6,7 +6,7 @@ expression: snapshot
 # optional: Sort.Type_then_ID, timestamp=2018-10-23T20:14:02Z
 # writing program: Some("osmconvert 0.8.10"), source: Some("http://www.openstreetmap.org/api/0.6")
 # bbox: Some((-122082824700, 37044216600, -122066345200, 37059560800))
-# replication: Some(1540325642) None None
+# replication: Some("2018-10-23T20:14:02Z") None None
 # 6555 nodes, 302 ways, 15 relations, hash 78e31d2c51826f4f
 # the first 20 objects:
 n91027961 v3 dV c0 t1371206374000 i0 u T x-122077926200 y37056189200

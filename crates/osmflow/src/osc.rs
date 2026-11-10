@@ -3,7 +3,8 @@
 //! [`OscReader`] streams the changes of one file in file order, each an [`Action`] and an owned [`Object`] with all
 //! the metadata the file has. [`Replication`] reads a replication stream, from a local directory laid out as the
 //! servers lay theirs out or (with the `http` feature) from a server through a local cache, and decodes the next
-//! diffs ahead on background threads.
+//! diffs ahead on background threads. [`locate`] finds the diff a time falls in, and [`plan`] lays out a catch-up over
+//! day, hour and minute streams, both from state files read through any [`StateSource`].
 //!
 //! ```
 //! use osmflow::osc::{Action, Object, OscError, OscReader};
@@ -41,6 +42,7 @@ mod error;
 #[cfg(feature = "http")]
 mod http;
 mod parse;
+mod plan;
 mod replication;
 mod value;
 
@@ -51,7 +53,11 @@ pub use self::error::{OscError, StateError, XmlError, XmlPosition};
 #[cfg(feature = "http")]
 pub use self::http::HttpFetch;
 pub use self::parse::OscReader;
-pub use self::replication::{Diff, Diffs, Fetch, Replication, State, path_sequence, sequence_path};
+pub use self::plan::{COMMIT_DELAY, Located, PARALLEL, Start, StateSource, Step, locate, plan};
+pub use self::replication::{
+    Diff, Diffs, Fetch, Replication, ServerStates, State, path_sequence, sequence_path,
+};
+use crate::Timestamp;
 use crate::model::{Location, Member, MemberType};
 
 /// What a change does to its object: the section of the file it is in.
@@ -151,8 +157,8 @@ impl Object {
 pub struct Meta {
     /// The version this change makes: each edit of an object adds 1.
     pub version: Option<i32>,
-    /// When this version was made, in milliseconds since 1970.
-    pub timestamp_ms: Option<i64>,
+    /// When this version was made.
+    pub timestamp: Option<Timestamp>,
     /// The changeset the edit was uploaded in.
     pub changeset: Option<i64>,
     /// The ID of the user who made the edit, which stays the same when they change their name.

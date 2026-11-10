@@ -2,7 +2,8 @@
 
 - **Source:** <https://download.geofabrik.de/>, the daily updates of two extracts, downloaded on 2026-11-08:
   `europe/monaco-updates/` sequence 4960 and `australia-oceania/niue-updates/` sequence 2410.
-- **License:** © OpenStreetMap contributors, ODbL.
+- **License:** © OpenStreetMap contributors, under the [Open Database License](https://opendatacommons.org/licenses/odbl/)
+  1.0, in `LICENSE`.
 
 | File | What it holds |
 |---|---|

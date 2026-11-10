@@ -7,6 +7,8 @@ just := quote(just_executable())
 binstall_args := if env('CI', '') != '' {'--no-confirm --no-track --disable-telemetry'} else {''}
 # location of the coverage output, used by CI
 coverage_lcov := 'target/llvm-cov/lcov.info'
+# location of the jscpd copy/paste detection reports, used by CI
+cpd_output := 'target/jscpd'
 
 # if running in CI, treat warnings as errors by setting CARGO_BUILD_WARNINGS to 'deny' unless it is already set
 # Use `CI=true just ci-test` to run the same tests as in GitHub CI.
@@ -40,6 +42,11 @@ ci-coverage: env-info && \
     rm -rf {{quote(parent_directory(coverage_lcov))}}
     mkdir -p {{quote(parent_directory(coverage_lcov))}}
 
+# Find copy/pasted code, marking clones absent from base_ref as new, and write a Markdown summary for the PR comment
+ci-cpd base_ref='origin/main':  (assert-cmd 'jq') (cpd '--reporters' 'console,json' '--output' cpd_output '--baseline-from-ref' base_ref)
+    jq -r --arg base {{quote(base_ref)}} -f .github/jscpd-summary.jq {{quote(cpd_output / 'jscpd-report.json')}} > {{quote(cpd_output / 'summary.md')}}
+    cat {{quote(cpd_output / 'summary.md')}} >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
 # Run all tests as expected by CI
 ci-test: env-info codegen-check test-fmt clippy test test-doc && assert-git-is-clean
 
@@ -57,14 +64,9 @@ clean:
     cargo clean
     rm -f Cargo.lock
 
-# Run cargo clippy to lint the code, also with each of osmflow's features alone
-clippy *args:
-    cargo clippy --workspace --all-features --all-targets {{args}}
-    cargo clippy -p osmflow --no-default-features --features nodes --all-targets {{args}}
-    cargo clippy -p osmflow --no-default-features --features pbf --all-targets {{args}}
-    cargo clippy -p osmflow --no-default-features --features osc --all-targets {{args}}
-    cargo clippy -p osmflow --no-default-features --features geometry --all-targets {{args}}
-    cargo clippy -p osmflow --no-default-features --features http --all-targets {{args}}
+# Run cargo clippy to lint each package with all its features, with none, and with each one alone
+clippy *args:  (cargo-install 'cargo-hack')
+    cargo hack clippy --workspace --each-feature --all-targets {{args}}
 
 # Generate and open the HTML coverage report
 coverage:  (_coverage '--open')
@@ -74,6 +76,10 @@ _coverage *report_args:  (cargo-install 'cargo-llvm-cov')
     cargo llvm-cov clean --workspace
     cargo llvm-cov --no-report --workspace --all-features --all-targets
     cargo llvm-cov report --include-build-script {{report_args}}
+
+# Find copy/pasted code with jscpd, configured in .jscpd.json. See `just cpd --help` for all options
+cpd *args:  (cargo-install 'jscpd' 'jscpd --bin jscpd' '--bin-dir={bin}{binary-ext}')
+    jscpd {{args}}
 
 # Build and open code documentation
 docs *args='--open':
@@ -135,24 +141,34 @@ _check-msrv-default:  (cargo-install 'cargo-minimal-versions') (cargo-install 'c
     export CARGO="$(rustup which --toolchain "$toolchain" cargo)"
     cargo minimal-versions check --direct --all-features --package {{main_crate}}
 
-# Run cargo-release
+# Run release-plz, which CI also runs to publish the crates: `just release update` updates versions and changelogs
 release *args='':  (cargo-install 'release-plz')
     release-plz {{args}}
 
-# Run the osmflow command, built in release mode, with the given arguments: `just run stats dc.osm.pbf`
+# Run the osmflow command, built in debug mode, with the given arguments: `just run stats dc.osm.pbf`
 [positional-arguments]
 run *args:
+    @cargo run -p osmflow-cli -- "$@"
+
+# Run the osmflow command, built in release mode, with the given arguments: `just run-rel stats dc.osm.pbf`
+[positional-arguments]
+run-rel *args:
     @cargo run --release --quiet -p osmflow-cli -- "$@"
 
 # Dump a PBF file as text or GeoJSON with the osmflow command: `just dump dc.osm.pbf dc.geojson`
 [positional-arguments]
 dump *args:
-    @cargo run --release --quiet -p osmflow-cli -- dump "$@"
+    @{{just}} run-rel dump "$@"
 
 # Summarize a PBF file with the osmflow command: `just stats dc.osm.pbf`
 [positional-arguments]
 stats *args:
-    @cargo run --release --quiet -p osmflow-cli -- stats "$@"
+    @{{just}} run-rel stats "$@"
+
+# Find a replication stream's sequence with the osmflow command: `just seq minute-dir 2026-11-09`
+[positional-arguments]
+seq *args:
+    @{{just}} run-rel seq "$@"
 
 # Check semver compatibility with prior published version. Install it with `cargo install cargo-semver-checks`
 semver *args:  (cargo-install 'cargo-semver-checks')
@@ -200,7 +216,7 @@ assert-git-is-clean:
 
 # Check if a certain Cargo command is installed, and install it if needed
 [private]
-cargo-install $COMMAND $INSTALL_CMD='' *args='':
+cargo-install $COMMAND $INSTALL_CMD='' $BINSTALL_EXTRA_ARGS='' *args='':
     #!/usr/bin/env bash
     set -euo pipefail
     unset CARGO_BUILD_WARNINGS
@@ -212,7 +228,7 @@ cargo-install $COMMAND $INSTALL_CMD='' *args='':
             { set +x; } 2>/dev/null
         else
             set -x
-            cargo binstall ${INSTALL_CMD:-$COMMAND} {{binstall_args}} --locked
+            cargo binstall ${INSTALL_CMD:-$COMMAND} {{binstall_args}} $BINSTALL_EXTRA_ARGS --locked
             { set +x; } 2>/dev/null
         fi
     fi

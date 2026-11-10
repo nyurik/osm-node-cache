@@ -36,7 +36,9 @@ use super::codec::{
     encode_block, encode_detached, encode_page, find_in_page, pack_block, packed_len, page_crcs,
     page_header, rank, read_block, set_entry, set_page_crc, set_page_header, u32_at, u64_at,
 };
-use super::file::{At as _, crc, map_file, open_ro, open_rw, read_at, sidecar, sync_dir, write_at};
+use super::file::{
+    At as _, crc, header_copies, map_file, open_ro, open_rw, read_at, sidecar, sync_dir, write_at,
+};
 use super::store::{check, check_order, check_resumed};
 use super::{
     BulkLoad, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead, NodeReader,
@@ -195,19 +197,8 @@ impl Header {
             path: path.to_path_buf(),
             reason: reason.to_owned(),
         };
-        if !page.starts_with(MAGIC_PREFIX) && !page[SLOT..].starts_with(MAGIC_PREFIX) {
-            return Err(NodeStoreError::NotAStore(path.to_path_buf()));
-        }
-        for h in [&page[..SLOT], &page[SLOT..]] {
-            if h.starts_with(MAGIC_PREFIX) && &h[..8] != MAGIC {
-                return Err(NodeStoreError::UnsupportedVersion {
-                    path: path.to_path_buf(),
-                    found: u32_at(h, 8),
-                    expected: VERSION,
-                });
-            }
-        }
-        let (header, metadata) = [&page[..SLOT], &page[SLOT..]]
+        let copies = header_copies(page, path, *MAGIC, VERSION)?;
+        let (header, metadata) = copies
             .into_iter()
             .filter_map(Self::decode)
             .max_by_key(|(h, _)| h.generation)

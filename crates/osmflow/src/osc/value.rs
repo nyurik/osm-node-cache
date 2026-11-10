@@ -1,4 +1,4 @@
-//! Attribute values parsed straight from their bytes: integers, coordinates, timestamps and escaped strings.
+//! Attribute values parsed straight from their bytes: integers, coordinates and escaped strings.
 
 use crate::osc::error::XmlError;
 
@@ -73,55 +73,6 @@ pub(crate) fn decimicro(s: &[u8]) -> Option<i32> {
     // rounding happened and the value is scaled up to seven decimals.
     v *= scale;
     i32::try_from(if negative { -v } else { v }).ok()
-}
-
-/// A timestamp in the fixed form `YYYY-MM-DDThh:mm:ssZ`, as milliseconds since 1970, with every field checked
-/// against the calendar.
-pub(crate) fn timestamp_ms(s: &[u8]) -> Option<i64> {
-    let s: &[u8; 20] = s.try_into().ok()?;
-    if s[4] != b'-'
-        || s[7] != b'-'
-        || s[10] != b'T'
-        || s[13] != b':'
-        || s[16] != b':'
-        || s[19] != b'Z'
-    {
-        return None;
-    }
-    let two = |i: usize| Some(digit(s[i])? * 10 + digit(s[i + 1])?);
-    let (year, month, day) = (two(0)? * 100 + two(2)?, two(5)?, two(8)?);
-    let (hour, minute, second) = (two(11)?, two(14)?, two(17)?);
-    if !(1..=12).contains(&month)
-        || day < 1
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let seconds = days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second;
-    Some(seconds * 1000)
-}
-
-fn days_in_month(year: i64, month: i64) -> i64 {
-    match month {
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
-
-/// Days from 1970-01-01 to a date of the proleptic Gregorian calendar: years are counted from March, so a leap day
-/// ends its year, and 400-year eras repeat exactly.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let year_of_era = y - era * 400;
-    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
 }
 
 /// Whether an attribute value's text is its raw bytes: it has no `&`, `<` or control character, which [`unescape`]
@@ -311,63 +262,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn timestamps() {
-        let ts = |s: &str| timestamp_ms(s.as_bytes());
-        assert_eq!(ts("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(ts("1969-12-31T23:59:59Z"), Some(-1000));
-        assert_eq!(ts("2000-02-29T12:00:00Z"), Some(951_825_600_000));
-        assert_eq!(ts("2026-11-08T08:00:13Z"), Some(1_794_124_813_000));
-        assert_eq!(ts("2038-01-19T03:14:08Z"), Some(2_147_483_648_000));
-        assert_eq!(ts("2106-02-07T06:28:16Z"), Some(4_294_967_296_000));
-        assert_eq!(ts("9999-12-31T23:59:59Z"), Some(253_402_300_799_000));
-        assert_eq!(ts("0000-01-01T00:00:00Z"), Some(-62_167_219_200_000));
-        assert_eq!(ts("2024-02-29T00:00:00Z"), Some(1_709_164_800_000));
-        for bad in [
-            "",
-            "2026-11-08T08:00:13",
-            "2026-11-08T08:00:13ZZ",
-            "2026-11-08 08:00:13Z",
-            "2026-11-08T08:00:13+00:00",
-            "2026-11-08T08:00:13.5Z",
-            "2026/11/08T08:00:13Z",
-            "26-11-08T08:00:13Z",
-            "2026-13-01T00:00:00Z",
-            "2026-00-01T00:00:00Z",
-            "2026-01-00T00:00:00Z",
-            "2026-01-32T00:00:00Z",
-            "2026-04-31T00:00:00Z",
-            "2026-02-29T00:00:00Z",
-            "1900-02-29T00:00:00Z",
-            "2026-01-01T24:00:00Z",
-            "2026-01-01T00:60:00Z",
-            "2026-01-01T00:00:60Z",
-            "2026-01-01T0a:00:00Z",
-            "-026-01-01T00:00:00Z",
-            "2026-1-01T00:00:00Z ",
-        ] {
-            assert_eq!(ts(bad), None, "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn days_match_a_day_by_day_count() {
-        let mut days = days_from_civil(1600, 1, 1);
-        for year in 1600..2500 {
-            for month in 1..=12 {
-                for day in 1..=days_in_month(year, month) {
-                    assert_eq!(
-                        days_from_civil(year, month, day),
-                        days,
-                        "{year}-{month}-{day}"
-                    );
-                    days += 1;
-                }
-            }
-        }
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
     }
 
     fn text(raw: &str) -> Result<String, XmlError> {

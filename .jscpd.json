@@ -1,0 +1,11 @@
+{
+  "ignore": [
+    ".git/**",
+    "crates/osmflow/src/generated/**",
+    "crates/osmflow/fixtures/**",
+    "crates/osmflow/tests/snapshots/**",
+    "tmp/**"
+  ],
+  "output": "target/jscpd",
+  "noTips": true
+}

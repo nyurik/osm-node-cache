@@ -1,7 +1,7 @@
 [package]
 name = "osmflow-cli"
 version = "0.11.0"
-description = "The osmflow command: dump OpenStreetMap PBF files as text or GeoJSON, and summarize them"
+description = "The osmflow command: dump OpenStreetMap PBF and osmChange files as text or GeoJSON, and summarize them"
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true
@@ -21,12 +21,21 @@ path = "src/main.rs"
 # The library has the same name; the command needs no API docs
 doc = false
 
+[features]
+default = ["http"]
+# Reading replication streams from servers; without it, an http:// or https:// input is an error
+http = ["osmflow/http"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 geo-types.workspace = true
-# Every feature: the reader, node stores, geometries, osmChange files and downloading replication diffs
-osmflow = { workspace = true, features = ["geometry", "http"] }
+osmflow = { workspace = true, features = ["geometry", "osc"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

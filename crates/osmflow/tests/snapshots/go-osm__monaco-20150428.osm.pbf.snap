@@ -6,7 +6,7 @@ expression: snapshot
 # optional: 
 # writing program: Some("Osmium (http://wiki.openstreetmap.org/wiki/Osmium)"), source: None
 # bbox: Some((7409205000, 43723350000, 7448637000, 43751690000))
-# replication: Some(1430166062) None None
+# replication: Some("2015-04-27T20:21:02Z") None None
 # 17233 nodes, 2398 ways, 108 relations, hash a0c2829523048c22
 # the first 20 objects:
 n21911863 v5 dV c11480240 t1335970231000 i378737 uScrup T x7422028000 y43737012500

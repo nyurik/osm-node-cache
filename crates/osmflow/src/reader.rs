@@ -12,6 +12,7 @@ use std::time::Duration;
 use std::{mem, panic};
 
 use rayon::{ThreadPool, Yield};
+use tracing::debug;
 
 use crate::blob::{BlobKind, BlobReader, DataBlobs, Loader, RawBlob, ReadMode, Want, open_once};
 use crate::block::{Block, Fields, Select, TagMode};
@@ -59,6 +60,12 @@ impl PbfReader {
             BlobKind::Data => Header::default(),
             BlobKind::Other(kind) => return Err(PbfError::MissingHeader(kind.clone())),
         };
+        debug!(
+            path = %path.display(),
+            program = header.writing_program,
+            replication_sequence = header.replication_sequence,
+            "opened"
+        );
         Ok(Self {
             path,
             header,

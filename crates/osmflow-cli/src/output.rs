@@ -1,11 +1,27 @@
-//! Writing values as JSON and as text: strings, coordinates, timestamps, counts, sizes and group kinds.
+//! Writing values as JSON and as text: strings, coordinates, timestamps, counts, sizes and group kinds; and widening
+//! ranges of them.
 
 use std::io::{self, Write};
 
-use osmflow::GroupKind;
+use osmflow::{GroupKind, Timestamp};
+
+/// How `stats` and `seq` write what they find.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum SummaryFormat {
+    /// Lines of text.
+    #[default]
+    Text,
+    /// One JSON object.
+    Json,
+}
 
 /// The names of the kinds of groups, in the order of [`group_index`].
 pub const GROUP_NAMES: [&str; 5] = ["plain nodes", "dense nodes", "ways", "relations", "empty"];
+
+/// The name of a group kind, from [`GROUP_NAMES`].
+pub fn group_name(kind: GroupKind) -> &'static str {
+    GROUP_NAMES[group_index(kind)]
+}
 
 /// The position of a group kind in [`GROUP_NAMES`].
 pub fn group_index(kind: GroupKind) -> usize {
@@ -80,36 +96,6 @@ pub fn to_decimicro(deg: f64) -> i32 {
     (deg * 1e7).round() as i32
 }
 
-/// Writes milliseconds since 1970 as an ISO 8601 UTC time, with milliseconds only when there are some.
-pub fn timestamp(out: &mut impl Write, ms: i64) -> io::Result<()> {
-    let (secs, millis) = (ms.div_euclid(1000), ms.rem_euclid(1000));
-    let (days, day_secs) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    let (year, month, day) = civil_from_days(days);
-    let (hour, minute, second) = (day_secs / 3600, day_secs / 60 % 60, day_secs % 60);
-    write!(
-        out,
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"
-    )?;
-    if millis != 0 {
-        write!(out, ".{millis:03}")?;
-    }
-    out.write_all(b"Z")
-}
-
-/// The date of a day counted from 1970-01-01, in the proleptic Gregorian calendar (Howard Hinnant's algorithm).
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
-}
-
 /// A count with thousands separators: `1,958,977`.
 pub fn count(n: u64) -> String {
     let digits = n.to_string();
@@ -132,6 +118,108 @@ pub fn size(bytes: u64) -> String {
         || format!("{bytes} B"),
         |&(unit, name)| format!("{:.1} {name}", b / unit),
     )
+}
+
+/// Widens `range` to hold `low` and `high`.
+pub fn widen<T: Ord + Copy>(range: &mut Option<(T, T)>, low: T, high: T) {
+    *range = Some(match *range {
+        Some((a, b)) => (a.min(low), b.max(high)),
+        None => (low, high),
+    });
+}
+
+/// Writes `s` as a JSON string, or `null`.
+pub fn opt_str(o: &mut impl Write, s: Option<&str>) -> io::Result<()> {
+    match s {
+        Some(s) => json_str(o, s),
+        None => o.write_all(b"null"),
+    }
+}
+
+/// Writes `n` as a JSON number, or `null`.
+pub fn opt_num(o: &mut impl Write, n: Option<i64>) -> io::Result<()> {
+    match n {
+        Some(n) => write!(o, "{n}"),
+        None => o.write_all(b"null"),
+    }
+}
+
+/// West, south, east and north, from the ranges of latitudes and longitudes.
+fn bounds(lat: Option<(i32, i32)>, lon: Option<(i32, i32)>) -> Option<[i32; 4]> {
+    let ((south, north), (west, east)) = (lat?, lon?);
+    Some([west, south, east, north])
+}
+
+/// Writes the line `node extent   lon W .. E, lat S .. N` of a summary, if there are nodes.
+pub fn extent_line(
+    o: &mut impl Write,
+    lat: Option<(i32, i32)>,
+    lon: Option<(i32, i32)>,
+) -> io::Result<()> {
+    let Some([west, south, east, north]) = bounds(lat, lon) else {
+        return Ok(());
+    };
+    o.write_all(b"node extent   lon ")?;
+    degrees(o, west)?;
+    o.write_all(b" .. ")?;
+    degrees(o, east)?;
+    o.write_all(b", lat ")?;
+    degrees(o, south)?;
+    o.write_all(b" .. ")?;
+    degrees(o, north)?;
+    writeln!(o)
+}
+
+/// Writes the extent of a JSON summary: `[west,south,east,north]`, or `null` without nodes.
+pub fn extent_json(
+    o: &mut impl Write,
+    lat: Option<(i32, i32)>,
+    lon: Option<(i32, i32)>,
+) -> io::Result<()> {
+    let Some(bounds) = bounds(lat, lon) else {
+        return o.write_all(b"null");
+    };
+    o.write_all(b"[")?;
+    for (i, v) in bounds.into_iter().enumerate() {
+        if i > 0 {
+            o.write_all(b",")?;
+        }
+        degrees(o, v)?;
+    }
+    o.write_all(b"]")
+}
+
+/// Writes `"first_timestamp":…,"last_timestamp":…` of a JSON summary, `null` without timestamps.
+pub fn time_span_json(o: &mut impl Write, time: Option<(Timestamp, Timestamp)>) -> io::Result<()> {
+    o.write_all(br#""first_timestamp":"#)?;
+    opt_time(o, time.map(|t| t.0))?;
+    o.write_all(br#","last_timestamp":"#)?;
+    opt_time(o, time.map(|t| t.1))
+}
+
+/// Writes the start of a summary's timestamps line, `timestamps    FIRST .. LAST`, without its end of line.
+pub fn time_span(o: &mut impl Write, (first, last): (Timestamp, Timestamp)) -> io::Result<()> {
+    write!(o, "timestamps    {first} .. {last}")
+}
+
+/// Writes a time as a quoted ISO 8601 time, or `null`.
+pub fn opt_time(o: &mut impl Write, time: Option<Timestamp>) -> io::Result<()> {
+    match time {
+        Some(time) => write!(o, "\"{time}\""),
+        None => o.write_all(b"null"),
+    }
+}
+
+/// Writes strings as a JSON array.
+pub fn str_array(o: &mut impl Write, items: &[String]) -> io::Result<()> {
+    o.write_all(b"[")?;
+    for (i, s) in items.iter().enumerate() {
+        if i > 0 {
+            o.write_all(b",")?;
+        }
+        json_str(o, s)?;
+    }
+    o.write_all(b"]")
 }
 
 #[cfg(test)]
@@ -162,20 +250,6 @@ mod tests {
         assert_eq!(to_decimicro(-77.036_512_3), -770_365_123);
         assert_eq!(text(|o| nanodegrees(o, -180_000_000_000)), "-180");
         assert_eq!(text(|o| nanodegrees(o, 38_791_600_100)), "38.7916001");
-    }
-
-    #[test]
-    fn timestamps_are_utc() {
-        assert_eq!(text(|o| timestamp(o, 0)), "1970-01-01T00:00:00Z");
-        assert_eq!(
-            text(|o| timestamp(o, 1_794_124_821_000)),
-            "2026-11-08T08:00:21Z"
-        );
-        assert_eq!(
-            text(|o| timestamp(o, 951_782_400_123)),
-            "2000-02-29T00:00:00.123Z"
-        );
-        assert_eq!(text(|o| timestamp(o, -1000)), "1969-12-31T23:59:59Z");
     }
 
     #[test]

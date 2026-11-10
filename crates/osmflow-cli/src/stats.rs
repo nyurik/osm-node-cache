@@ -1,25 +1,51 @@
-//! `osmflow stats`: a summary of a file: its header, blocks, object counts, ID ranges, extent and time span.
+//! `osmflow stats`: a summary of a PBF file (its header, blocks, object counts, ID ranges, extent, and with
+//! `--metadata` its time span), of osmChange input, or of a replication stream's latest state.
 
 use std::fs;
 use std::io::{self, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use anyhow::{Context as _, Result};
-use osmflow::{Block, Header, Info, PbfReader, Select};
+use osmflow::osc::State;
+use osmflow::{Block, Header, Info, PbfReader, Select, Timestamp};
 
-use crate::output::{self, count, degrees, json_str, nanodegrees, timestamp};
-use crate::select::{Kind, Threads};
+use crate::changes;
+use crate::input::{Input, ago};
+use crate::output::{
+    self, SummaryFormat, count, extent_json, extent_line, json_str, nanodegrees, opt_num, opt_str,
+    opt_time, str_array, time_span, time_span_json, widen,
+};
+use crate::select::{ChangeArgs, Kind, Threads};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    /// The OSM PBF file.
+    /// A PBF, osmChange or state file, or replication directory or URL.
+    ///
+    /// An osmChange file is `.osc` or `.osc.gz`, and a replication stream a directory laid out as the servers lay
+    /// theirs out, or a server's URL. What the input is is told from its contents, not its name. A stream without
+    /// --seq or --since shows only its latest state.
     input: PathBuf,
-    /// Write the summary as one JSON object.
+    /// The output format.
+    #[arg(short, long, value_enum, default_value_t)]
+    format: SummaryFormat,
+    /// Also read PBF metadata: time span, versions, deletions.
+    ///
+    /// Metadata is much of what a block holds, so it is not read by default. osmChange input always shows it, as its
+    /// parser reads it anyway.
     #[arg(long)]
-    json: bool,
+    metadata: bool,
     #[command(flatten)]
-    threads: Threads,
+    pub threads: Threads,
+    #[command(flatten)]
+    pub changes: ChangeArgs,
+}
+
+impl Args {
+    /// Whether the summary is written as JSON.
+    pub fn json(&self) -> bool {
+        self.format == SummaryFormat::Json
+    }
 }
 
 /// Counts of one object type.
@@ -88,21 +114,26 @@ struct Stats {
     /// Node latitudes and longitudes, smallest and largest, in 1e-7 degrees.
     lat: Option<(i32, i32)>,
     lon: Option<(i32, i32)>,
-    /// Object timestamps, earliest and latest, in milliseconds since 1970.
-    time: Option<(i64, i64)>,
+    /// Object timestamps, earliest and latest.
+    time: Option<(Timestamp, Timestamp)>,
     max_version: i32,
     deleted: u64,
     spans: Vec<Span>,
 }
 
-fn widen<T: Ord + Copy>(range: &mut Option<(T, T)>, low: T, high: T) {
-    *range = Some(match *range {
-        Some((a, b)) => (a.min(low), b.max(high)),
-        None => (low, high),
-    });
-}
-
 impl Stats {
+    /// The counts of all types together; its IDs are not set.
+    fn total(&self) -> TypeStats {
+        self.types
+            .iter()
+            .fold(TypeStats::default(), |acc, t| TypeStats {
+                count: acc.count + t.count,
+                tagged: acc.tagged + t.tagged,
+                tags: acc.tags + t.tags,
+                ..acc
+            })
+    }
+
     fn block(block: &Block) -> Self {
         let mut s = Self::default();
         let layout = block.layout();
@@ -117,7 +148,7 @@ impl Stats {
         }
         let mut order = Order::default();
         for n in block.nodes() {
-            s.types[0].add(n.id(), n.tags().len());
+            s.types[Kind::Node.index()].add(n.id(), n.tags().len());
             s.info(n.info());
             let (lat, lon) = (n.decimicro_lat(), n.decimicro_lon());
             widen(&mut s.lat, lat, lat);
@@ -125,13 +156,13 @@ impl Stats {
             order.next(Kind::Node, n.id());
         }
         for w in block.ways() {
-            s.types[1].add(w.id(), w.tags().len());
+            s.types[Kind::Way.index()].add(w.id(), w.tags().len());
             s.info(w.info());
             s.refs += w.refs().len() as u64;
             order.next(Kind::Way, w.id());
         }
         for r in block.relations() {
-            s.types[2].add(r.id(), r.tags().len());
+            s.types[Kind::Relation.index()].add(r.id(), r.tags().len());
             s.info(r.info());
             s.members += r.members().len() as u64;
             order.next(Kind::Relation, r.id());
@@ -149,7 +180,10 @@ impl Stats {
 
     fn info(&mut self, info: Option<Info<'_>>) {
         if let Some(i) = info {
-            widen(&mut self.time, i.timestamp_ms, i.timestamp_ms);
+            // A timestamp of 0 is a file leaving it out, as some writers do, not an edit of 1970.
+            if i.timestamp != Timestamp::EPOCH {
+                widen(&mut self.time, i.timestamp, i.timestamp);
+            }
             self.max_version = self.max_version.max(i.version);
             self.deleted += u64::from(!i.visible);
         }
@@ -198,13 +232,8 @@ impl Stats {
 }
 
 /// An object's place in type-then-ID order.
-fn key((kind, id): (Kind, i64)) -> (u8, i64) {
-    let rank = match kind {
-        Kind::Node => 0,
-        Kind::Way => 1,
-        Kind::Relation => 2,
-    };
-    (rank, id)
+fn key((kind, id): (Kind, i64)) -> (usize, i64) {
+    (kind.index(), id)
 }
 
 /// Follows the objects of one block, to tell whether they are in type-then-ID order.
@@ -229,14 +258,51 @@ impl Order {
 }
 
 pub fn run(args: &Args) -> Result<()> {
-    let size = fs::metadata(&args.input)
-        .with_context(|| format!("cannot read {}", args.input.display()))?
+    match Input::of(&args.input)? {
+        Input::Pbf(path) => pbf(args, &path),
+        Input::State(path) => state(args, &path),
+        input @ (Input::Osc(_) | Input::Dir(_) | Input::Url(_)) => changes::stats(args, &input),
+    }
+}
+
+/// A state file: its sequence and time, and how long ago that was.
+fn state(args: &Args, path: &Path) -> Result<()> {
+    let state = State::read(path)?;
+    let mut o = io::stdout().lock();
+    if args.json() {
+        writeln!(
+            o,
+            r#"{{"sequence":{},"timestamp":"{}"}}"#,
+            state.sequence, state.timestamp
+        )?;
+    } else {
+        writeln!(
+            o,
+            "state         sequence {} at {}, {} ago",
+            state.sequence,
+            state.timestamp,
+            ago(state.timestamp)
+        )?;
+    }
+    Ok(())
+}
+
+fn pbf(args: &Args, path: &Path) -> Result<()> {
+    args.changes.reject_pbf(path)?;
+    let size = fs::metadata(path)
+        .with_context(|| format!("cannot read {}", path.display()))?
         .len();
-    let file = PbfReader::open(&args.input)
-        .with_context(|| format!("cannot read {}", args.input.display()))?;
+    let file = PbfReader::open(path).with_context(|| format!("cannot read {}", path.display()))?;
     let file = args.threads.apply(file)?;
     let total = Mutex::new(Stats::default());
-    args.threads.unordered(&file, Select::all(), |block| {
+    // Metadata is decoded only when asked for: it is much of the time of a full decode.
+    let select = Select::all();
+    let select = if args.metadata {
+        select
+    } else {
+        select.without_metadata()
+    };
+    args.threads.unordered(&file, select, |block| {
         let s = Stats::block(&block);
         total
             .lock()
@@ -247,13 +313,14 @@ pub fn run(args: &Args) -> Result<()> {
     let unordered = stats.first_unordered();
     let mut out = BufWriter::new(io::stdout().lock());
     let report = Report {
-        path: &args.input.display().to_string(),
+        path: &path.display().to_string(),
         size,
         header: file.header(),
         stats: &stats,
         unordered,
+        metadata: args.metadata,
     };
-    if args.json {
+    if args.json() {
         report.json(&mut out)?;
     } else {
         report.text(&mut out)?;
@@ -268,19 +335,20 @@ struct Report<'a> {
     header: &'a Header,
     stats: &'a Stats,
     unordered: Option<u64>,
+    /// Whether metadata was read.
+    metadata: bool,
 }
-
-const TYPES: [&str; 3] = ["nodes", "ways", "relations"];
 
 impl Report<'_> {
     fn text(&self, o: &mut impl Write) -> io::Result<()> {
-        self.text_header(o)?;
-        self.text_counts(o)
+        self.text_file(o)?;
+        self.text_blocks(o)?;
+        self.text_table(o)
     }
 
-    /// The file and its header.
-    fn text_header(&self, o: &mut impl Write) -> io::Result<()> {
-        let h = self.header;
+    /// The file, its header, and what its objects span: their extent, time and order.
+    fn text_file(&self, o: &mut impl Write) -> io::Result<()> {
+        let (h, s) = (self.header, self.stats);
         writeln!(
             o,
             "file          {} ({})",
@@ -305,20 +373,51 @@ impl Report<'_> {
             nanodegrees(o, b.top)?;
             writeln!(o)?;
         }
-        if let Some(sequence) = h.replication_sequence {
-            write!(o, "replication   sequence {sequence}")?;
-            if let Some(secs) = h.replication_timestamp {
-                o.write_all(b" at ")?;
-                timestamp(o, secs.saturating_mul(1000))?;
+        extent_line(o, s.lat, s.lon)?;
+        // Planet files give a timestamp alone; Geofabrik's extracts the sequence of their own stream, and its URL.
+        if h.replication_sequence.is_some() || h.replication_timestamp.is_some() {
+            o.write_all(b"replication  ")?;
+            if let Some(sequence) = h.replication_sequence {
+                write!(o, " sequence {sequence}")?;
+            }
+            if let Some(at) = h.replication_timestamp {
+                write!(o, " at {at}")?;
             }
             writeln!(o)?;
         }
-        Ok(())
+        if let Some(url) = &h.replication_base_url {
+            writeln!(o, "updates       {url}")?;
+        }
+        if let Some(span) = s.time {
+            time_span(o, span)?;
+            writeln!(o, "; highest version {}", s.max_version)?;
+        } else if !self.metadata {
+            writeln!(o, "timestamps    not read; --metadata reads them")?;
+        }
+        if s.deleted > 0 {
+            writeln!(
+                o,
+                "deleted       {} versions of deleted objects",
+                count(s.deleted)
+            )?;
+        }
+        let claims = if h.is_sorted() {
+            "the header says sorted"
+        } else {
+            "the header does not say sorted"
+        };
+        match self.unordered {
+            None => writeln!(o, "order         by type, then ID ({claims})"),
+            Some(blob) => writeln!(
+                o,
+                "order         not by type, then ID, from blob {blob} ({claims})"
+            ),
+        }
     }
 
-    /// What the blocks hold.
-    fn text_counts(&self, o: &mut impl Write) -> io::Result<()> {
-        let (h, s) = (self.header, self.stats);
+    /// The blocks, and the references their ways and relations hold.
+    fn text_blocks(&self, o: &mut impl Write) -> io::Result<()> {
+        let s = self.stats;
         writeln!(
             o,
             "blocks        {} ({} zlib): {} in blobs, {} uncompressed; {} strings in {}",
@@ -337,12 +436,23 @@ impl Report<'_> {
             .map(|(&n, name)| format!("{} {name}", count(n)))
             .collect();
         writeln!(o, "groups        {}", groups.join(", "))?;
+        writeln!(o, "way refs      {} node IDs in all ways", count(s.refs))?;
+        writeln!(
+            o,
+            "members       {} members of all relations",
+            count(s.members)
+        )
+    }
+
+    /// Objects by type: how many, how many have tags, how many tags, and their IDs.
+    fn text_table(&self, o: &mut impl Write) -> io::Result<()> {
         writeln!(
             o,
             "{:13} {:>15} {:>15} {:>15}   IDs",
             "", "count", "tagged", "tags"
         )?;
-        for (name, t) in TYPES.iter().zip(&s.types) {
+        for (kind, t) in Kind::ALL.into_iter().zip(&self.stats.types) {
+            let name = kind.plural();
             write!(
                 o,
                 "{name:13} {:>15} {:>15} {:>15}",
@@ -355,41 +465,15 @@ impl Report<'_> {
             }
             writeln!(o)?;
         }
-        writeln!(o, "way refs      {:>15}", count(s.refs))?;
-        writeln!(o, "members       {:>15}", count(s.members))?;
-        if let (Some((south, north)), Some((west, east))) = (s.lat, s.lon) {
-            o.write_all(b"node extent   lon ")?;
-            degrees(o, west)?;
-            o.write_all(b" .. ")?;
-            degrees(o, east)?;
-            o.write_all(b", lat ")?;
-            degrees(o, south)?;
-            o.write_all(b" .. ")?;
-            degrees(o, north)?;
-            writeln!(o)?;
-        }
-        if let Some((first, last)) = s.time {
-            o.write_all(b"timestamps    ")?;
-            timestamp(o, first)?;
-            o.write_all(b" .. ")?;
-            timestamp(o, last)?;
-            writeln!(o, "; highest version {}", s.max_version)?;
-        }
-        if s.deleted > 0 {
-            writeln!(o, "deleted       {:>15}", count(s.deleted))?;
-        }
-        let claims = if h.is_sorted() {
-            "the header says sorted"
-        } else {
-            "the header does not say sorted"
-        };
-        match self.unordered {
-            None => writeln!(o, "order         by type, then ID ({claims})"),
-            Some(blob) => writeln!(
-                o,
-                "order         not by type, then ID, from blob {blob} ({claims})"
-            ),
-        }
+        let total = self.stats.total();
+        writeln!(
+            o,
+            "{:13} {:>15} {:>15} {:>15}",
+            "total",
+            count(total.count),
+            count(total.tagged),
+            count(total.tags)
+        )
     }
 
     fn json(&self, o: &mut impl Write) -> io::Result<()> {
@@ -420,11 +504,9 @@ impl Report<'_> {
         o.write_all(br#","replication_sequence":"#)?;
         opt_num(o, h.replication_sequence)?;
         o.write_all(br#","replication_timestamp":"#)?;
-        opt_time(
-            o,
-            h.replication_timestamp
-                .map(|secs| secs.saturating_mul(1000)),
-        )?;
+        opt_time(o, h.replication_timestamp)?;
+        o.write_all(br#","replication_base_url":"#)?;
+        opt_str(o, h.replication_base_url.as_deref())?;
         write!(
             o,
             r#"}},"blocks":{},"zlib_blocks":{},"blob_bytes":{},"raw_bytes":{},"strings":{},"string_bytes":{}"#,
@@ -435,7 +517,8 @@ impl Report<'_> {
             o,
             r#","groups":{{"nodes":{plain},"dense_nodes":{dense},"ways":{ways},"relations":{relations},"empty":{empty}}}"#
         )?;
-        for (name, t) in TYPES.iter().zip(&s.types) {
+        for (kind, t) in Kind::ALL.into_iter().zip(&s.types) {
+            let name = kind.plural();
             write!(
                 o,
                 r#","{name}":{{"count":{},"tagged":{},"tags":{}"#,
@@ -446,28 +529,20 @@ impl Report<'_> {
             }
             o.write_all(b"}")?;
         }
+        let total = s.total();
+        write!(
+            o,
+            r#","total":{{"count":{},"tagged":{},"tags":{}}}"#,
+            total.count, total.tagged, total.tags
+        )?;
         write!(
             o,
             r#","way_refs":{},"members":{},"node_extent":"#,
             s.refs, s.members
         )?;
-        match (s.lat, s.lon) {
-            (Some((south, north)), Some((west, east))) => {
-                o.write_all(b"[")?;
-                for (i, v) in [west, south, east, north].into_iter().enumerate() {
-                    if i > 0 {
-                        o.write_all(b",")?;
-                    }
-                    degrees(o, v)?;
-                }
-                o.write_all(b"]")?;
-            }
-            _ => o.write_all(b"null")?,
-        }
-        o.write_all(br#","first_timestamp":"#)?;
-        opt_time(o, s.time.map(|t| t.0))?;
-        o.write_all(br#","last_timestamp":"#)?;
-        opt_time(o, s.time.map(|t| t.1))?;
+        extent_json(o, s.lat, s.lon)?;
+        o.write_all(b",")?;
+        time_span_json(o, s.time)?;
         write!(
             o,
             r#","max_version":{},"deleted":{}"#,
@@ -481,42 +556,6 @@ impl Report<'_> {
         )?;
         o.write_all(b"}\n")
     }
-}
-
-fn opt_str(o: &mut impl Write, s: Option<&str>) -> io::Result<()> {
-    match s {
-        Some(s) => json_str(o, s),
-        None => o.write_all(b"null"),
-    }
-}
-
-fn opt_num(o: &mut impl Write, n: Option<i64>) -> io::Result<()> {
-    match n {
-        Some(n) => write!(o, "{n}"),
-        None => o.write_all(b"null"),
-    }
-}
-
-fn opt_time(o: &mut impl Write, ms: Option<i64>) -> io::Result<()> {
-    match ms {
-        Some(ms) => {
-            o.write_all(b"\"")?;
-            timestamp(o, ms)?;
-            o.write_all(b"\"")
-        }
-        None => o.write_all(b"null"),
-    }
-}
-
-fn str_array(o: &mut impl Write, items: &[String]) -> io::Result<()> {
-    o.write_all(b"[")?;
-    for (i, s) in items.iter().enumerate() {
-        if i > 0 {
-            o.write_all(b",")?;
-        }
-        json_str(o, s)?;
-    }
-    o.write_all(b"]")
 }
 
 #[cfg(test)]

@@ -1,21 +1,25 @@
 //! Replication streams: state files, the paths of sequence numbers, and reading diffs in order from a local directory
 //! or a server.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
+use std::ops::{Bound, RangeBounds, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, sync_channel};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 use std::{process, thread};
 
 use flate2::bufread::MultiGzDecoder;
+use tracing::{debug, debug_span, warn};
 
 use crate::osc::error::{OscError, Result, StateError};
-use crate::osc::value::timestamp_ms;
-use crate::osc::{Change, OscReader};
+use crate::osc::plan::read_ahead;
+use crate::osc::{Change, OscReader, StateSource};
+use crate::time::Timestamp;
 
 /// How often a downloaded file that fails its check (a state file that does not parse, a diff that is not complete
 /// gzip) is fetched, and the pause between tries.
@@ -28,13 +32,13 @@ const CHECK_RETRY_PAUSE: Duration = Duration::from_secs(1);
 pub struct State {
     /// The diff's number in its stream; diff `n` is at the path [`sequence_path`]`(n)`.
     pub sequence: u64,
-    /// In milliseconds since 1970.
-    pub timestamp_ms: i64,
+    /// The time it covers changes up to: the newest timestamp of the diff's changes.
+    pub timestamp: Timestamp,
 }
 
 impl State {
     /// Reads a state file.
-    pub fn read(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn read(path: impl AsRef<Path>) -> Result<Self, OscError> {
         let path = path.as_ref();
         let text = fs::read_to_string(path).map_err(|source| OscError::File {
             path: path.to_owned(),
@@ -73,15 +77,14 @@ impl FromStr for State {
                     sequence = Some(value.parse().map_err(|_| bad("sequenceNumber"))?);
                 }
                 "timestamp" => {
-                    timestamp =
-                        Some(timestamp_ms(value.as_bytes()).ok_or_else(|| bad("timestamp"))?);
+                    timestamp = Some(value.parse().map_err(|_| bad("timestamp"))?);
                 }
                 _ => {}
             }
         }
         Ok(Self {
             sequence: sequence.ok_or(StateError::Missing("sequenceNumber"))?,
-            timestamp_ms: timestamp.ok_or(StateError::Missing("timestamp"))?,
+            timestamp: timestamp.ok_or(StateError::Missing("timestamp"))?,
         })
     }
 }
@@ -144,6 +147,14 @@ pub trait Fetch: Send + Sync {
     fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>>;
 }
 
+/// A boxed `Fetch`, chosen at run time, as a program that reads servers only with a feature does, can be given
+/// wherever a `Fetch` is taken.
+impl<F: Fetch + ?Sized> Fetch for Box<F> {
+    fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>> {
+        (**self).fetch(url)
+    }
+}
+
 /// One decoded diff of a replication stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diff {
@@ -160,7 +171,8 @@ pub struct Diff {
 /// sequence, a diff must be complete gzip), written to a temporary file and renamed into place, so the cache only
 /// ever holds whole files and is never downloaded again. Only the latest state, `state.txt`, is fetched anew each time
 /// [`state`](Self::state) is called. Nothing past the server's latest state is downloaded, even if it exists. A cache
-/// can later be read as a local directory.
+/// can later be read as a local directory. A clone reads the same stream, sharing its cache and latest state.
+#[derive(Clone)]
 pub struct Replication {
     source: Arc<Source>,
     read_ahead: usize,
@@ -169,14 +181,14 @@ pub struct Replication {
 struct Source {
     dir: PathBuf,
     remote: Option<Remote>,
+    /// The latest sequence the server has published, as last read.
+    published: Mutex<Option<u64>>,
 }
 
 struct Remote {
     /// The base URL, without a trailing slash.
     base: String,
     fetch: Box<dyn Fetch>,
-    /// The latest sequence the server has published, as last read.
-    latest: Mutex<Option<u64>>,
 }
 
 impl Replication {
@@ -192,12 +204,7 @@ impl Replication {
         cache_dir: impl Into<PathBuf>,
         fetch: impl Fetch + 'static,
     ) -> Self {
-        let remote = Remote {
-            base: base_url.trim_end_matches('/').to_owned(),
-            fetch: Box::new(fetch),
-            latest: Mutex::new(None),
-        };
-        Self::new(cache_dir.into(), Some(remote))
+        Self::new(cache_dir.into(), Some(Remote::new(base_url, fetch)))
     }
 
     /// Reads a stream from the server at `base_url` over HTTP, with [`HttpFetch`](crate::osc::HttpFetch)'s defaults,
@@ -210,7 +217,11 @@ impl Replication {
 
     fn new(dir: PathBuf, remote: Option<Remote>) -> Self {
         let read_ahead = thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
-        let source = Arc::new(Source { dir, remote });
+        let source = Arc::new(Source {
+            dir,
+            remote,
+            published: Mutex::new(None),
+        });
         Self { source, read_ahead }
     }
 
@@ -223,6 +234,16 @@ impl Replication {
         self
     }
 
+    /// Whether the state file of diff `sequence` is in the directory, downloaded or local.
+    pub(crate) fn has_state_file(&self, sequence: u64) -> bool {
+        self.source.path(sequence, ".state.txt").1.exists()
+    }
+
+    /// Whether the stream is read from a server, through the directory as a cache.
+    pub(crate) fn is_remote(&self) -> bool {
+        self.source.remote.is_some()
+    }
+
     /// The local directory: the source, or the cache.
     #[must_use]
     pub fn dir(&self) -> &Path {
@@ -230,35 +251,54 @@ impl Replication {
     }
 
     /// The stream's latest state: the local `state.txt`, or the server's, fetched now and saved in the cache.
-    pub fn state(&self) -> Result<State> {
+    pub fn state(&self) -> Result<State, OscError> {
         self.source.latest()
     }
 
     /// The state file of one diff, downloaded first if needed. A file that names another sequence, whether downloaded,
     /// cached or local, is an [`OscError::State`] error for its `sequenceNumber`, and a downloaded one is not cached.
-    pub fn sequence_state(&self, sequence: u64) -> Result<State> {
-        self.source.state_file(sequence)
+    pub fn sequence_state(&self, sequence: u64) -> Result<State, OscError> {
+        let state = self.source.state_file(sequence)?;
+        debug!(
+            path = %self.source.path(sequence, ".state.txt").1.display(),
+            "read"
+        );
+        Ok(state)
     }
 
     /// The local path of one diff, downloaded first if needed.
-    pub fn diff_file(&self, sequence: u64) -> Result<PathBuf> {
+    pub fn diff_file(&self, sequence: u64) -> Result<PathBuf, OscError> {
         self.source.diff_file(sequence)
     }
 
     /// One diff, with its state, downloaded first if needed and decoded on the calling thread.
-    pub fn diff(&self, sequence: u64) -> Result<Diff> {
+    pub fn diff(&self, sequence: u64) -> Result<Diff, OscError> {
         self.source.diff(sequence)
     }
 
-    /// The diffs from `start` up to the latest state (none if `start` is past it), in order. Each diff is downloaded
-    /// in turn, one at a time, on a background thread, and decoded on a thread of its own, up to
-    /// [`with_read_ahead`](Self::with_read_ahead) diffs ahead of the one being read. The iterator ends after an error.
-    pub fn diffs(&self, start: u64) -> Result<Diffs> {
-        let latest = self.state()?.sequence;
+    /// The diffs of `sequences`, in order: `5..=9`, or `5..` up to the latest state. A range with an end reads no
+    /// `state.txt`, so it also reads a local directory that has none; an unbounded start is sequence 0. Each diff is
+    /// downloaded in turn, one at a time, on a background thread, and decoded on a thread of its own, up to
+    /// [`with_read_ahead`](Self::with_read_ahead) diffs ahead of the one being read. A diff missing from a local
+    /// directory, or not yet published by a server, is an error in its turn, and the iterator ends after an error.
+    pub fn diffs(&self, sequences: impl RangeBounds<u64>) -> Result<Diffs, OscError> {
+        let start = match sequences.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s.saturating_add(1),
+            Bound::Unbounded => 0,
+        };
+        // `None` for an empty range: one that ends before sequence 0.
+        let end = match sequences.end_bound() {
+            Bound::Included(&e) => Some(e),
+            Bound::Excluded(&e) => e.checked_sub(1),
+            Bound::Unbounded => Some(self.state()?.sequence),
+        };
+        let left = end.map_or(0, |end| end.saturating_add(1).saturating_sub(start));
+        debug!(first = start, count = left, "reading diffs");
         let source = Arc::clone(&self.source);
         let (tx, rx) = sync_channel(self.read_ahead - 1);
         spawn(move || {
-            for sequence in start..=latest {
+            for sequence in start..start.saturating_add(left) {
                 let (diff_tx, diff_rx) = sync_channel(1);
                 // A failed download is handed out in its turn; a thread that cannot start drops its sender, which
                 // the iterator reports.
@@ -283,7 +323,7 @@ impl Replication {
         })?;
         Ok(Diffs {
             rx,
-            left: latest.checked_sub(start).map_or(0, |n| n + 1),
+            left,
             done: false,
         })
     }
@@ -306,7 +346,7 @@ pub struct Diffs {
 }
 
 impl Iterator for Diffs {
-    type Item = Result<Diff>;
+    type Item = Result<Diff, OscError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done || self.left == 0 {
@@ -332,19 +372,17 @@ impl Source {
     fn latest(&self) -> Result<State> {
         let path = self.dir.join("state.txt");
         let Some(remote) = &self.remote else {
+            debug!(path = %path.display(), "read");
             return State::read(&path);
         };
         let (_, body, state) = remote
             .fetch_checked("state.txt", parse_state)
-            .map_err(|e| {
-                if let OscError::NotFound { url } = e {
-                    OscError::NoStream { url }
-                } else {
-                    e
-                }
-            })?;
+            .map_err(no_stream)?;
         write_atomic(&path, &body)?;
-        *remote.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.sequence);
+        *self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(state.sequence);
         Ok(state)
     }
 
@@ -361,7 +399,7 @@ impl Source {
         let (relative, path) = self.path(sequence, ".state.txt");
         let (origin, state) = match &self.remote {
             Some(remote) if !path.exists() => {
-                self.check_published(remote, sequence)?;
+                self.check_published(sequence)?;
                 let (url, body, state) = remote.fetch_checked(&relative, parse_state)?;
                 if state.sequence == sequence {
                     write_atomic(&path, &body)?;
@@ -370,16 +408,7 @@ impl Source {
             }
             _ => (path.display().to_string(), State::read(&path)?),
         };
-        if state.sequence != sequence {
-            return Err(OscError::State {
-                origin,
-                kind: StateError::Value {
-                    key: "sequenceNumber",
-                    value: state.sequence.to_string(),
-                },
-            });
-        }
-        Ok(state)
+        check_sequence(&origin, state, sequence)
     }
 
     fn diff_file(&self, sequence: u64) -> Result<PathBuf> {
@@ -387,7 +416,7 @@ impl Source {
         if let Some(remote) = &self.remote
             && !path.exists()
         {
-            self.check_published(remote, sequence)?;
+            self.check_published(sequence)?;
             let (_, body, ()) = remote.fetch_checked(&relative, check_gzip)?;
             write_atomic(&path, &body)?;
         }
@@ -395,14 +424,20 @@ impl Source {
     }
 
     fn diff(&self, sequence: u64) -> Result<Diff> {
+        let _span = debug_span!("diff", sequence).entered();
         let state = self.state_file(sequence)?;
-        let changes = OscReader::open(self.diff_file(sequence)?)?.collect::<Result<_>>()?;
+        let path = self.diff_file(sequence)?;
+        debug!(path = %path.display(), "read");
+        let changes = OscReader::open(path)?.collect::<Result<_>>()?;
         Ok(Diff { state, changes })
     }
 
     /// Fails unless the server has published `sequence`, by the latest state read, or read now if that is older.
-    fn check_published(&self, remote: &Remote, sequence: u64) -> Result<()> {
-        let known = *remote.latest.lock().unwrap_or_else(PoisonError::into_inner);
+    fn check_published(&self, sequence: u64) -> Result<()> {
+        let known = *self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let latest = match known {
             Some(latest) if latest >= sequence => latest,
             _ => self.latest()?.sequence,
@@ -415,6 +450,13 @@ impl Source {
 }
 
 impl Remote {
+    fn new(base_url: &str, fetch: impl Fetch + 'static) -> Self {
+        Self {
+            base: base_url.trim_end_matches('/').to_owned(),
+            fetch: Box::new(fetch),
+        }
+    }
+
     /// Fetches the file at `relative`, and checks it, fetching it again a few times while the check fails. Returns
     /// the URL, the body, and what the check returned.
     fn fetch_checked<T>(
@@ -434,9 +476,122 @@ impl Remote {
             match check(&url, &body) {
                 Ok(checked) => return Ok((url, body, checked)),
                 Err(e) if tries >= CHECKED_TRIES => return Err(e),
-                Err(_) => thread::sleep(CHECK_RETRY_PAUSE),
+                Err(e) => {
+                    warn!(error = %e, "fetching it again");
+                    thread::sleep(CHECK_RETRY_PAUSE);
+                }
             }
         }
+    }
+}
+
+/// A missing `state.txt` as what it means: the URL is no stream.
+fn no_stream(e: OscError) -> OscError {
+    if let OscError::NotFound { url } = e {
+        OscError::NoStream { url }
+    } else {
+        e
+    }
+}
+
+/// `state`, read from `origin` as the state of diff `sequence`; an [`OscError::State`] error if it names another.
+fn check_sequence(origin: &str, state: State, sequence: u64) -> Result<State> {
+    if state.sequence == sequence {
+        return Ok(state);
+    }
+    Err(OscError::State {
+        origin: origin.to_owned(),
+        kind: StateError::Value {
+            key: "sequenceNumber",
+            value: state.sequence.to_string(),
+        },
+    })
+}
+
+/// The state files of a replication server, downloaded with a [`Fetch`] and kept in memory rather than in a cache
+/// directory: for [`locate`](crate::osc::locate) and [`plan`](crate::osc::plan), which read a few of them. Each is
+/// checked as [`Replication`] checks it, a state file must parse and name its sequence, and downloaded once.
+pub struct ServerStates {
+    remote: Remote,
+    /// The latest state, read the first time it is asked for.
+    latest: OnceLock<State>,
+    /// The other states read, and those the server does not have.
+    read: Mutex<HashMap<u64, Option<State>>>,
+}
+
+impl ServerStates {
+    /// The state files of the server at `base_url`, such as `https://planet.openstreetmap.org/replication/minute`,
+    /// downloaded with `fetch`.
+    pub fn new(base_url: &str, fetch: impl Fetch + 'static) -> Self {
+        Self {
+            remote: Remote::new(base_url, fetch),
+            latest: OnceLock::new(),
+            read: Mutex::default(),
+        }
+    }
+
+    /// The state files of the server at `base_url` over HTTP, with [`HttpFetch`](crate::osc::HttpFetch)'s defaults.
+    #[cfg(feature = "http")]
+    #[must_use]
+    pub fn http(base_url: &str) -> Self {
+        use crate::osc::HttpFetch;
+        Self::new(base_url, HttpFetch::new())
+    }
+}
+
+impl StateSource for ServerStates {
+    /// The server's `state.txt`, downloaded the first time only. Threads that ask at once may each download it, as no
+    /// lock is held while it downloads; the first to finish sets it.
+    fn latest(&self) -> Result<State> {
+        if let Some(&latest) = self.latest.get() {
+            return Ok(latest);
+        }
+        let (_, _, state) = self
+            .remote
+            .fetch_checked("state.txt", parse_state)
+            .map_err(no_stream)?;
+        Ok(*self.latest.get_or_init(|| state))
+    }
+
+    /// Downloads the states of `sequences` not read yet, [`PARALLEL`](crate::osc::PARALLEL) at a time.
+    fn prefetch(&self, sequences: RangeInclusive<u64>) {
+        // Once, before the threads that each need it.
+        if self.latest().is_err() {
+            return;
+        }
+        let missing: Vec<u64> = {
+            let read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+            sequences.filter(|s| !read.contains_key(s)).collect()
+        };
+        read_ahead(&missing, |sequence| {
+            let _ = self.get(sequence);
+        });
+    }
+
+    /// `None` for a state past the latest one, or one the server does not have.
+    fn get(&self, sequence: u64) -> Result<Option<State>> {
+        if let Some(&state) = self
+            .read
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&sequence)
+        {
+            return Ok(state);
+        }
+        if sequence > self.latest()?.sequence {
+            return Ok(None);
+        }
+        let relative = format!("{}.state.txt", sequence_path(sequence));
+        let state = match self.remote.fetch_checked(&relative, parse_state) {
+            Ok((url, _, state)) => Some(check_sequence(&url, state, sequence)?),
+            Err(OscError::NotFound { .. }) => None,
+            Err(e) => return Err(e),
+        };
+        self.read
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(sequence, state);
+        Ok(state)
     }
 }
 

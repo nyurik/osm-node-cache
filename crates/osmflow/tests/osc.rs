@@ -11,7 +11,7 @@ use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use osmflow::osc::{self, Action, Change, Object, OscError, OscReader, XmlError};
-use osmflow::{MemberType, PbfReader, Select};
+use osmflow::{MemberType, PbfReader, Select, Timestamp};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -50,7 +50,7 @@ fn dump(change: &Change) -> String {
         change.action,
         object.id(),
         opt(meta.version),
-        opt(meta.timestamp_ms),
+        opt(meta.timestamp.map(Timestamp::as_millis)),
         opt(meta.changeset),
         opt(meta.uid),
         opt(meta.user.as_deref().map(esc)),
@@ -344,7 +344,7 @@ fn count_elements(xml: &str) -> [usize; 6] {
 
 #[test]
 fn planet_minute_diff() {
-    let path = fixture("planet-minute-7363600.osc.gz");
+    let path = fixture("planet/minute/007/363/600.osc.gz");
     let mut xml = String::new();
     MultiGzDecoder::new(File::open(&path).unwrap())
         .read_to_string(&mut xml)
@@ -370,7 +370,7 @@ fn planet_minute_diff() {
         let m = c.object.meta();
         // The planet's diffs have every field.
         assert!(
-            m.version.is_some() && m.timestamp_ms.is_some() && m.changeset.is_some(),
+            m.version.is_some() && m.timestamp.is_some() && m.changeset.is_some(),
             "{}",
             dump(c)
         );
@@ -947,8 +947,6 @@ fn others(suffixes: &[&str]) -> Vec<PathBuf> {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             if path.is_dir() {
                 dirs.push(path);
-            } else if dir.ends_with("fixtures/osc") {
-                // The planet's minute diff and its state, checked one by one.
             } else if suffixes.iter().any(|s| name.ends_with(s)) {
                 out.push(path);
             }

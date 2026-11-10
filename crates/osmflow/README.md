@@ -121,9 +121,9 @@ fn changes(diff: &Path, replication: &Path) -> Result<(), OscError> {
     // directory first, with the `http` feature.
     let replication = Replication::local(replication);
     let latest = replication.state()?.sequence;
-    for diff in replication.diffs(latest.saturating_sub(2))? {
+    for diff in replication.diffs(latest.saturating_sub(2)..)? {
         let diff = diff?;
-        println!("{} changes up to {}", diff.changes.len(), diff.state.timestamp_ms);
+        println!("{} changes up to {}", diff.changes.len(), diff.state.timestamp);
     }
     Ok(())
 }

@@ -14,7 +14,9 @@ use std::thread::{self, JoinHandle};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 
 use super::codec::{u32_at, u64_at};
-use super::file::{At as _, crc, map_file, open_ro, open_rw, read_at, sync_dir, write_at};
+use super::file::{
+    At as _, crc, header_copies, map_file, open_ro, open_rw, read_at, sync_dir, write_at,
+};
 use super::store::{check, check_order, check_resumed};
 use super::{
     BulkLoad, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead, NodeReader,
@@ -27,7 +29,6 @@ const SLOT: usize = PAGE_SIZE / 2;
 /// Where a header copy's metadata starts; its CRC-32 is in the copy's last 4 bytes.
 const METADATA_AT: usize = 44;
 const MAGIC: &[u8; 8] = b"ONCDENS1";
-const MAGIC_PREFIX: &[u8; 7] = b"ONCDENS";
 const VERSION: u32 = 1;
 /// The file grows by at least this much at a time.
 const GROW_MIN: u64 = if cfg!(test) { 64 << 10 } else { 64 << 20 };
@@ -89,19 +90,8 @@ impl Header {
     }
 
     fn read(page: &[u8], path: &Path) -> Result<(Self, Metadata)> {
-        if !page.starts_with(MAGIC_PREFIX) && !page[SLOT..].starts_with(MAGIC_PREFIX) {
-            return Err(NodeStoreError::NotAStore(path.to_path_buf()));
-        }
-        for h in [&page[..SLOT], &page[SLOT..]] {
-            if h.starts_with(MAGIC_PREFIX) && &h[..8] != MAGIC {
-                return Err(NodeStoreError::UnsupportedVersion {
-                    path: path.to_path_buf(),
-                    found: u32_at(h, 8),
-                    expected: VERSION,
-                });
-            }
-        }
-        [&page[..SLOT], &page[SLOT..]]
+        let copies = header_copies(page, path, *MAGIC, VERSION)?;
+        copies
             .into_iter()
             .filter_map(Self::decode)
             .max_by_key(|(h, _)| h.generation)

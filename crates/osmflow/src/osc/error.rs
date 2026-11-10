@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use std::{fmt, io, result};
 
+use crate::Timestamp;
+use crate::osc::State;
+
 /// The result of every fallible call of [`osc`](crate::osc).
 pub(crate) type Result<T, E = OscError> = result::Result<T, E>;
 
@@ -67,6 +70,37 @@ pub enum OscError {
     /// The thread decoding diffs ahead ended without a result, as when it panicked.
     #[error("the thread reading diffs ahead stopped unexpectedly")]
     ReadAhead,
+    /// A search by time found no state for a sequence between two the stream has, so it cannot tell which diffs hold
+    /// the time. A stream's states must be one run of sequences: only the oldest may be gone.
+    #[error(
+        "the stream has no state for sequence {sequence}, though it has states before and after it"
+    )]
+    StateGap {
+        /// The sequence without a state.
+        sequence: u64,
+    },
+    /// A plan needs diffs from before the oldest one the finest stream still has: start from a newer position, as
+    /// a fresh extract or dump gives.
+    #[error(
+        "the stream's oldest state is sequence {} at {}, after {at}",
+        oldest.sequence,
+        oldest.timestamp
+    )]
+    TooOld {
+        /// The time the plan starts from.
+        at: Timestamp,
+        /// The oldest state of the finest stream.
+        oldest: State,
+    },
+    /// A [`Start::After`](crate::osc::Start::After) names a stream that is not in the list given to
+    /// [`plan`](crate::osc::plan).
+    #[error("the plan starts after stream {stream}, but it has {streams} streams")]
+    UnknownStream {
+        /// The stream asked for.
+        stream: usize,
+        /// The number of streams given.
+        streams: usize,
+    },
 }
 
 /// Where in an osmChange file an error was found.

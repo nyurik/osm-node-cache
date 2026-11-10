@@ -1,13 +1,24 @@
-//! What a command reads: which objects (by type, ID and tag), and on how many threads.
+//! What a command reads: which objects (by type, ID and tag), which changes (by action, changeset and user), and on
+//! how many threads.
 
-use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
+use osmflow::osc::{Action, Change};
 use osmflow::rayon::ThreadPoolBuilder;
-use osmflow::{Block, PbfError, PbfReader, Select, TagMode, Tags};
+use osmflow::{Block, MemberType, PbfError, PbfReader, Select, TagMode};
+
+use crate::input::{Seqs, Since, parse_seqs, parse_since};
+
+/// The name of the first flag of `flags` that is given.
+pub fn first_given(flags: &[(bool, &'static str)]) -> Option<&'static str> {
+    flags
+        .iter()
+        .find_map(|&(given, name)| given.then_some(name))
+}
 
 /// An object type, as the flags name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
@@ -17,8 +28,21 @@ pub enum Kind {
     Relation,
 }
 
+impl From<MemberType> for Kind {
+    fn from(kind: MemberType) -> Self {
+        match kind {
+            MemberType::Node => Self::Node,
+            MemberType::Way => Self::Way,
+            MemberType::Relation => Self::Relation,
+        }
+    }
+}
+
 impl Kind {
-    fn index(self) -> usize {
+    /// The types in the order files hold them, which [`index`](Self::index) counts.
+    pub const ALL: [Self; 3] = [Self::Node, Self::Way, Self::Relation];
+
+    pub fn index(self) -> usize {
         match self {
             Self::Node => 0,
             Self::Way => 1,
@@ -31,6 +55,15 @@ impl Kind {
             Self::Node => "node",
             Self::Way => "way",
             Self::Relation => "relation",
+        }
+    }
+
+    /// The name of many: `nodes`, as summaries label them.
+    pub fn plural(self) -> &'static str {
+        match self {
+            Self::Node => "nodes",
+            Self::Way => "ways",
+            Self::Relation => "relations",
         }
     }
 }
@@ -79,15 +112,19 @@ pub fn parse_tag(s: &str) -> Result<TagSpec> {
 /// The flags that choose objects.
 #[derive(Debug, clap::Args)]
 pub struct Filter {
-    /// Only objects with these IDs: `12` of any type, or `n12`, `w12` or `r12` of one. Repeat the flag, or separate
-    /// IDs with commas.
+    /// Only objects with these IDs, by commas.
+    ///
+    /// `12` is an ID of any type, and `n12`, `w12` or `r12` one of a node, a way or a relation. The flag can also be
+    /// repeated.
     #[arg(long = "id", value_name = "ID", value_delimiter = ',', value_parser = parse_id)]
     ids: Vec<IdSpec>,
-    /// Only objects of these types, separated by commas.
+    /// Only objects of these types, by commas.
     #[arg(short = 't', long = "type", value_name = "TYPE", value_delimiter = ',')]
     types: Vec<Kind>,
-    /// Only objects with this tag: `KEY` with any value, or `KEY=VALUE` or `KEY=V1,V2` with one of the values. Given
-    /// more than once, an object needs any one of them. Blocks without the key are skipped unread.
+    /// Only objects with this tag; repeated, with any of them.
+    ///
+    /// `KEY` matches any value, and `KEY=VALUE` or `KEY=V1,V2` one of the values. PBF blocks without the key are
+    /// skipped unread.
     #[arg(long = "tag", value_name = "KEY[=VALUES]", value_parser = parse_tag)]
     tags: Vec<TagSpec>,
 }
@@ -155,13 +192,16 @@ impl Filter {
 
     /// A test of single objects against the flags.
     pub fn matcher(&self) -> Matcher {
-        let mut any = HashSet::new();
-        let mut typed = HashSet::new();
+        let mut any = Vec::new();
+        let mut typed: [Vec<i64>; 3] = Default::default();
         for spec in &self.ids {
             match spec.kind {
-                Some(kind) => typed.insert((kind, spec.id)),
-                None => any.insert(spec.id),
-            };
+                Some(kind) => typed[kind.index()].push(spec.id),
+                None => any.push(spec.id),
+            }
+        }
+        for ids in typed.iter_mut().chain([&mut any]) {
+            ids.sort_unstable();
         }
         Matcher {
             ids: !self.ids.is_empty(),
@@ -210,8 +250,9 @@ impl IdStop {
 #[derive(Debug)]
 pub struct Matcher {
     ids: bool,
-    any: HashSet<i64>,
-    typed: HashSet<(Kind, i64)>,
+    /// IDs of any type, sorted, and IDs of each type, by [`Kind::index`]: a few, searched in place.
+    any: Vec<i64>,
+    typed: [Vec<i64>; 3],
     tags: Vec<TagSpec>,
 }
 
@@ -223,7 +264,10 @@ impl Matcher {
         id: i64,
         tags: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> bool {
-        if self.ids && !self.any.contains(&id) && !self.typed.contains(&(kind, id)) {
+        if self.ids
+            && self.any.binary_search(&id).is_err()
+            && self.typed[kind.index()].binary_search(&id).is_err()
+        {
             return false;
         }
         if self.tags.is_empty() {
@@ -245,8 +289,9 @@ impl Matcher {
 /// How many threads decode the file.
 #[derive(Debug, clap::Args)]
 pub struct Threads {
-    /// Threads to decode on. With 1, blocks are decoded one after another on one thread; by default a pool shared by
-    /// every read decodes, with two threads fewer than the cores.
+    /// Threads to decode on; by default, two fewer than the cores.
+    ///
+    /// With 1, blocks are decoded one after another on one thread.
     #[arg(short = 'j', long, value_name = "N")]
     threads: Option<NonZeroUsize>,
 }
@@ -254,6 +299,11 @@ pub struct Threads {
 impl Threads {
     fn sequential(&self) -> bool {
         self.threads.is_some_and(|n| n.get() == 1)
+    }
+
+    /// The number of threads asked for, if any.
+    pub fn count(&self) -> Option<usize> {
+        self.threads.map(NonZeroUsize::get)
     }
 
     /// `file`, decoding on a pool of the chosen size.
@@ -290,11 +340,11 @@ impl Threads {
     }
 
     /// Calls `f` with every block of `file`, in no particular order when parallel.
-    pub fn unordered(
+    pub fn unordered<T: TagMode>(
         &self,
         file: &PbfReader,
-        select: Select<Tags>,
-        f: impl Fn(Block) + Sync,
+        select: Select<T>,
+        f: impl Fn(Block<T>) + Sync,
     ) -> Result<()> {
         if self.sequential() {
             for block in file.blocks(select)? {
@@ -310,8 +360,132 @@ impl Threads {
     }
 }
 
+/// An `--action` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ActionArg {
+    Create,
+    Modify,
+    Delete,
+}
+
+impl From<ActionArg> for Action {
+    fn from(action: ActionArg) -> Self {
+        match action {
+            ActionArg::Create => Self::Create,
+            ActionArg::Modify => Self::Modify,
+            ActionArg::Delete => Self::Delete,
+        }
+    }
+}
+
+/// The flags of osmChange files and replication streams: which diffs to read, where to keep them, and which changes
+/// to take.
+#[derive(Debug, Default, clap::Args)]
+#[command(next_help_heading = "osmChange and replication")]
+pub struct ChangeArgs {
+    /// Diffs to read: `N`, `A..B`, `A..` or `latest`.
+    ///
+    /// `A..B` includes both ends, and `A..` runs to the latest state. Without it or --since, `dump` of a stream
+    /// reads the latest diff, and `stats` shows the stream's latest state.
+    #[arg(long, value_name = "SEQ", value_parser = parse_seqs)]
+    pub seq: Option<Seqs>,
+    /// Diffs after a PBF file, a state file or a time.
+    ///
+    /// After a PBF file, by the replication sequence in its header when its base URL is this stream's, and otherwise
+    /// by its replication timestamp. After a state file of this stream. Or the changes made after a time, as
+    /// `2026-11-09T21:00:00Z` or `2026-11-09`. From a PBF file's timestamp, the diffs start 6 minutes before it, as a
+    /// change can show up in a diff that much after it is made, so the first ones may hold changes the file has.
+    #[arg(long, value_name = "WHEN", value_parser = parse_since, conflicts_with = "seq")]
+    pub since: Option<Since>,
+    /// Where to keep a server's downloaded files.
+    ///
+    /// Each file is downloaded into it once, and read from it after. Reading a server's diffs needs it; its latest
+    /// state does not.
+    #[arg(long, value_name = "DIR")]
+    pub cache: Option<PathBuf>,
+    /// Only changes in these sections, by commas.
+    #[arg(long = "action", value_name = "ACTION", value_delimiter = ',')]
+    actions: Vec<ActionArg>,
+    /// Only changes in these changesets, by commas.
+    ///
+    /// Geofabrik's public diffs have no changesets.
+    #[arg(long = "changeset", value_name = "ID", value_delimiter = ',')]
+    changesets: Vec<i64>,
+    /// Only changes by these user names, by commas.
+    ///
+    /// A name made of digits is a name too; --uid takes user IDs. Geofabrik's public diffs have no users.
+    #[arg(long = "user", value_name = "NAME", value_delimiter = ',')]
+    users: Vec<String>,
+    /// Only changes by these user IDs, by commas.
+    ///
+    /// A change by any user --user or --uid names is chosen. Geofabrik's public diffs have no users.
+    #[arg(long = "uid", value_name = "UID", value_delimiter = ',')]
+    uids: Vec<i32>,
+}
+
+impl ChangeArgs {
+    /// The first flag given that only replication streams take, for an error about a file.
+    pub fn stream_flag(&self) -> Option<&'static str> {
+        first_given(&[
+            (self.seq.is_some(), "--seq"),
+            (self.since.is_some(), "--since"),
+            (self.cache.is_some(), "--cache"),
+        ])
+    }
+
+    /// The first flag given that only osmChange input takes, for an error about a PBF file.
+    pub fn given(&self) -> Option<&'static str> {
+        self.stream_flag().or_else(|| {
+            first_given(&[
+                (!self.actions.is_empty(), "--action"),
+                (!self.changesets.is_empty(), "--changeset"),
+                (!self.users.is_empty(), "--user"),
+                (!self.uids.is_empty(), "--uid"),
+            ])
+        })
+    }
+
+    /// Fails if a flag that only osmChange input takes is given for the PBF file `path`.
+    pub fn reject_pbf(&self, path: &Path) -> Result<()> {
+        match self.given() {
+            Some(flag) => bail!(
+                "{flag} is for osmChange files and replication streams, and {} is a PBF file",
+                path.display()
+            ),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `--seq` or `--since` chooses diffs.
+    pub fn chooses(&self) -> bool {
+        self.seq.is_some() || self.since.is_some()
+    }
+
+    /// Whether `change` passes `--action`, `--changeset` and `--user`.
+    pub fn matches(&self, change: &Change) -> bool {
+        let meta = change.object.meta();
+        (self.actions.is_empty()
+            || self
+                .actions
+                .iter()
+                .any(|&a| Action::from(a) == change.action))
+            && (self.changesets.is_empty()
+                || meta.changeset.is_some_and(|c| self.changesets.contains(&c)))
+            && ((self.users.is_empty() && self.uids.is_empty())
+                || meta.uid.is_some_and(|uid| self.uids.contains(&uid))
+                || meta
+                    .user
+                    .as_deref()
+                    .is_some_and(|name| self.users.iter().any(|u| u == name)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
+    use osmflow::osc::OscReader;
+
     use super::*;
 
     #[test]
@@ -372,5 +546,69 @@ mod tests {
         assert!(m.matches(Kind::Way, 1, [("building", "yes")].into_iter()));
         assert!(!m.matches(Kind::Way, 1, [("highway", "path")].into_iter()));
         assert!(!m.matches(Kind::Way, 1, [].into_iter()));
+    }
+
+    #[test]
+    fn changes_match_action_changeset_and_user() {
+        let xml = r#"<osmChange version="0.6">
+            <create><node id="1" lat="1" lon="1" changeset="10" uid="5" user="ann"/></create>
+            <delete><way id="2" changeset="11" uid="6" user="bob"/></delete>
+            <modify><relation id="3"/></modify>
+        </osmChange>"#;
+        let changes: Vec<Change> = OscReader::new(Cursor::new(xml))
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let chosen = |args: ChangeArgs| -> Vec<i64> {
+            changes
+                .iter()
+                .filter(|c| args.matches(c))
+                .map(|c| c.object.id())
+                .collect()
+        };
+        assert_eq!(chosen(ChangeArgs::default()), [1, 2, 3]);
+        let actions = vec![ActionArg::Delete, ActionArg::Modify];
+        assert_eq!(
+            chosen(ChangeArgs {
+                actions,
+                ..ChangeArgs::default()
+            }),
+            [2, 3]
+        );
+        let changesets = vec![10];
+        assert_eq!(
+            chosen(ChangeArgs {
+                changesets,
+                ..ChangeArgs::default()
+            }),
+            [1]
+        );
+        // A name of digits is a name, not an ID.
+        let (users, uids) = (vec!["bob".to_owned(), "6".to_owned()], vec![5]);
+        assert_eq!(
+            chosen(ChangeArgs {
+                users,
+                uids,
+                ..ChangeArgs::default()
+            }),
+            [1, 2]
+        );
+        let users = vec!["5".to_owned()];
+        assert_eq!(
+            chosen(ChangeArgs {
+                users,
+                ..ChangeArgs::default()
+            }),
+            [] as [i64; 0]
+        );
+        assert_eq!(ChangeArgs::default().given(), None);
+        let users = vec!["x".to_owned()];
+        assert_eq!(
+            ChangeArgs {
+                users,
+                ..ChangeArgs::default()
+            }
+            .given(),
+            Some("--user")
+        );
     }
 }

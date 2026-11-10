@@ -2,8 +2,10 @@
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher as _, Hasher as _};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{io, thread};
+
+use tracing::{info, warn};
 
 use crate::osc::Fetch;
 
@@ -60,6 +62,7 @@ impl HttpFetch {
 
 impl Fetch for HttpFetch {
     fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>> {
+        let started = Instant::now();
         let mut attempt = 0;
         loop {
             let (error, delay) = match self.agent.get(url).call() {
@@ -72,11 +75,20 @@ impl Fetch for HttpFetch {
                             .limit(MAX_BODY)
                             .read_to_vec();
                         match body {
-                            Ok(body) => return Ok(Some(body)),
+                            Ok(body) => {
+                                info!(
+                                    url,
+                                    bytes = body.len(),
+                                    took = ?started.elapsed(),
+                                    "downloaded"
+                                );
+                                return Ok(Some(body));
+                            }
                             Err(e) if transient(&e) => (e.into_io(), backoff(attempt)),
                             Err(e) => return Err(e.into_io()),
                         }
                     } else if status == 404 {
+                        info!(url, "not on the server");
                         return Ok(None);
                     } else {
                         let retry_after = response
@@ -96,7 +108,9 @@ impl Fetch for HttpFetch {
             if attempt >= self.retries {
                 return Err(error);
             }
-            thread::sleep(delay + jitter(delay));
+            let delay = delay + jitter(delay);
+            warn!(url, %error, after = ?delay, "trying again");
+            thread::sleep(delay);
             attempt += 1;
         }
     }

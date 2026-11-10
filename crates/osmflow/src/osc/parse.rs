@@ -11,8 +11,9 @@ use memchr::{memchr, memmem};
 
 use crate::model::{Location, MemberType};
 use crate::osc::error::{OscError, Result, XmlError, XmlPosition};
-use crate::osc::value::{decimicro, int, is_plain, push_text, timestamp_ms};
+use crate::osc::value::{decimicro, int, is_plain, push_text};
 use crate::osc::{Action, Change, Meta, Node, Object, Relation, StringsBuf, Tags, Way};
+use crate::time::{self, Timestamp};
 
 /// The bytes read from the input at once.
 const BUFFER: usize = 256 << 10;
@@ -344,19 +345,19 @@ struct Scratch {
     user: Option<Arc<str>>,
     text: String,
     /// The last timestamp parsed, which the next object often has too.
-    timestamp: Option<([u8; 20], i64)>,
+    timestamp: Option<([u8; 20], Timestamp)>,
 }
 
 impl Scratch {
-    fn timestamp_ms(&mut self, raw: &[u8]) -> Option<i64> {
-        if let Some((last, ms)) = &self.timestamp
+    fn timestamp(&mut self, raw: &[u8]) -> Option<Timestamp> {
+        if let Some((last, at)) = &self.timestamp
             && raw == last
         {
-            return Some(*ms);
+            return Some(*at);
         }
-        let ms = timestamp_ms(raw)?;
-        self.timestamp = Some((raw.try_into().ok()?, ms));
-        Some(ms)
+        let at = time::parse(raw)?;
+        self.timestamp = Some((raw.try_into().ok()?, at));
+        Some(at)
     }
 
     fn tag<'a>(
@@ -460,7 +461,7 @@ pub struct OscReader<R> {
 
 impl OscReader<Box<dyn Read + Send>> {
     /// Opens an osmChange file, decompressing it if it is gzipped, whatever its name.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, OscError> {
         let path = path.as_ref();
         let file = File::open(path).map_err(|source| OscError::File {
             path: path.to_owned(),
@@ -638,9 +639,7 @@ impl<R: Read> OscReader<R> {
             match &lexer.buf[attr.name.clone()] {
                 b"id" => set(&mut head.id, "id", v, int)?,
                 b"version" => set(&mut m.version, "version", v, int)?,
-                b"timestamp" => set(&mut m.timestamp_ms, "timestamp", v, |v| {
-                    scratch.timestamp_ms(v)
-                })?,
+                b"timestamp" => set(&mut m.timestamp, "timestamp", v, |v| scratch.timestamp(v))?,
                 b"changeset" => set(&mut m.changeset, "changeset", v, int)?,
                 b"uid" => set(&mut m.uid, "uid", v, int)?,
                 b"lat" => set(&mut head.lat, "lat", v, |v| {
@@ -736,7 +735,7 @@ impl<R: Read> OscReader<R> {
 }
 
 impl<R: Read> Iterator for OscReader<R> {
-    type Item = Result<Change>;
+    type Item = Result<Change, OscError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.level == Level::Done {

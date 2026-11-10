@@ -1,22 +1,20 @@
-//! `osmflow dump`: writes a file's objects as text or GeoJSON.
+//! `osmflow dump`: writes the objects of a PBF file, or the changes of osmChange files, as text or GeoJSON.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
-use geo_types::{Coord, LineString, Polygon};
 use osmflow::nodes::prelude::{NodeRead as _, NodeStore as _};
 use osmflow::nodes::{MemoryReader, MemoryStore};
-use osmflow::{
-    AreaRules, Block, GeometryError, Header, Info, Location, Locator, MemberType, Node, PbfReader,
-    Relation, Select, Way,
-};
+use osmflow::{AreaRules, GeometryError, Header, Location, Locator, PbfReader, Select, Way};
 
-use crate::output::{self, count, degrees, json_str, timestamp, to_decimicro};
-use crate::select::{Filter, Kind, TagSpec, Threads, parse_tag};
+use crate::input::Input;
+use crate::select::{ChangeArgs, Filter, Kind, TagSpec, Threads, first_given, parse_tag};
+use crate::write::{DumpFormat, Geometry, Props, Writer};
+use crate::{changes, output};
 
 /// A file larger than this is dumped whole only with `--all`.
 const WHOLE_FILE_LIMIT: u64 = 100 << 20;
@@ -24,104 +22,131 @@ const WHOLE_FILE_LIMIT: u64 = 100 << 20;
 #[derive(Debug, clap::Args)]
 #[expect(clippy::struct_excessive_bools, reason = "independent flags")]
 pub struct Args {
-    /// The OSM PBF file.
+    /// A PBF file, osmChange file, or replication directory or URL.
+    ///
+    /// An osmChange file is `.osc` or `.osc.gz`, and a replication stream a directory laid out as the servers lay
+    /// theirs out, or a server's URL. What the input is is told from its contents, not its name.
     input: PathBuf,
     /// Where to write; standard output when left out, or `-`.
     output: Option<PathBuf>,
-    /// The output format. By default it follows OUTPUT's extension: `.geojson` for GeoJSON, `.geojsonl`, `.geojsons`
-    /// or `.ndjson` for one GeoJSON feature per line, and text otherwise.
+    /// The output format; by default, from OUTPUT's extension.
+    ///
+    /// `.geojson` is GeoJSON, `.geojsonl`, `.geojsons` or `.ndjson` one GeoJSON feature per line, and anything else
+    /// text.
     #[arg(short, long)]
-    format: Option<Format>,
-    /// In text, each way's geometry as WKT, from its nodes' locations. GeoJSON always has them.
+    format: Option<DumpFormat>,
+    /// In text, each way's geometry as WKT (PBF only).
+    ///
+    /// The geometry is built from the locations of the way's nodes. GeoJSON always has it.
     #[arg(long)]
     geometry: bool,
-    /// In text, each block's blob, string table and groups before its objects.
+    /// In text, each block's layout before its objects (PBF only).
+    ///
+    /// The layout is the block's blob, string table and groups.
     #[arg(long)]
     blocks: bool,
     /// Each object's version, timestamp, changeset and user.
     #[arg(long)]
-    metadata: bool,
+    pub metadata: bool,
     /// Stop after this many objects.
     #[arg(long, value_name = "N")]
-    limit: Option<u64>,
-    /// Dump a file over 100 MiB whole, without --id, --tag or --limit.
+    pub limit: Option<u64>,
+    /// Dump a file over 100 MiB whole.
+    ///
+    /// Without this flag, such a file needs --id, --tag or --limit.
     #[arg(long)]
     all: bool,
-    /// Closed ways with this tag are areas too: `KEY` with any value, or `KEY=V1,V2` with one of the values. Repeat
-    /// the flag for more tags.
+    /// Closed ways with this tag are areas too.
+    ///
+    /// `KEY` matches any value, and `KEY=V1,V2` one of the values. Repeat the flag for more tags.
     #[arg(long = "area", value_name = "KEY[=VALUES]", value_parser = parse_tag)]
     areas: Vec<TagSpec>,
-    /// Closed ways with this tag are lines, unless another tag makes them areas: `KEY` with any value, or
-    /// `KEY=V1,V2` with one of the values.
+    /// Closed ways with this tag are lines.
+    ///
+    /// Another tag can still make them areas. `KEY` matches any value, and `KEY=V1,V2` one of the values.
     #[arg(long = "not-area", value_name = "KEY[=VALUES]", value_parser = parse_tag)]
     not_areas: Vec<TagSpec>,
-    /// Leave out the built-in tags that make closed ways areas, so only `area=yes` and --area do.
+    /// Ignore the built-in tags that make areas.
+    ///
+    /// Only `area=yes` and --area then make them areas.
     #[arg(long)]
     no_default_areas: bool,
     #[command(flatten)]
-    filter: Filter,
+    pub filter: Filter,
     #[command(flatten)]
-    threads: Threads,
+    pub threads: Threads,
+    #[command(flatten)]
+    pub changes: ChangeArgs,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Format {
-    /// One line per object, with the file's header first.
-    Text,
-    /// One GeoJSON FeatureCollection.
-    Geojson,
-    /// One GeoJSON Feature per line.
-    Geojsonseq,
-}
+impl Args {
+    fn output(&self) -> Option<&Path> {
+        self.output.as_deref().filter(|p| *p != Path::new("-"))
+    }
 
-impl Format {
-    fn of(path: Option<&Path>) -> Self {
-        let extension = path
-            .and_then(Path::extension)
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase);
-        match extension.as_deref() {
-            Some("geojson" | "json") => Self::Geojson,
-            Some("geojsonl" | "geojsons" | "ndjson") => Self::Geojsonseq,
-            _ => Self::Text,
-        }
+    pub fn format(&self) -> DumpFormat {
+        self.format.unwrap_or_else(|| DumpFormat::of(self.output()))
+    }
+
+    /// The output, with nothing written yet but the start of a GeoJSON FeatureCollection.
+    pub fn writer(&self) -> Result<Writer> {
+        let out: Box<dyn Write> = match self.output() {
+            Some(path) => Box::new(
+                File::create(path).with_context(|| format!("cannot create {}", path.display()))?,
+            ),
+            None => Box::new(io::stdout().lock()),
+        };
+        Ok(Writer::new(out, self.format())?)
+    }
+
+    /// The first flag given that only PBF files take.
+    pub fn pbf_flag(&self) -> Option<&'static str> {
+        first_given(&[
+            (self.geometry, "--geometry"),
+            (self.blocks, "--blocks"),
+            (self.all, "--all"),
+            (!self.areas.is_empty(), "--area"),
+            (!self.not_areas.is_empty(), "--not-area"),
+            (self.no_default_areas, "--no-default-areas"),
+        ])
     }
 }
 
 pub fn run(args: &Args) -> Result<()> {
-    let output = args.output.as_deref().filter(|p| *p != Path::new("-"));
-    let format = args.format.unwrap_or_else(|| Format::of(output));
-    if args.blocks && format != Format::Text {
+    match Input::of(&args.input)? {
+        Input::Pbf(path) => pbf(args, &path),
+        Input::State(path) => bail!(
+            "{} is a replication state file, which has no objects; `osmflow stats` shows it",
+            path.display()
+        ),
+        input @ (Input::Osc(_) | Input::Dir(_) | Input::Url(_)) => changes::dump(args, &input),
+    }
+}
+
+fn pbf(args: &Args, path: &Path) -> Result<()> {
+    args.changes.reject_pbf(path)?;
+    let format = args.format();
+    if args.blocks && format != DumpFormat::Text {
         bail!("--blocks shows blocks in text output only");
     }
-    let size = fs::metadata(&args.input)
-        .with_context(|| format!("cannot read {}", args.input.display()))?
+    let size = fs::metadata(path)
+        .with_context(|| format!("cannot read {}", path.display()))?
         .len();
     if size > WHOLE_FILE_LIMIT && !args.filter.picks() && args.limit.is_none() && !args.all {
         bail!(
             "{} is {}; give --id, --tag or --limit to choose what to dump, or --all to dump everything",
-            args.input.display(),
+            path.display(),
             output::size(size)
         );
     }
-    let file = args.threads.apply(open(&args.input)?)?;
-    let store = if (format != Format::Text || args.geometry) && args.filter.wants(Kind::Way) {
+    let file = args.threads.apply(open(path)?)?;
+    let store = if (format != DumpFormat::Text || args.geometry) && args.filter.wants(Kind::Way) {
         Some(node_locations(args, &file)?)
     } else {
         None
     };
-    let out: Box<dyn Write> = match output {
-        Some(path) => Box::new(
-            File::create(path).with_context(|| format!("cannot create {}", path.display()))?,
-        ),
-        None => Box::new(io::stdout().lock()),
-    };
-    let mut w = Writer {
-        out: BufWriter::with_capacity(1 << 20, out),
-        format,
-        first: true,
-    };
-    w.begin(&args.input, size, file.header())?;
+    let mut w = args.writer()?;
+    header(&mut w, path, size, file.header())?;
 
     let mut stop = args.filter.id_stop(file.header().is_sorted());
     let file = args.filter.skip_blocks(file);
@@ -144,7 +169,9 @@ pub fn run(args: &Args) -> Result<()> {
                 return Ok(ControlFlow::Break(()));
             }
             if matcher.matches(Kind::Node, node.id(), node.tags()) {
-                w.node(&node)?;
+                let location = Location::new(node.decimicro_lat(), node.decimicro_lon());
+                let props = Props::of_info(node.info());
+                w.node(node.id(), Some(location), &props, node.tags())?;
                 left -= 1;
             }
         }
@@ -154,7 +181,8 @@ pub fn run(args: &Args) -> Result<()> {
             }
             if matcher.matches(Kind::Way, way.id(), way.tags()) {
                 let geometry = locator.as_mut().map(|l| way_geometry(l, &way, &areas));
-                w.way(&way, geometry)?;
+                let props = Props::of_info(way.info());
+                w.way(way.id(), way.refs(), geometry, &props, way.tags())?;
                 left -= 1;
             }
         }
@@ -163,7 +191,8 @@ pub fn run(args: &Args) -> Result<()> {
                 return Ok(ControlFlow::Break(()));
             }
             if matcher.matches(Kind::Relation, relation.id(), relation.tags()) {
-                w.relation(&relation)?;
+                let props = Props::of_info(relation.info());
+                w.relation(relation.id(), relation.members(), &props, relation.tags())?;
                 left -= 1;
             }
         }
@@ -181,8 +210,48 @@ pub fn run(args: &Args) -> Result<()> {
             "osmflow: note: {split} blocks of {} have a string table that goes on after their first group, which \
              --tag may have misjudged in the blocks it skipped before finding the first one. Please report the file at \
              https://github.com/nyurik/osmflow/issues",
-            args.input.display()
+            path.display()
         )?;
+    }
+    Ok(())
+}
+
+/// A PBF file's header, as `#` lines.
+fn header(w: &mut Writer, path: &Path, size: u64, h: &Header) -> io::Result<()> {
+    w.comment(|o| write!(o, "file: {} ({})", path.display(), output::size(size)))?;
+    if let Some(program) = &h.writing_program {
+        w.comment(|o| write!(o, "writing program: {program}"))?;
+    }
+    if let Some(source) = &h.source {
+        w.comment(|o| write!(o, "source: {source}"))?;
+    }
+    w.comment(|o| write!(o, "required features: {}", h.required_features.join(", ")))?;
+    if !h.optional_features.is_empty() {
+        w.comment(|o| write!(o, "optional features: {}", h.optional_features.join(", ")))?;
+    }
+    if let Some(b) = h.bbox {
+        w.comment(|o| {
+            o.write_all(b"bbox (west, south, east, north): ")?;
+            for (i, nano) in [b.left, b.bottom, b.right, b.top].into_iter().enumerate() {
+                if i > 0 {
+                    o.write_all(b", ")?;
+                }
+                output::nanodegrees(o, nano)?;
+            }
+            Ok(())
+        })?;
+    }
+    if let Some(sequence) = h.replication_sequence {
+        w.comment(|o| {
+            write!(o, "replication: sequence {sequence}")?;
+            if let Some(at) = h.replication_timestamp {
+                write!(o, ", {at}")?;
+            }
+            if let Some(url) = &h.replication_base_url {
+                write!(o, ", {url}")?;
+            }
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -280,12 +349,6 @@ fn values(spec: &TagSpec) -> Vec<&str> {
     spec.values.iter().map(String::as_str).collect()
 }
 
-/// A way's geometry: what [`Locator::area_or_line`] makes.
-enum Geometry {
-    Line(LineString),
-    Area(Polygon),
-}
-
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "area_or_line makes only lines and polygons"
@@ -300,395 +363,4 @@ fn way_geometry(
         geo_types::Geometry::Polygon(polygon) => Geometry::Area(polygon),
         other => unreachable!("a way's geometry is a line or a polygon, not {other:?}"),
     })
-}
-
-/// Writes objects in one format.
-struct Writer {
-    out: BufWriter<Box<dyn Write>>,
-    format: Format,
-    /// Whether no feature was written yet, to separate GeoJSON features.
-    first: bool,
-}
-
-impl Writer {
-    fn begin(&mut self, path: &Path, size: u64, header: &Header) -> io::Result<()> {
-        match self.format {
-            Format::Text => self.header(path, size, header),
-            Format::Geojson => self
-                .out
-                .write_all(br#"{"type":"FeatureCollection","features":["#),
-            Format::Geojsonseq => Ok(()),
-        }
-    }
-
-    fn end(&mut self) -> io::Result<()> {
-        if self.format == Format::Geojson {
-            self.out.write_all(b"\n]}\n")?;
-        }
-        self.out.flush()
-    }
-
-    /// The file's header, as `#` lines.
-    fn header(&mut self, path: &Path, size: u64, h: &Header) -> io::Result<()> {
-        let o = &mut self.out;
-        writeln!(o, "# file: {} ({})", path.display(), output::size(size))?;
-        if let Some(program) = &h.writing_program {
-            writeln!(o, "# writing program: {program}")?;
-        }
-        if let Some(source) = &h.source {
-            writeln!(o, "# source: {source}")?;
-        }
-        writeln!(o, "# required features: {}", h.required_features.join(", "))?;
-        if !h.optional_features.is_empty() {
-            writeln!(o, "# optional features: {}", h.optional_features.join(", "))?;
-        }
-        if let Some(b) = h.bbox {
-            write!(o, "# bbox (west, south, east, north): ")?;
-            for (i, nano) in [b.left, b.bottom, b.right, b.top].into_iter().enumerate() {
-                if i > 0 {
-                    o.write_all(b", ")?;
-                }
-                output::nanodegrees(o, nano)?;
-            }
-            writeln!(o)?;
-        }
-        if let Some(sequence) = h.replication_sequence {
-            write!(o, "# replication: sequence {sequence}")?;
-            if let Some(secs) = h.replication_timestamp {
-                o.write_all(b", ")?;
-                timestamp(o, secs.saturating_mul(1000))?;
-            }
-            if let Some(url) = &h.replication_base_url {
-                write!(o, ", {url}")?;
-            }
-            writeln!(o)?;
-        }
-        Ok(())
-    }
-
-    /// A block's layout, as one `##` line.
-    fn block(&mut self, block: &Block) -> io::Result<()> {
-        let (position, l) = (block.position(), block.layout());
-        let o = &mut self.out;
-        write!(
-            o,
-            "## blob {} at byte {}: {} bytes {}, {} raw, {} strings in {} bytes",
-            position.blob,
-            count(position.offset),
-            count(l.blob_bytes as u64),
-            if l.zlib { "zlib" } else { "uncompressed" },
-            count(l.raw_bytes as u64),
-            count(l.strings as u64),
-            count(l.string_bytes as u64),
-        )?;
-        if (
-            l.granularity,
-            l.lat_offset,
-            l.lon_offset,
-            l.date_granularity,
-        ) != (100, 0, 0, 1000)
-        {
-            write!(
-                o,
-                ", granularity {} nd, offsets {} {} nd, date granularity {} ms",
-                l.granularity, l.lat_offset, l.lon_offset, l.date_granularity
-            )?;
-        }
-        o.write_all(b"; groups:")?;
-        for (i, g) in l.groups.iter().enumerate() {
-            let kind = output::GROUP_NAMES[output::group_index(g.kind)];
-            let sep = if i == 0 { " " } else { ", " };
-            match g.objects {
-                Some(n) => write!(o, "{sep}{} {kind}", count(n as u64))?,
-                None => write!(o, "{sep}{kind}")?,
-            }
-        }
-        writeln!(o)
-    }
-
-    fn node(&mut self, node: &Node<'_>) -> io::Result<()> {
-        let (lat, lon) = (node.decimicro_lat(), node.decimicro_lon());
-        if self.format == Format::Text {
-            let o = &mut self.out;
-            write!(o, "n{} lat=", node.id())?;
-            degrees(o, lat)?;
-            o.write_all(b" lon=")?;
-            degrees(o, lon)?;
-            return self.text_rest(node.info(), node.tags());
-        }
-        self.feature_start('n', node.id())?;
-        self.out
-            .write_all(br#""geometry":{"type":"Point","coordinates":"#)?;
-        self.position(lat, lon)?;
-        self.out.write_all(b"}")?;
-        self.properties(Kind::Node, node.id(), node.info(), node.tags())?;
-        self.feature_end()
-    }
-
-    /// A way, with its geometry when one was asked for.
-    fn way(
-        &mut self,
-        way: &Way<'_>,
-        geometry: Option<Result<Geometry, GeometryError>>,
-    ) -> io::Result<()> {
-        if self.format == Format::Text {
-            let o = &mut self.out;
-            write!(o, "w{} nodes=[", way.id())?;
-            for (i, id) in way.refs().enumerate() {
-                if i > 0 {
-                    o.write_all(b",")?;
-                }
-                write!(o, "{id}")?;
-            }
-            o.write_all(b"]")?;
-            match geometry {
-                Some(Ok(g)) => {
-                    o.write_all(b" ")?;
-                    wkt(o, &g)?;
-                }
-                Some(Err(e)) => {
-                    o.write_all(b" geometry_error=")?;
-                    json_str(o, &e.to_string())?;
-                }
-                None => {}
-            }
-            return self.text_rest(way.info(), way.tags());
-        }
-        self.feature_start('w', way.id())?;
-        self.out.write_all(br#""geometry":"#)?;
-        match &geometry {
-            Some(Ok(g)) => self.geojson_geometry(g)?,
-            _ => self.out.write_all(b"null")?,
-        }
-        self.properties(Kind::Way, way.id(), way.info(), way.tags())?;
-        if let Some(Err(e)) = geometry {
-            self.out.write_all(br#","@error":"#)?;
-            json_str(&mut self.out, &e.to_string())?;
-        }
-        self.out.write_all(b"}")?;
-        self.feature_end()
-    }
-
-    fn relation(&mut self, relation: &Relation<'_>) -> io::Result<()> {
-        if self.format == Format::Text {
-            let o = &mut self.out;
-            write!(o, "r{} members=[", relation.id())?;
-            for (i, m) in relation.members().enumerate() {
-                if i > 0 {
-                    o.write_all(b", ")?;
-                }
-                write!(o, "{}{} ", member_letter(m.kind), m.id)?;
-                json_str(o, m.role)?;
-            }
-            o.write_all(b"]")?;
-            return self.text_rest(relation.info(), relation.tags());
-        }
-        self.feature_start('r', relation.id())?;
-        self.out.write_all(br#""geometry":null"#)?;
-        self.properties(
-            Kind::Relation,
-            relation.id(),
-            relation.info(),
-            relation.tags(),
-        )?;
-        self.out.write_all(br#","@members":["#)?;
-        for (i, m) in relation.members().enumerate() {
-            if i > 0 {
-                self.out.write_all(b",")?;
-            }
-            write!(
-                self.out,
-                r#"{{"type":"{}","ref":{},"role":"#,
-                member_letter(m.kind),
-                m.id
-            )?;
-            json_str(&mut self.out, m.role)?;
-            self.out.write_all(b"}")?;
-        }
-        self.out.write_all(b"]}")?;
-        self.feature_end()
-    }
-
-    /// The end of a text line: metadata, if read, and tags as a JSON object.
-    fn text_rest<'a>(
-        &mut self,
-        info: Option<Info<'_>>,
-        tags: impl Iterator<Item = (&'a str, &'a str)>,
-    ) -> io::Result<()> {
-        let o = &mut self.out;
-        if let Some(info) = info {
-            write!(o, " v{} ", info.version)?;
-            timestamp(o, info.timestamp_ms)?;
-            write!(o, " c{} u{} ", info.changeset, info.uid)?;
-            json_str(o, info.user)?;
-            if !info.visible {
-                o.write_all(b" deleted")?;
-            }
-        }
-        let mut tags = tags.peekable();
-        if tags.peek().is_some() {
-            o.write_all(b" ")?;
-            json_object(o, tags)?;
-        }
-        writeln!(o)
-    }
-
-    fn feature_start(&mut self, letter: char, id: i64) -> io::Result<()> {
-        if self.format == Format::Geojson {
-            self.out
-                .write_all(if self.first { b"\n" } else { b",\n" })?;
-        }
-        self.first = false;
-        write!(self.out, r#"{{"type":"Feature","id":"{letter}{id}","#)
-    }
-
-    fn feature_end(&mut self) -> io::Result<()> {
-        self.out.write_all(b"}")?;
-        if self.format == Format::Geojsonseq {
-            self.out.write_all(b"\n")?;
-        }
-        Ok(())
-    }
-
-    /// `,"properties":{...` without its closing brace, which relations and failed ways still add to.
-    fn properties<'a>(
-        &mut self,
-        kind: Kind,
-        id: i64,
-        info: Option<Info<'_>>,
-        tags: impl Iterator<Item = (&'a str, &'a str)>,
-    ) -> io::Result<()> {
-        let o = &mut self.out;
-        write!(o, r#","properties":{{"@type":"{}","@id":{id}"#, kind.name())?;
-        if let Some(info) = info {
-            write!(o, r#","@version":{},"@timestamp":"#, info.version)?;
-            o.write_all(b"\"")?;
-            timestamp(o, info.timestamp_ms)?;
-            write!(
-                o,
-                r#"","@changeset":{},"@uid":{},"@user":"#,
-                info.changeset, info.uid
-            )?;
-            json_str(o, info.user)?;
-            if !info.visible {
-                o.write_all(br#","@deleted":true"#)?;
-            }
-        }
-        for (k, v) in tags {
-            o.write_all(b",")?;
-            json_str(o, k)?;
-            o.write_all(b":")?;
-            json_str(o, v)?;
-        }
-        if kind == Kind::Node {
-            o.write_all(b"}")?;
-        }
-        Ok(())
-    }
-
-    fn position(&mut self, lat: i32, lon: i32) -> io::Result<()> {
-        self.out.write_all(b"[")?;
-        degrees(&mut self.out, lon)?;
-        self.out.write_all(b",")?;
-        degrees(&mut self.out, lat)?;
-        self.out.write_all(b"]")
-    }
-
-    fn coords(&mut self, line: &LineString) -> io::Result<()> {
-        self.out.write_all(b"[")?;
-        for (i, c) in line.0.iter().enumerate() {
-            if i > 0 {
-                self.out.write_all(b",")?;
-            }
-            self.position(to_decimicro(c.y), to_decimicro(c.x))?;
-        }
-        self.out.write_all(b"]")
-    }
-
-    fn geojson_geometry(&mut self, g: &Geometry) -> io::Result<()> {
-        match g {
-            Geometry::Line(line) => {
-                self.out
-                    .write_all(br#"{"type":"LineString","coordinates":"#)?;
-                self.coords(line)?;
-            }
-            Geometry::Area(polygon) => {
-                self.out
-                    .write_all(br#"{"type":"Polygon","coordinates":["#)?;
-                self.coords(polygon.exterior())?;
-                self.out.write_all(b"]")?;
-            }
-        }
-        self.out.write_all(b"}")
-    }
-}
-
-fn member_letter(kind: MemberType) -> char {
-    match kind {
-        MemberType::Node => 'n',
-        MemberType::Way => 'w',
-        MemberType::Relation => 'r',
-    }
-}
-
-fn json_object<'a>(
-    o: &mut impl Write,
-    pairs: impl Iterator<Item = (&'a str, &'a str)>,
-) -> io::Result<()> {
-    o.write_all(b"{")?;
-    for (i, (k, v)) in pairs.enumerate() {
-        if i > 0 {
-            o.write_all(b",")?;
-        }
-        json_str(o, k)?;
-        o.write_all(b":")?;
-        json_str(o, v)?;
-    }
-    o.write_all(b"}")
-}
-
-/// Writes a geometry as WKT: `LINESTRING(lon lat, ...)` or `POLYGON((...))`.
-fn wkt(o: &mut impl Write, g: &Geometry) -> io::Result<()> {
-    let points = |o: &mut dyn Write, coords: &[Coord]| -> io::Result<()> {
-        for (i, c) in coords.iter().enumerate() {
-            if i > 0 {
-                o.write_all(b", ")?;
-            }
-            let mut buf = Vec::with_capacity(24);
-            degrees(&mut buf, to_decimicro(c.x))?;
-            buf.push(b' ');
-            degrees(&mut buf, to_decimicro(c.y))?;
-            o.write_all(&buf)?;
-        }
-        Ok(())
-    };
-    match g {
-        Geometry::Line(line) => {
-            o.write_all(b"LINESTRING(")?;
-            points(o, &line.0)?;
-            o.write_all(b")")
-        }
-        Geometry::Area(polygon) => {
-            o.write_all(b"POLYGON((")?;
-            points(o, &polygon.exterior().0)?;
-            o.write_all(b"))")
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formats_follow_the_extension() {
-        assert_eq!(Format::of(Some(Path::new("dc.geojson"))), Format::Geojson);
-        assert_eq!(
-            Format::of(Some(Path::new("dc.geojsonl"))),
-            Format::Geojsonseq
-        );
-        assert_eq!(Format::of(Some(Path::new("dc.txt"))), Format::Text);
-        assert_eq!(Format::of(Some(Path::new("DC.GeoJSON"))), Format::Geojson);
-        assert_eq!(Format::of(None), Format::Text);
-    }
 }

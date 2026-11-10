@@ -1,36 +1,66 @@
-//! The `osmflow` command: dumps OpenStreetMap PBF files as text or GeoJSON, and summarizes them.
+//! The `osmflow` command: dumps OpenStreetMap PBF and osmChange files as text or GeoJSON, summarizes them, and finds
+//! replication sequences.
 
 use std::io;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod changes;
 mod dump;
+mod input;
+mod logging;
 mod output;
 mod select;
+mod seq;
 mod stats;
+mod write;
 
 #[derive(Debug, Parser)]
-#[command(name = "osmflow", version, about)]
+#[command(
+    name = "osmflow",
+    version,
+    about = "Dumps and summarizes OpenStreetMap PBF and osmChange files"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Log more: downloads; twice, file reads; three times, every probe.
+    ///
+    /// The log goes to standard error. `RUST_LOG` chooses what is logged as usual, with warnings by default; each `-v`
+    /// adds osmflow's own events of one more level to that: info (each download, with its size and time), then debug
+    /// (each state file and diff read, and each step of a plan), then trace (each state a search reads).
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Writes the objects of a PBF file as text or GeoJSON, all or only those chosen by ID, type and tag.
+    /// Writes objects or changes as text or GeoJSON.
+    ///
+    /// The objects of a PBF file, or the changes of an osmChange file or a replication stream: all, or those chosen
+    /// by ID, type and tag, and for changes by action, changeset and user.
     Dump(dump::Args),
-    /// Summarizes a PBF file: its header, blocks, object counts, ID ranges, extent and time span.
+    /// Summarizes a PBF file, osmChange input or replication stream.
+    ///
+    /// A PBF file's header, blocks, object counts, ID ranges and extent; osmChange input's changes by type and
+    /// action, extent, time span, changesets and users; or a replication stream's latest state.
     Stats(stats::Args),
+    /// Finds a replication stream's sequence at a time or file.
+    ///
+    /// Reads state files only: the latest, and a few more for a time. Prints the last state at or before the time, or
+    /// where the file is up to, and where `--since` of `dump` and `stats` starts from it.
+    Seq(seq::Args),
 }
 
 #[expect(clippy::print_stderr, reason = "errors are reported on standard error")]
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    logging::start(cli.verbose);
     let result = match cli.command {
         Command::Dump(args) => dump::run(&args),
         Command::Stats(args) => stats::run(&args),
+        Command::Seq(args) => seq::run(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -53,8 +83,26 @@ fn is_broken_pipe(e: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use anyhow::Context as _;
+    use clap::CommandFactory as _;
+    use osmflow::osc::COMMIT_DELAY;
 
     use super::*;
+
+    #[test]
+    fn the_help_and_readme_give_the_commit_delay() {
+        let delay = format!("{} minutes", COMMIT_DELAY.as_secs() / 60);
+        let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut cli = Cli::command();
+        for name in ["dump", "stats"] {
+            let help = cli
+                .find_subcommand_mut(name)
+                .unwrap()
+                .render_long_help()
+                .to_string();
+            assert!(words(&help).contains(&delay), "{name}: {help}");
+        }
+        assert!(words(include_str!("../README.md")).contains(&delay));
+    }
 
     #[test]
     fn broken_pipes_are_recognized_through_context() {
