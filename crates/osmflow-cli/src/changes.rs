@@ -12,7 +12,7 @@ use osmflow::osc::{Action, Change, Object, OscReader, State};
 
 use crate::input::{Input, Stream, ago, local_sequences, remote_state, sibling_state};
 use crate::output::{
-    count, extent_json, extent_line, json_str, opt_time, size, time_span, time_span_json, widen,
+    count, extent_json, extent_line, json_str, size, time_span, time_span_json, widen,
 };
 use crate::select::{ChangeArgs, Kind, Matcher, Threads};
 use crate::write::Props;
@@ -118,10 +118,7 @@ pub fn dump(args: &dump::Args, input: &Input) -> Result<()> {
             let change = match event {
                 Event::Diff(state) => {
                     sequence = stream.then_some(state.sequence);
-                    w.comment(|o| {
-                        write!(o, "sequence {} at ", state.sequence)?;
-                        write!(o, "{}", state.timestamp)
-                    })?;
+                    w.comment(|o| write!(o, "sequence {} at {}", state.sequence, state.timestamp))?;
                     return Ok(ControlFlow::Continue(()));
                 }
                 Event::Change(change) => change,
@@ -346,18 +343,16 @@ fn text(
         if s.diffs > 1 {
             write!(
                 o,
-                "sequences     {} .. {} ({} diffs), ",
+                "sequences     {} .. {} ({} diffs), {} .. {}",
                 first.sequence,
                 last.sequence,
-                count(s.diffs)
+                count(s.diffs),
+                first.timestamp,
+                last.timestamp
             )?;
-            write!(o, "{}", first.timestamp)?;
-            o.write_all(b" .. ")?;
         } else {
-            write!(o, "sequence      {} at ", last.sequence)?;
+            writeln!(o, "sequence      {} at {}", last.sequence, last.timestamp)?;
         }
-        write!(o, "{}", last.timestamp)?;
-        writeln!(o)?;
     }
     extent_line(o, s.lat, s.lon)?;
     if let Some(span) = s.time {
@@ -444,12 +439,9 @@ fn json(
     if let Some((first, last)) = s.states {
         write!(
             o,
-            r#","diffs":{},"first_sequence":{},"last_sequence":{},"first_state":"#,
-            s.diffs, first.sequence, last.sequence
+            r#","diffs":{},"first_sequence":{},"last_sequence":{},"first_state":"{}","last_state":"{}""#,
+            s.diffs, first.sequence, last.sequence, first.timestamp, last.timestamp
         )?;
-        opt_time(o, Some(first.timestamp))?;
-        o.write_all(br#","last_state":"#)?;
-        opt_time(o, Some(last.timestamp))?;
     }
     for kind in Kind::ALL {
         let name = kind.plural();
@@ -497,10 +489,9 @@ fn stream_state(
         json_str(o, &input.name())?;
         write!(
             o,
-            r#","latest_sequence":{},"latest_state":"#,
-            state.sequence
+            r#","latest_sequence":{},"latest_state":"{}""#,
+            state.sequence, state.timestamp
         )?;
-        opt_time(o, Some(state.timestamp))?;
         if let Some(local) = &local {
             write!(
                 o,
@@ -519,9 +510,13 @@ fn stream_state(
         return Ok(());
     }
     writeln!(o, "stream        {}", input.name())?;
-    write!(o, "latest        sequence {} at ", state.sequence)?;
-    write!(o, "{}", state.timestamp)?;
-    writeln!(o, ", {} ago", ago(state.timestamp))?;
+    writeln!(
+        o,
+        "latest        sequence {} at {}, {} ago",
+        state.sequence,
+        state.timestamp,
+        ago(state.timestamp)
+    )?;
     if let Some(local) = &local {
         match (local.first(), local.last()) {
             (Some(first), Some(last)) => writeln!(

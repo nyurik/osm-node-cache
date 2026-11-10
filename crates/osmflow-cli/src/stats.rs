@@ -114,7 +114,7 @@ struct Stats {
     /// Node latitudes and longitudes, smallest and largest, in 1e-7 degrees.
     lat: Option<(i32, i32)>,
     lon: Option<(i32, i32)>,
-    /// Object timestamps, earliest and latest, in milliseconds since 1970.
+    /// Object timestamps, earliest and latest.
     time: Option<(Timestamp, Timestamp)>,
     max_version: i32,
     deleted: u64,
@@ -270,13 +270,19 @@ fn state(args: &Args, path: &Path) -> Result<()> {
     let state = State::read(path)?;
     let mut o = io::stdout().lock();
     if args.json() {
-        write!(o, r#"{{"sequence":{},"timestamp":"#, state.sequence)?;
-        opt_time(&mut o, Some(state.timestamp))?;
-        writeln!(o, "}}")?;
+        writeln!(
+            o,
+            r#"{{"sequence":{},"timestamp":"{}"}}"#,
+            state.sequence, state.timestamp
+        )?;
     } else {
-        write!(o, "state         sequence {} at ", state.sequence)?;
-        write!(&mut o, "{}", state.timestamp)?;
-        writeln!(o, ", {} ago", ago(state.timestamp))?;
+        writeln!(
+            o,
+            "state         sequence {} at {}, {} ago",
+            state.sequence,
+            state.timestamp,
+            ago(state.timestamp)
+        )?;
     }
     Ok(())
 }

@@ -181,14 +181,14 @@ pub struct Replication {
 struct Source {
     dir: PathBuf,
     remote: Option<Remote>,
+    /// The latest sequence the server has published, as last read.
+    published: Mutex<Option<u64>>,
 }
 
 struct Remote {
     /// The base URL, without a trailing slash.
     base: String,
     fetch: Box<dyn Fetch>,
-    /// The latest sequence the server has published, as last read.
-    latest: Mutex<Option<u64>>,
 }
 
 impl Replication {
@@ -204,12 +204,7 @@ impl Replication {
         cache_dir: impl Into<PathBuf>,
         fetch: impl Fetch + 'static,
     ) -> Self {
-        let remote = Remote {
-            base: base_url.trim_end_matches('/').to_owned(),
-            fetch: Box::new(fetch),
-            latest: Mutex::new(None),
-        };
-        Self::new(cache_dir.into(), Some(remote))
+        Self::new(cache_dir.into(), Some(Remote::new(base_url, fetch)))
     }
 
     /// Reads a stream from the server at `base_url` over HTTP, with [`HttpFetch`](crate::osc::HttpFetch)'s defaults,
@@ -222,7 +217,11 @@ impl Replication {
 
     fn new(dir: PathBuf, remote: Option<Remote>) -> Self {
         let read_ahead = thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
-        let source = Arc::new(Source { dir, remote });
+        let source = Arc::new(Source {
+            dir,
+            remote,
+            published: Mutex::new(None),
+        });
         Self { source, read_ahead }
     }
 
@@ -380,7 +379,10 @@ impl Source {
             .fetch_checked("state.txt", parse_state)
             .map_err(no_stream)?;
         write_atomic(&path, &body)?;
-        *remote.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.sequence);
+        *self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(state.sequence);
         Ok(state)
     }
 
@@ -397,7 +399,7 @@ impl Source {
         let (relative, path) = self.path(sequence, ".state.txt");
         let (origin, state) = match &self.remote {
             Some(remote) if !path.exists() => {
-                self.check_published(remote, sequence)?;
+                self.check_published(sequence)?;
                 let (url, body, state) = remote.fetch_checked(&relative, parse_state)?;
                 if state.sequence == sequence {
                     write_atomic(&path, &body)?;
@@ -414,7 +416,7 @@ impl Source {
         if let Some(remote) = &self.remote
             && !path.exists()
         {
-            self.check_published(remote, sequence)?;
+            self.check_published(sequence)?;
             let (_, body, ()) = remote.fetch_checked(&relative, check_gzip)?;
             write_atomic(&path, &body)?;
         }
@@ -431,8 +433,11 @@ impl Source {
     }
 
     /// Fails unless the server has published `sequence`, by the latest state read, or read now if that is older.
-    fn check_published(&self, remote: &Remote, sequence: u64) -> Result<()> {
-        let known = *remote.latest.lock().unwrap_or_else(PoisonError::into_inner);
+    fn check_published(&self, sequence: u64) -> Result<()> {
+        let known = *self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let latest = match known {
             Some(latest) if latest >= sequence => latest,
             _ => self.latest()?.sequence,
@@ -445,6 +450,13 @@ impl Source {
 }
 
 impl Remote {
+    fn new(base_url: &str, fetch: impl Fetch + 'static) -> Self {
+        Self {
+            base: base_url.trim_end_matches('/').to_owned(),
+            fetch: Box::new(fetch),
+        }
+    }
+
     /// Fetches the file at `relative`, and checks it, fetching it again a few times while the check fails. Returns
     /// the URL, the body, and what the check returned.
     fn fetch_checked<T>(
@@ -512,11 +524,7 @@ impl ServerStates {
     /// downloaded with `fetch`.
     pub fn new(base_url: &str, fetch: impl Fetch + 'static) -> Self {
         Self {
-            remote: Remote {
-                base: base_url.trim_end_matches('/').to_owned(),
-                fetch: Box::new(fetch),
-                latest: Mutex::new(None),
-            },
+            remote: Remote::new(base_url, fetch),
             latest: OnceLock::new(),
             read: Mutex::default(),
         }

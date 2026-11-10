@@ -83,8 +83,25 @@ fn is_broken_pipe(e: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use anyhow::Context as _;
+    use clap::CommandFactory as _;
+    use osmflow::osc::COMMIT_DELAY;
 
     use super::*;
+
+    #[test]
+    fn the_help_and_readme_give_the_commit_delay() {
+        let delay = format!("{} minutes", COMMIT_DELAY.as_secs() / 60);
+        let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut cli = Cli::command();
+        let help = cli
+            .find_subcommand_mut("dump")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(words(&help).contains(&delay), "{help}");
+        let readme = words(include_str!("../README.md"));
+        assert_eq!(readme.matches(&delay).count(), 2, "{delay} in README.md");
+    }
 
     #[test]
     fn broken_pipes_are_recognized_through_context() {

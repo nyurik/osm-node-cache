@@ -6,6 +6,8 @@
 //!
 //! [`Replication`]: crate::osc::Replication
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -26,7 +28,7 @@ use crate::osc::{OscError, Replication, State};
 /// 2026, the latest change came 42 seconds after the state of the diff before its own, and no state was older than
 /// the one before it. A plan reads diffs from this much before a snapshot's time, so its first ones may repeat changes
 /// the snapshot has, and looks this far around each place it changes streams. The tests take their delays from it.
-pub const COMMIT_DELAY: Duration = Duration::from_secs(6 * 60);
+pub const COMMIT_DELAY: Duration = Duration::from_millis(DELAY_MS.unsigned_abs());
 
 /// [`COMMIT_DELAY`] in milliseconds, as timestamps are.
 const DELAY_MS: i64 = 6 * 60_000;
@@ -55,7 +57,9 @@ pub trait StateSource {
 /// The most states read ahead for one scan, however irregular the stream.
 const MAX_AHEAD: u64 = 64;
 
-/// The most state files a source downloads at once, reading ahead.
+/// The most state files a source downloads at once, reading ahead. A state file is a few hundred bytes, so this
+/// is set by how many requests a server takes at once, unlike [`Replication::with_read_ahead`], which is set by the
+/// memory decoded diffs take.
 pub const PARALLEL: usize = 3;
 
 /// Calls `read` for each of `sequences`, on up to [`PARALLEL`] threads, for a source whose reads keep what they read;
@@ -172,7 +176,7 @@ fn search(
     let mut missing: Option<u64> = None;
     let mut step = 1;
     let mut rate = None;
-    let mut lo = loop {
+    let lo = loop {
         let floor = missing.map_or(0, |m| m + 1);
         if hi.sequence <= floor {
             return Ok(Located::BeforeOldest(hi));
@@ -200,7 +204,17 @@ fn search(
         }
     };
 
-    // Then the range between them, narrowed by estimates, or halved when an estimate did not halve it.
+    between(source, lo, hi, t).map(Located::At)
+}
+
+/// The state at or before `t` whose next is after it, between `lo`, at or before `t`, and `hi`, after it: the range
+/// narrowed by estimates, or halved when an estimate did not halve it.
+fn between(
+    source: &(impl StateSource + ?Sized),
+    mut lo: State,
+    mut hi: State,
+    t: i64,
+) -> Result<State, OscError> {
     let mut halve = false;
     while hi.sequence - lo.sequence > 1 {
         let width = hi.sequence - lo.sequence;
@@ -222,7 +236,7 @@ fn search(
         }
         halve = !halve && (hi.sequence - lo.sequence) * 2 > width;
     }
-    Ok(Located::At(lo))
+    Ok(lo)
 }
 
 /// The milliseconds per diff between two states, `a` before `b`; `None` if they are out of order.
@@ -305,7 +319,7 @@ impl Step {
     }
 }
 
-/// Plans reading the changes after `start` up to `to_ms` (or the latest state of the last stream), over `streams`
+/// Plans reading the changes after `start` up to `until` (or the latest state of the last stream), over `streams`
 /// ordered from the coarsest to the finest, such as the planet's day, hour and minute streams. Finer diffs lead up to
 /// where a coarser stream's diff starts, as many whole coarser diffs follow as fit, and finer ones again cover the
 /// rest. Ten days behind on the planet is then about 10 day diffs and some tens of hour and minute diffs on either
@@ -322,7 +336,7 @@ impl Step {
 /// nothing, and a reader that counts changes drops each (type, ID, version) it has seen.
 ///
 /// Only state files are read, never a diff: each stream's latest state, then some around each place the plan changes
-/// streams, which a [`Replication`] caches: some 130 for 10 days of the planet's three streams, in this module's tests.
+/// streams, which a [`Replication`] caches: some 60 for 10 days of the planet's three streams, in this module's tests.
 /// A coarser stream that has no whole diff in a stretch is left out of it. The finest stream must go back to the
 /// start, or the plan is an [`OscError::TooOld`] error.
 ///
@@ -378,7 +392,7 @@ pub fn plan(
             };
             match fine.end(state.timestamp.as_millis())? {
                 Some(end) => fine.resumed(coarse, state.timestamp.as_millis(), end.low)?,
-                None => return fine.too_old(state.timestamp.as_millis()),
+                None => return Err(fine.too_old(state.timestamp.as_millis())),
             }
         }
     };
@@ -402,11 +416,12 @@ pub fn plan(
     Ok(steps)
 }
 
-/// A stream, its index in the plan's list, and its latest state.
+/// A stream, its index in the plan's list, its latest state, and the states the plan has read of it.
 struct Known<'a> {
     index: usize,
     source: &'a dyn StateSource,
     latest: State,
+    seen: RefCell<BTreeMap<u64, State>>,
 }
 
 impl<'a> Known<'a> {
@@ -415,11 +430,39 @@ impl<'a> Known<'a> {
             index,
             source,
             latest: source.latest()?,
+            seen: RefCell::default(),
         })
     }
 
+    /// [`locate`], starting between the states already read nearest `t` when there is one at or before it, rather
+    /// than from the latest state: the plan locates several times a few minutes apart.
     fn locate(&self, t: i64) -> Result<Located, OscError> {
-        locate_from(self.source, self.latest, t)
+        let near = {
+            let seen = self.seen.borrow();
+            let lo = seen
+                .values()
+                .rev()
+                .find(|s| s.timestamp.as_millis() <= t)
+                .copied();
+            lo.map(|lo| {
+                let hi = seen.range(lo.sequence + 1..).next().map(|(_, &s)| s);
+                (lo, hi.unwrap_or(self.latest))
+            })
+        };
+        match near {
+            // Every state read after `lo` is after `t`.
+            Some((lo, hi)) if hi.timestamp.as_millis() > t => {
+                let _span = debug_span!("locate", at = %Timestamp::from_millis(t)).entered();
+                let state = between(self, lo, hi, t)?;
+                debug!(
+                    sequence = state.sequence,
+                    state_ms = state.timestamp.as_millis(),
+                    "located near"
+                );
+                Ok(Located::At(state))
+            }
+            _ => locate_from(self, self.latest, t),
+        }
     }
 
     /// Reads ahead the states from the one after `from` to about the first after `t`, which a scan reads in turn: as
@@ -444,10 +487,29 @@ impl<'a> Known<'a> {
             return Ok(None);
         }
         let sequence = state.sequence + 1;
-        match self.source.get(sequence)? {
+        match self.get(sequence)? {
             Some(next) => Ok(Some(next)),
             None => Err(OscError::StateGap { sequence }),
         }
+    }
+}
+
+/// The stream's states, keeping each one read for [`Known::locate`].
+impl StateSource for Known<'_> {
+    fn latest(&self) -> Result<State, OscError> {
+        Ok(self.latest)
+    }
+
+    fn get(&self, sequence: u64) -> Result<Option<State>, OscError> {
+        let state = self.source.get(sequence)?;
+        if let Some(state) = state {
+            self.seen.borrow_mut().insert(sequence, state);
+        }
+        Ok(state)
+    }
+
+    fn prefetch(&self, sequences: RangeInclusive<u64>) {
+        self.source.prefetch(sequences);
     }
 }
 
@@ -461,7 +523,7 @@ impl<'a> Coarse<'a> {
     fn new(index: usize, source: &'a dyn StateSource) -> Result<Self, OscError> {
         let known = Known::new(index, source)?;
         let before = match known.latest.sequence.checked_sub(1) {
-            Some(sequence) => source.get(sequence)?,
+            Some(sequence) => known.get(sequence)?,
             None => None,
         };
         let interval_ms =
@@ -488,19 +550,20 @@ impl Fine<'_> {
     fn after(&self, t: i64) -> Result<State, OscError> {
         match self.end(t)? {
             Some(end) => Ok(end.high),
-            None => self.too_old(t),
+            None => Err(self.too_old(t)),
         }
     }
 
     /// The [`OscError::TooOld`] error for a position at `t` this stream does not go back to, or the error searching
-    /// for its oldest state: an `Err` always.
-    fn too_old<T>(&self, t: i64) -> Result<T, OscError> {
-        let (Located::At(oldest) | Located::BeforeOldest(oldest)) =
-            self.known.locate(t.saturating_sub(DELAY_MS))?;
-        Err(OscError::TooOld {
-            at: Timestamp::from_millis(t),
-            oldest,
-        })
+    /// for its oldest state.
+    fn too_old(&self, t: i64) -> OscError {
+        match self.known.locate(t.saturating_sub(DELAY_MS)) {
+            Ok(Located::At(oldest) | Located::BeforeOldest(oldest)) => OscError::TooOld {
+                at: Timestamp::from_millis(t),
+                oldest,
+            },
+            Err(e) => e,
+        }
     }
 
     /// Where a coarser diff whose state is at `t` ends in this stream; `None` if this stream does not go back to it.
@@ -610,7 +673,10 @@ fn whole(
         Located::At(state) | Located::BeforeOldest(state) => state,
     };
     let lead = loop {
+        // No finest state is older than one before it by more than `DELAY_MS`, so a coarse diff whose state is more
+        // than that before `from`'s ends before `from` in the finest stream too, with no need to find where.
         if first.sequence > 0
+            && from.timestamp.as_millis() - first.timestamp.as_millis() <= DELAY_MS
             && let Some(end) = fine.end(first.timestamp.as_millis())?
             && end.high.sequence >= from.sequence
         {
@@ -635,7 +701,7 @@ fn whole(
         {
             break fine.resumed(coarse, last.timestamp.as_millis(), end.low)?;
         }
-        match known.source.get(last.sequence - 1)? {
+        match known.get(last.sequence - 1)? {
             Some(before) => last = before,
             None => return Ok(None),
         }
@@ -760,11 +826,6 @@ mod tests {
             "time {t}"
         );
         stream.reads.get()
-    }
-
-    #[test]
-    fn the_delay_in_milliseconds_is_the_commit_delay() {
-        assert_eq!(u128::try_from(DELAY_MS).unwrap(), COMMIT_DELAY.as_millis());
     }
 
     #[test]
@@ -1028,7 +1089,7 @@ mod tests {
         // The latest state of each stream, and the state files around where the plan changes streams.
         let files: usize = streams.iter().map(|s| s.files.borrow().len()).sum();
         let reads: usize = streams.iter().map(|s| s.reads.get()).sum();
-        assert!(files <= 150, "{files} state files, {reads} reads");
+        assert!(files <= 70, "{files} state files, {reads} reads");
 
         // Up to a time: no diff ends after it.
         let to = latest.timestamp.as_millis() - 3 * DAY - 30 * MINUTE;

@@ -156,11 +156,11 @@ What a diff holds, and what its state's time means, comes from how the planet's 
   reads stay one after another, as each depends on the one before.
 * **How long it takes** depends mostly on the server's answers, one search read at a time. From a laptop to
   `planet.openstreetmap.org`, whose files redirect to S3, on 2026-11-10: finding the minute diff of a time an hour back
-  took about 4.6 s, and `osmflow seq`'s plan over the three streams, with a 3-minute delay rather than today's 6, 59 state files in
-  about 28 s; with one HTTP client for every stream, its some 60 requests to each host used 7 connections to the
-  planet's server and 3 to S3.
+  took about 4.6 s. For a time nine days back, `osmflow seq` on the minute stream alone read 16 state files in about
+  6.5 s, and on the root of the three streams, with the plan, 51 in about 18 s; for 2026-01-01, 14 in about 5.5 s
+  and 47 in about 17 s. One HTTP client serves every stream, so requests to a host reuse its connections.
 * **A plan reads only state files,** each a few hundred bytes: the latest state of each stream, and some around each
-  place it changes streams, some 130 for ten days of the planet's three streams in the tests. A `Replication` caches
+  place it changes streams, some 60 for ten days of the planet's three streams in the tests. A `Replication` caches
   the ones it downloads, so the diffs read after the plan come from the same cache, and planning again downloads only
   the latest states. A coarser stream with no whole diff in a stretch is left out of it; the finest must go back to
   the start, or the plan is an `OscError::TooOld`.

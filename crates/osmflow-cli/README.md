@@ -166,6 +166,7 @@ it; or with `latest`, the stream's latest diff. It reads state files only. A ser
 
 ```sh
 osmflow seq https://planet.openstreetmap.org/replication 2026-11-01
+osmflow seq https://planet.openstreetmap.org/replication/minute 2026-11-01
 osmflow seq https://planet.openstreetmap.org/replication/day latest
 osmflow seq https://download.geofabrik.de/north-america/us/district-of-columbia-updates dc.osm.pbf -f json
 ```
@@ -186,13 +187,15 @@ district-of-columbia-261027.osm.pbf is up to date with diff 4954, at 2026-10-27T
 The changes after it are in diffs 4955 to 4966 (12 diffs). Read them with --seq 4955..
 ```
 
-- **A catch-up through several streams** is planned for a stream named `day`, `hour` or `minute` with the others
-  beside it, as on the planet's server, and for the directory or URL that holds them, which is read as its `minute`
-  stream. It is the plan `osmflow` reads by: it finds the minute diff each day and hour diff ends at, reading some
-  state files around each place it changes streams, up to 3 at a time over shared connections, and gives each leg's
-  diffs. A search reads one state file after another, as each depends on the last, so this takes some tens of
-  requests, about half a minute on the planet's server. The streams beside the one searched are read without
-  `--cache`, and one that is there but cannot be read is an error. With `-f json`, the legs are in `catch_up`.
+- **A catch-up through several streams** is planned for the directory or URL that holds `day`, `hour` and `minute`
+  streams, as on the planet's server, which is searched as its `minute` stream, and for one of those streams with
+  `--stream auto`. It is the plan `osmflow` reads by: it finds the minute diff each day and hour diff ends at, reading
+  some state files around each place it changes streams, up to 3 at a time over shared connections, and gives each
+  leg's diffs. A search reads one state file after another, as each depends on the last, so for a time nine days back
+  the plan read 51 state files in about 18 s, against 16 in about 6.5 s for the minute stream alone (from a laptop, on
+  2026-11-10). `--stream day`, `hour` or `minute` searches that stream of the root alone. The streams beside the one
+  searched are read without `--cache`, and one that is there but cannot be read is an error. With `-f json`, the
+  legs are in `catch_up`.
 - **A time** finds the last diff at or before it. A diff's time is the newest change in it, so every change made after
   the time is in a later diff: reading from the next one misses none, and reads none made before.
 - **A Geofabrik extract** on its own stream, and **a state file**, say exactly which diff they are up to.

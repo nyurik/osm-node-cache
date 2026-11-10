@@ -864,6 +864,7 @@ dependencies = [
  "clap",
  "geo-types",
  "osmflow",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
