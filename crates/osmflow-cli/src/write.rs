@@ -11,7 +11,7 @@ use crate::output::{self, count, degrees, json_str, timestamp, to_decimicro};
 use crate::select::Kind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum Format {
+pub enum DumpFormat {
     /// One line per object, with `#` lines about the input first.
     Text,
     /// One GeoJSON FeatureCollection.
@@ -20,7 +20,7 @@ pub enum Format {
     Geojsonseq,
 }
 
-impl Format {
+impl DumpFormat {
     /// The format an output file's extension asks for: `.geojson` or `.json`, `.geojsonl`, `.geojsons` or `.ndjson`,
     /// and text otherwise.
     pub fn of(path: Option<&Path>) -> Self {
@@ -96,20 +96,20 @@ pub type Out = BufWriter<Box<dyn Write>>;
 /// Writes objects in one format.
 pub struct Writer {
     out: Out,
-    format: Format,
+    format: DumpFormat,
     /// Whether no feature was written yet, to separate GeoJSON features.
     first: bool,
 }
 
 impl Writer {
     /// Starts writing: a GeoJSON FeatureCollection opens here.
-    pub fn new(out: Box<dyn Write>, format: Format) -> io::Result<Self> {
+    pub fn new(out: Box<dyn Write>, format: DumpFormat) -> io::Result<Self> {
         let mut w = Self {
             out: BufWriter::with_capacity(1 << 20, out),
             format,
             first: true,
         };
-        if format == Format::Geojson {
+        if format == DumpFormat::Geojson {
             w.out
                 .write_all(br#"{"type":"FeatureCollection","features":["#)?;
         }
@@ -118,7 +118,7 @@ impl Writer {
 
     /// Ends the output, and flushes it.
     pub fn end(&mut self) -> io::Result<()> {
-        if self.format == Format::Geojson {
+        if self.format == DumpFormat::Geojson {
             self.out.write_all(b"\n]}\n")?;
         }
         self.out.flush()
@@ -126,7 +126,7 @@ impl Writer {
 
     /// Writes a `#` line about the input, in text only.
     pub fn comment(&mut self, line: impl FnOnce(&mut Out) -> io::Result<()>) -> io::Result<()> {
-        if self.format != Format::Text {
+        if self.format != DumpFormat::Text {
             return Ok(());
         }
         self.out.write_all(b"# ")?;
@@ -164,7 +164,7 @@ impl Writer {
         }
         o.write_all(b"; groups:")?;
         for (i, g) in l.groups.iter().enumerate() {
-            let kind = output::GROUP_NAMES[output::group_index(g.kind)];
+            let kind = output::group_name(g.kind);
             let sep = if i == 0 { " " } else { ", " };
             match g.objects {
                 Some(n) => write!(o, "{sep}{} {kind}", count(n as u64))?,
@@ -182,7 +182,7 @@ impl Writer {
         props: &Props<'_>,
         tags: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> io::Result<()> {
-        if self.format == Format::Text {
+        if self.format == DumpFormat::Text {
             self.text_start(props, 'n', id)?;
             if let Some(Location { lat, lon }) = location {
                 let o = &mut self.out;
@@ -218,7 +218,7 @@ impl Writer {
         props: &Props<'_>,
         tags: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> io::Result<()> {
-        if self.format == Format::Text {
+        if self.format == DumpFormat::Text {
             self.text_start(props, 'w', id)?;
             let o = &mut self.out;
             o.write_all(b" nodes=")?;
@@ -267,7 +267,7 @@ impl Writer {
         props: &Props<'_>,
         tags: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> io::Result<()> {
-        if self.format == Format::Text {
+        if self.format == DumpFormat::Text {
             self.text_start(props, 'r', id)?;
             let o = &mut self.out;
             o.write_all(b" members=[")?;
@@ -346,7 +346,7 @@ impl Writer {
     }
 
     fn feature_start(&mut self, letter: char, id: i64) -> io::Result<()> {
-        if self.format == Format::Geojson {
+        if self.format == DumpFormat::Geojson {
             self.out
                 .write_all(if self.first { b"\n" } else { b",\n" })?;
         }
@@ -356,7 +356,7 @@ impl Writer {
 
     fn feature_end(&mut self) -> io::Result<()> {
         self.out.write_all(b"}")?;
-        if self.format == Format::Geojsonseq {
+        if self.format == DumpFormat::Geojsonseq {
             self.out.write_all(b"\n")?;
         }
         Ok(())
@@ -516,14 +516,20 @@ mod tests {
 
     #[test]
     fn formats_follow_the_extension() {
-        assert_eq!(Format::of(Some(Path::new("dc.geojson"))), Format::Geojson);
         assert_eq!(
-            Format::of(Some(Path::new("dc.geojsonl"))),
-            Format::Geojsonseq
+            DumpFormat::of(Some(Path::new("dc.geojson"))),
+            DumpFormat::Geojson
         );
-        assert_eq!(Format::of(Some(Path::new("dc.txt"))), Format::Text);
-        assert_eq!(Format::of(Some(Path::new("DC.GeoJSON"))), Format::Geojson);
-        assert_eq!(Format::of(None), Format::Text);
+        assert_eq!(
+            DumpFormat::of(Some(Path::new("dc.geojsonl"))),
+            DumpFormat::Geojsonseq
+        );
+        assert_eq!(DumpFormat::of(Some(Path::new("dc.txt"))), DumpFormat::Text);
+        assert_eq!(
+            DumpFormat::of(Some(Path::new("DC.GeoJSON"))),
+            DumpFormat::Geojson
+        );
+        assert_eq!(DumpFormat::of(None), DumpFormat::Text);
     }
 
     /// A `Write` that keeps what it is given, readable after the writer is done with it.
@@ -544,7 +550,7 @@ mod tests {
         }
     }
 
-    fn written(format: Format, f: impl FnOnce(&mut Writer) -> io::Result<()>) -> String {
+    fn written(format: DumpFormat, f: impl FnOnce(&mut Writer) -> io::Result<()>) -> String {
         let out = Shared::default();
         let mut w = Writer::new(Box::new(out.clone()), format).unwrap();
         f(&mut w).unwrap();
@@ -562,7 +568,7 @@ mod tests {
             ..Props::default()
         };
         let tags = [("highway", "primary")];
-        let text = written(Format::Text, |w| {
+        let text = written(DumpFormat::Text, |w| {
             w.way(7, [1, 2].into_iter(), None, &props, tags.into_iter())?;
             w.node(
                 8,
@@ -578,7 +584,7 @@ mod tests {
             text,
             "modify w7 nodes=[1,2] v6 {\"highway\":\"primary\"}\ndelete n8\n"
         );
-        let json = written(Format::Geojsonseq, |w| {
+        let json = written(DumpFormat::Geojsonseq, |w| {
             w.way(7, [1, 2].into_iter(), None, &props, tags.into_iter())
         });
         assert_eq!(
@@ -599,7 +605,7 @@ mod tests {
             user: "",
             visible: true,
         };
-        let text = written(Format::Text, |w| {
+        let text = written(DumpFormat::Text, |w| {
             w.node(
                 1,
                 Some(Location::new(10, 20)),

@@ -54,8 +54,32 @@ pub use self::error::{OscError, StateError, XmlError, XmlPosition};
 pub use self::http::HttpFetch;
 pub use self::parse::OscReader;
 pub use self::plan::{LATE_MS, Located, Start, StateSource, Step, locate, plan};
-pub use self::replication::{Diff, Diffs, Fetch, Replication, State, path_sequence, sequence_path};
+pub use self::replication::{
+    Diff, Diffs, Fetch, Replication, ServerStates, State, path_sequence, sequence_path,
+};
 use crate::model::{Location, Member, MemberType};
+
+/// Milliseconds since 1970, displayed as an ISO 8601 UTC time, `2026-11-09T21:00:00Z`, with milliseconds only when
+/// there are some: `2026-11-09T21:00:00.250Z`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timestamp(pub i64);
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (secs, millis) = (self.0.div_euclid(1000), self.0.rem_euclid(1000));
+        let (days, day_secs) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+        let (year, month, day) = value::civil_from_days(days);
+        let (hour, minute, second) = (day_secs / 3600, day_secs / 60 % 60, day_secs % 60);
+        write!(
+            f,
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"
+        )?;
+        if millis != 0 {
+            write!(f, ".{millis:03}")?;
+        }
+        f.write_str("Z")
+    }
+}
 
 /// Parses a time written `YYYY-MM-DDThh:mm:ssZ`, as osmChange and state files write it, into milliseconds since 1970;
 /// `None` if it is not in that form, or names no real date or time.

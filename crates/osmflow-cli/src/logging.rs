@@ -11,7 +11,7 @@ use tracing_subscriber::{Layer, Registry, fmt};
 
 /// How log lines are written, from `RUST_LOG_FORMAT`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Format {
+pub enum LogFormat {
     /// The level and the message, with its fields: `INFO downloaded url=… bytes=113`.
     #[default]
     Bare,
@@ -25,7 +25,7 @@ pub enum Format {
     Json,
 }
 
-impl FromStr for Format {
+impl FromStr for LogFormat {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -42,7 +42,7 @@ impl FromStr for Format {
     }
 }
 
-impl Format {
+impl LogFormat {
     /// The format `RUST_LOG_FORMAT` names, or with a warning for one it does not, the default.
     #[expect(clippy::print_stderr, reason = "the log is not started yet")]
     fn from_env() -> Self {
@@ -84,7 +84,7 @@ pub fn start(verbose: u8) {
     let filter = env.or(Targets::new().with_target("osmflow", level));
     // This fails only when a subscriber is already set, and nothing else sets one.
     let _ = tracing_subscriber::registry()
-        .with(Format::from_env().layer().with_filter(filter))
+        .with(LogFormat::from_env().layer().with_filter(filter))
         .try_init();
 }
 
@@ -98,18 +98,18 @@ mod tests {
     #[test]
     fn formats_parse_in_any_case() {
         for (name, format) in [
-            ("bare", Format::Bare),
-            ("Compact", Format::Compact),
-            ("FULL", Format::Full),
-            ("pretty", Format::Pretty),
-            ("json", Format::Json),
-            ("jsonl", Format::Json),
+            ("bare", LogFormat::Bare),
+            ("Compact", LogFormat::Compact),
+            ("FULL", LogFormat::Full),
+            ("pretty", LogFormat::Pretty),
+            ("json", LogFormat::Json),
+            ("jsonl", LogFormat::Json),
         ] {
             assert_eq!(name.parse(), Ok(format), "{name}");
         }
         assert!(
             "xml"
-                .parse::<Format>()
+                .parse::<LogFormat>()
                 .unwrap_err()
                 .contains("bare, compact")
         );
@@ -118,11 +118,11 @@ mod tests {
     #[test]
     fn every_format_writes_events() {
         for format in [
-            Format::Bare,
-            Format::Compact,
-            Format::Full,
-            Format::Pretty,
-            Format::Json,
+            LogFormat::Bare,
+            LogFormat::Compact,
+            LogFormat::Full,
+            LogFormat::Pretty,
+            LogFormat::Json,
         ] {
             let dispatch = Dispatch::new(tracing_subscriber::registry().with(format.layer()));
             dispatcher::with_default(&dispatch, || {

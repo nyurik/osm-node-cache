@@ -278,10 +278,6 @@ impl Step {
 /// A coarser stream that has no whole diff in a stretch is left out of it. The finest stream must go back to the
 /// start, or the plan is an [`OscError::TooOld`] error.
 ///
-/// # Panics
-///
-/// If a [`Start::After`] names a stream that is not in `streams`.
-///
 /// ```
 /// use std::path::Path;
 ///
@@ -313,7 +309,9 @@ pub fn plan(
     let Some((&finest, coarser)) = streams.split_last() else {
         return Ok(Vec::new());
     };
-    let fine = Fine(Known::new(coarser.len(), finest)?);
+    let fine = Fine {
+        known: Known::new(coarser.len(), finest)?,
+    };
     let coarser = coarser
         .iter()
         .enumerate()
@@ -322,11 +320,14 @@ pub fn plan(
     let from = match start {
         Start::Time { timestamp_ms } => fine.after(timestamp_ms)?,
         Start::Snapshot { timestamp_ms } => fine.after(timestamp_ms - LATE_MS)?,
-        Start::After { stream, state } if stream == fine.0.index => state,
+        Start::After { stream, state } if stream == fine.known.index => state,
         Start::After { stream, state } => {
-            let coarse = coarser
-                .get(stream..)
-                .expect("the start's stream is one of the streams");
+            let Some(coarse) = coarser.get(stream..) else {
+                return Err(OscError::UnknownStream {
+                    stream,
+                    streams: streams.len(),
+                });
+            };
             match fine.end(state.timestamp_ms)? {
                 Some(end) => fine.resumed(coarse, state.timestamp_ms, end.low)?,
                 None => return Err(fine.too_old(state.timestamp_ms)?),
@@ -334,8 +335,8 @@ pub fn plan(
         }
     };
     let to = match to_ms {
-        None => fine.0.latest,
-        Some(t) => match fine.0.locate(t)? {
+        None => fine.known.latest,
+        Some(t) => match fine.known.locate(t)? {
             Located::At(state) => state,
             Located::BeforeOldest(_) => return Ok(Vec::new()),
         },
@@ -412,7 +413,9 @@ struct End {
 }
 
 /// The finest stream, whose diffs every other stream's diffs are made of.
-struct Fine<'a>(Known<'a>);
+struct Fine<'a> {
+    known: Known<'a>,
+}
 
 impl Fine<'_> {
     /// The state before the first diff whose state is after `t`, found as [`Fine::end`] finds where a coarser diff at
@@ -426,15 +429,11 @@ impl Fine<'_> {
 
     /// The error for a position at `t` that this stream does not go back to.
     fn too_old(&self, t: i64) -> Result<OscError, OscError> {
-        Ok(match self.0.locate(t - LATE_MS)? {
-            Located::BeforeOldest(oldest) => OscError::TooOld {
-                timestamp_ms: t,
-                oldest,
-            },
-            Located::At(state) => OscError::TooOld {
-                timestamp_ms: t,
-                oldest: state,
-            },
+        let (Located::At(oldest) | Located::BeforeOldest(oldest)) =
+            self.known.locate(t - LATE_MS)?;
+        Ok(OscError::TooOld {
+            timestamp_ms: t,
+            oldest,
         })
     }
 
@@ -443,11 +442,11 @@ impl Fine<'_> {
         // A state at or before `t - LATE_MS` is before every finest diff after the coarser one, so the coarser diff
         // ends before the first state after it that is after `t`; a run of the merge that reached a state at `t`
         // ended it there.
-        let Located::At(mut high) = self.0.locate(t - LATE_MS)? else {
+        let Located::At(mut high) = self.known.locate(t - LATE_MS)? else {
             return Ok(None);
         };
         let mut low = None;
-        while let Some(next) = self.0.next(high)?
+        while let Some(next) = self.known.next(high)?
             && next.timestamp_ms <= t
         {
             high = next;
@@ -465,7 +464,7 @@ impl Fine<'_> {
     /// `coarse[1]` or this one, resumed after an outage longer than the diffs of `coarse[0]`: a run of the merge that
     /// starts with such a diff writes it alone into the coarser diff, ending it early.
     fn resumed(&self, coarse: &[Coarse<'_>], t: i64, low: State) -> Result<State, OscError> {
-        let merged = coarse.get(1).map_or(&self.0, |c| &c.known);
+        let merged = coarse.get(1).map_or(&self.known, |c| &c.known);
         if let Some(interval) = coarse[0].interval_ms
             && let Located::At(before) = merged.locate(t - interval)?
             && let Some(resumed) = merged.next(before)?
@@ -499,32 +498,43 @@ fn cover(
     }
     let Some((coarse, finer)) = coarser.split_first() else {
         steps.push(Step {
-            stream: fine.0.index,
+            stream: fine.known.index,
             from,
             to,
         });
         return Ok(());
     };
-    if let Some((first, lead, last, tail)) = whole(fine, coarser, from, to)? {
-        cover(fine, finer, from, lead, steps)?;
+    if let Some(run) = whole(fine, coarser, from, to)? {
+        cover(fine, finer, from, run.lead, steps)?;
         steps.push(Step {
             stream: coarse.known.index,
-            from: first,
-            to: last,
+            from: run.first,
+            to: run.last,
         });
-        return cover(fine, finer, tail, to, steps);
+        return cover(fine, finer, run.tail, to, steps);
     }
     cover(fine, finer, from, to, steps)
 }
 
-/// The whole diffs of `coarse[0]` between finest states `from` and `to`, as the states before the first and of the
-/// last, with the finest states the finer diffs before them lead up to, and the finer diffs after them start from.
+/// A run of whole diffs of a coarser stream, from [`whole`].
+struct Run {
+    /// The coarser state before the first diff.
+    first: State,
+    /// The finest state the finer diffs before the run lead up to.
+    lead: State,
+    /// The coarser state of the last diff.
+    last: State,
+    /// The finest state the finer diffs after the run start from.
+    tail: State,
+}
+
+/// The whole diffs of `coarse[0]` between finest states `from` and `to`.
 fn whole(
     fine: &Fine<'_>,
     coarse: &[Coarse<'_>],
     from: State,
     to: State,
-) -> Result<Option<(State, State, State, State)>, OscError> {
+) -> Result<Option<Run>, OscError> {
     let known = &coarse[0].known;
     // The first coarse diff that starts at or after `from`: the one after the first that does not end before it. One
     // that ends at `from` is most likely at its time. State 0 of a merged stream has no diff, and the diff after it
@@ -562,7 +572,12 @@ fn whole(
             None => return Ok(None),
         }
     };
-    Ok(Some((first, lead, last, tail)))
+    Ok(Some(Run {
+        first,
+        lead,
+        last,
+        tail,
+    }))
 }
 
 #[cfg(test)]
@@ -1112,6 +1127,14 @@ mod tests {
         assert!(matches!(
             plan(&dyns(&streams), after(0, streams[0].state(30)), None),
             Err(OscError::TooOld { .. })
+        ));
+        // A stream that is not in the list.
+        assert!(matches!(
+            plan(&dyns(&streams), after(3, streams[0].state(31)), None),
+            Err(OscError::UnknownStream {
+                stream: 3,
+                streams: 3
+            })
         ));
         // Caught up already: nothing to read.
         let latest = streams[2].latest().unwrap();

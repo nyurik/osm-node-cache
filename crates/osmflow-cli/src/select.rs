@@ -1,7 +1,6 @@
 //! What a command reads: which objects (by type, ID and tag), which changes (by action, changeset and user), and on
 //! how many threads.
 
-use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -13,6 +12,13 @@ use osmflow::rayon::ThreadPoolBuilder;
 use osmflow::{Block, MemberType, PbfError, PbfReader, Select, TagMode};
 
 use crate::input::{Seqs, Since, parse_seqs, parse_since};
+
+/// The name of the first flag of `flags` that is given.
+pub fn first_given(flags: &[(bool, &'static str)]) -> Option<&'static str> {
+    flags
+        .iter()
+        .find_map(|&(given, name)| given.then_some(name))
+}
 
 /// An object type, as the flags name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
@@ -33,6 +39,9 @@ impl From<MemberType> for Kind {
 }
 
 impl Kind {
+    /// The types in the order files hold them, which [`index`](Self::index) counts.
+    pub const ALL: [Self; 3] = [Self::Node, Self::Way, Self::Relation];
+
     pub fn index(self) -> usize {
         match self {
             Self::Node => 0,
@@ -46,6 +55,15 @@ impl Kind {
             Self::Node => "node",
             Self::Way => "way",
             Self::Relation => "relation",
+        }
+    }
+
+    /// The name of many: `nodes`, as summaries label them.
+    pub fn plural(self) -> &'static str {
+        match self {
+            Self::Node => "nodes",
+            Self::Way => "ways",
+            Self::Relation => "relations",
         }
     }
 }
@@ -174,13 +192,16 @@ impl Filter {
 
     /// A test of single objects against the flags.
     pub fn matcher(&self) -> Matcher {
-        let mut any = HashSet::new();
-        let mut typed = HashSet::new();
+        let mut any = Vec::new();
+        let mut typed: [Vec<i64>; 3] = Default::default();
         for spec in &self.ids {
             match spec.kind {
-                Some(kind) => typed.insert((kind, spec.id)),
-                None => any.insert(spec.id),
-            };
+                Some(kind) => typed[kind.index()].push(spec.id),
+                None => any.push(spec.id),
+            }
+        }
+        for ids in typed.iter_mut().chain([&mut any]) {
+            ids.sort_unstable();
         }
         Matcher {
             ids: !self.ids.is_empty(),
@@ -229,8 +250,9 @@ impl IdStop {
 #[derive(Debug)]
 pub struct Matcher {
     ids: bool,
-    any: HashSet<i64>,
-    typed: HashSet<(Kind, i64)>,
+    /// IDs of any type, sorted, and IDs of each type, by [`Kind::index`]: a few, searched in place.
+    any: Vec<i64>,
+    typed: [Vec<i64>; 3],
     tags: Vec<TagSpec>,
 }
 
@@ -242,7 +264,10 @@ impl Matcher {
         id: i64,
         tags: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> bool {
-        if self.ids && !self.any.contains(&id) && !self.typed.contains(&(kind, id)) {
+        if self.ids
+            && self.any.binary_search(&id).is_err()
+            && self.typed[kind.index()].binary_search(&id).is_err()
+        {
             return false;
         }
         if self.tags.is_empty() {
@@ -385,26 +410,38 @@ pub struct ChangeArgs {
     /// Geofabrik's public diffs have no changesets.
     #[arg(long = "changeset", value_name = "ID", value_delimiter = ',')]
     changesets: Vec<i64>,
-    /// Only changes by these user names or IDs, by commas.
+    /// Only changes by these user names, by commas.
     ///
-    /// A number is a user ID. Geofabrik's public diffs have no users.
-    #[arg(long = "user", value_name = "NAME_OR_UID", value_delimiter = ',')]
+    /// A name made of digits is a name too; --uid takes user IDs. Geofabrik's public diffs have no users.
+    #[arg(long = "user", value_name = "NAME", value_delimiter = ',')]
     users: Vec<String>,
+    /// Only changes by these user IDs, by commas.
+    ///
+    /// A change by any user --user or --uid names is chosen. Geofabrik's public diffs have no users.
+    #[arg(long = "uid", value_name = "UID", value_delimiter = ',')]
+    uids: Vec<i32>,
 }
 
 impl ChangeArgs {
-    /// The first of these flags given, which only osmChange input takes, for an error about a PBF file.
-    pub fn given(&self) -> Option<&'static str> {
-        [
+    /// The first flag given that only replication streams take, for an error about a file.
+    pub fn stream_flag(&self) -> Option<&'static str> {
+        first_given(&[
             (self.seq.is_some(), "--seq"),
             (self.since.is_some(), "--since"),
             (self.cache.is_some(), "--cache"),
-            (!self.actions.is_empty(), "--action"),
-            (!self.changesets.is_empty(), "--changeset"),
-            (!self.users.is_empty(), "--user"),
-        ]
-        .into_iter()
-        .find_map(|(given, name)| given.then_some(name))
+        ])
+    }
+
+    /// The first flag given that only osmChange input takes, for an error about a PBF file.
+    pub fn given(&self) -> Option<&'static str> {
+        self.stream_flag().or_else(|| {
+            first_given(&[
+                (!self.actions.is_empty(), "--action"),
+                (!self.changesets.is_empty(), "--changeset"),
+                (!self.users.is_empty(), "--user"),
+                (!self.uids.is_empty(), "--uid"),
+            ])
+        })
     }
 
     /// Fails if a flag that only osmChange input takes is given for the PBF file `path`.
@@ -433,11 +470,12 @@ impl ChangeArgs {
                 .any(|&a| Action::from(a) == change.action))
             && (self.changesets.is_empty()
                 || meta.changeset.is_some_and(|c| self.changesets.contains(&c)))
-            && (self.users.is_empty()
-                || self.users.iter().any(|u| match u.parse::<i32>() {
-                    Ok(uid) => meta.uid == Some(uid),
-                    Err(_) => meta.user.as_deref() == Some(u.as_str()),
-                }))
+            && ((self.users.is_empty() && self.uids.is_empty())
+                || meta.uid.is_some_and(|uid| self.uids.contains(&uid))
+                || meta
+                    .user
+                    .as_deref()
+                    .is_some_and(|name| self.users.iter().any(|u| u == name)))
     }
 }
 
@@ -543,13 +581,23 @@ mod tests {
             }),
             [1]
         );
-        let users = vec!["bob".to_owned(), "5".to_owned()];
+        // A name of digits is a name, not an ID.
+        let (users, uids) = (vec!["bob".to_owned(), "6".to_owned()], vec![5]);
+        assert_eq!(
+            chosen(ChangeArgs {
+                users,
+                uids,
+                ..ChangeArgs::default()
+            }),
+            [1, 2]
+        );
+        let users = vec!["5".to_owned()];
         assert_eq!(
             chosen(ChangeArgs {
                 users,
                 ..ChangeArgs::default()
             }),
-            [1, 2]
+            [] as [i64; 0]
         );
         assert_eq!(ChangeArgs::default().given(), None);
         let users = vec!["x".to_owned()];

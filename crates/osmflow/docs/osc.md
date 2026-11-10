@@ -103,7 +103,9 @@ Each stream numbers its diffs from its own start, so a sequence of one stream sa
 their times line up. `locate` and `plan` work from state files alone, read through `StateSource`: the stream's latest
 state, and the state of one sequence, or `None` if the stream does not have it. `Replication` implements it, from a
 directory or a server through its cache, and a program that keeps state files elsewhere, as in a database,
-implements it in a few lines. Neither function does any I/O of its own, so both are tested on streams in memory.
+implements it in a few lines. `ServerStates` reads a server's state files without a cache directory, keeping them in
+memory, and checks each as `Replication` does. Neither function does any I/O of its own, so both are tested on
+streams in memory.
 
 What a diff holds, and what its state's time means, comes from how the planet's are made (the
 [`planet` cookbook](https://github.com/openstreetmap/chef/tree/master/cookbooks/planet) of the OSM servers):

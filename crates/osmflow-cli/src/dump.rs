@@ -14,8 +14,8 @@ use osmflow::{AreaRules, GeometryError, Header, Location, Locator, PbfReader, Se
 use crate::changes;
 use crate::input::Input;
 use crate::output::{self, timestamp};
-use crate::select::{ChangeArgs, Filter, Kind, TagSpec, Threads, parse_tag};
-use crate::write::{Format, Geometry, Props, Writer};
+use crate::select::{ChangeArgs, Filter, Kind, TagSpec, Threads, first_given, parse_tag};
+use crate::write::{DumpFormat, Geometry, Props, Writer};
 
 /// A file larger than this is dumped whole only with `--all`.
 const WHOLE_FILE_LIMIT: u64 = 100 << 20;
@@ -35,7 +35,7 @@ pub struct Args {
     /// `.geojson` is GeoJSON, `.geojsonl`, `.geojsons` or `.ndjson` one GeoJSON feature per line, and anything else
     /// text.
     #[arg(short, long)]
-    format: Option<Format>,
+    format: Option<DumpFormat>,
     /// In text, each way's geometry as WKT (PBF only).
     ///
     /// The geometry is built from the locations of the way's nodes. GeoJSON always has it.
@@ -85,8 +85,8 @@ impl Args {
         self.output.as_deref().filter(|p| *p != Path::new("-"))
     }
 
-    pub fn format(&self) -> Format {
-        self.format.unwrap_or_else(|| Format::of(self.output()))
+    pub fn format(&self) -> DumpFormat {
+        self.format.unwrap_or_else(|| DumpFormat::of(self.output()))
     }
 
     /// The output, with nothing written yet but the start of a GeoJSON FeatureCollection.
@@ -102,16 +102,14 @@ impl Args {
 
     /// The first flag given that only PBF files take.
     pub fn pbf_flag(&self) -> Option<&'static str> {
-        [
+        first_given(&[
             (self.geometry, "--geometry"),
             (self.blocks, "--blocks"),
             (self.all, "--all"),
             (!self.areas.is_empty(), "--area"),
             (!self.not_areas.is_empty(), "--not-area"),
             (self.no_default_areas, "--no-default-areas"),
-        ]
-        .into_iter()
-        .find_map(|(given, name)| given.then_some(name))
+        ])
     }
 }
 
@@ -129,7 +127,7 @@ pub fn run(args: &Args) -> Result<()> {
 fn pbf(args: &Args, path: &Path) -> Result<()> {
     args.changes.reject_pbf(path)?;
     let format = args.format();
-    if args.blocks && format != Format::Text {
+    if args.blocks && format != DumpFormat::Text {
         bail!("--blocks shows blocks in text output only");
     }
     let size = fs::metadata(path)
@@ -143,7 +141,7 @@ fn pbf(args: &Args, path: &Path) -> Result<()> {
         );
     }
     let file = args.threads.apply(open(path)?)?;
-    let store = if (format != Format::Text || args.geometry) && args.filter.wants(Kind::Way) {
+    let store = if (format != DumpFormat::Text || args.geometry) && args.filter.wants(Kind::Way) {
         Some(node_locations(args, &file)?)
     } else {
         None

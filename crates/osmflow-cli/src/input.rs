@@ -9,7 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result, bail};
 use osmflow::PbfReader;
 use osmflow::osc::{
-    Diffs, OscError, Replication, Start, State, StateSource, parse_timestamp, path_sequence, plan,
+    Diffs, Fetch, OscError, Replication, ServerStates, Start, State, StateSource, parse_timestamp,
+    path_sequence, plan,
 };
 
 use crate::select::ChangeArgs;
@@ -132,16 +133,19 @@ pub fn parse_since(s: &str) -> Result<Since> {
 /// A replication stream, opened from a directory or from a server through `--cache`.
 pub struct Stream {
     replication: Replication,
-    /// The directory, when the stream is local: a cache is read through the server.
-    dir: Option<PathBuf>,
-    /// The server's URL, when the stream is remote.
-    url: Option<String>,
+    location: Location,
+}
+
+/// Where a [`Stream`] is: a local directory, or a server, read through a cache.
+enum Location {
+    Dir(PathBuf),
+    Server(String),
 }
 
 /// A stream's states, with the latest one already read, as a directory may have no `state.txt`.
-struct States<'a>(&'a Replication, State);
+struct States(Replication, State);
 
-impl StateSource for States<'_> {
+impl StateSource for States {
     fn latest(&self) -> Result<State, OscError> {
         Ok(self.1)
     }
@@ -152,78 +156,73 @@ impl StateSource for States<'_> {
 }
 
 impl Stream {
-    /// Opens a stream input for reading its diffs, decoding `read_ahead` of them ahead; `None` for a server without
-    /// a `cache`, whose state files are all that can be read.
-    pub fn open(
-        input: &Input,
-        cache: Option<&Path>,
-        read_ahead: Option<usize>,
-    ) -> Result<Option<Self>> {
-        let (replication, dir, url) = match input {
-            Input::Dir(dir) => {
-                if cache.is_some() {
-                    bail!(
-                        "--cache is for a replication server; {} is read where it is",
-                        dir.display()
-                    );
-                }
-                (Replication::local(dir), Some(dir.clone()), None)
+    /// Opens a stream input for reading its diffs, decoding `read_ahead` of them ahead. A server needs a `cache`.
+    pub fn open(input: &Input, cache: Option<&Path>, read_ahead: Option<usize>) -> Result<Self> {
+        let (replication, location) = match (input, cache) {
+            (Input::Dir(dir), None) => (Replication::local(dir), Location::Dir(dir.clone())),
+            (Input::Dir(dir), Some(_)) => bail!(
+                "--cache is for a replication server; {} is read where it is",
+                dir.display()
+            ),
+            (Input::Url(url), Some(cache)) => (
+                Replication::remote(url, cache, fetch(url)?),
+                Location::Server(url.clone()),
+            ),
+            (Input::Url(url), None) => {
+                bail!("give --cache DIR to read the diffs of {url}: they are downloaded into it")
             }
-            Input::Url(url) => {
-                let Some(cache) = cache else {
-                    return Ok(None);
-                };
-                (remote(url, cache)?, None, Some(url.clone()))
-            }
-            Input::Pbf(_) | Input::Osc(_) | Input::State(_) => {
-                unreachable!("only directories and servers are streams")
+            (Input::Pbf(_) | Input::Osc(_) | Input::State(_), _) => {
+                bail!("{} is not a replication stream", input.name())
             }
         };
         let replication = match read_ahead {
             Some(n) => replication.with_read_ahead(n),
             None => replication,
         };
-        Ok(Some(Self {
+        Ok(Self {
             replication,
-            dir,
-            url,
-        }))
+            location,
+        })
+    }
+
+    /// The server's URL, for a stream read from one.
+    fn url(&self) -> Option<&str> {
+        match &self.location {
+            Location::Dir(_) => None,
+            Location::Server(url) => Some(url),
+        }
     }
 
     /// The latest state: `state.txt`, or in a directory without one, the highest diff it has.
     pub fn latest(&self) -> Result<State> {
-        match &self.dir {
-            Some(dir) if !dir.join("state.txt").exists() => {
+        match &self.location {
+            Location::Dir(dir) if !dir.join("state.txt").exists() => {
                 let Some(&last) = local_sequences(dir)?.last() else {
                     bail!("{} has neither a state.txt nor any diff", dir.display());
                 };
                 Ok(self.replication.sequence_state(last)?)
             }
-            _ => Ok(self.replication.state()?),
+            Location::Dir(_) | Location::Server(_) => Ok(self.replication.state()?),
         }
     }
 
-    /// The diffs `--seq` or `--since` chooses.
+    /// The diffs `--seq` or `--since` chooses, or with neither, the latest one.
     pub fn chosen(&self, changes: &ChangeArgs) -> Result<Diffs> {
-        match (changes.seq, &changes.since) {
-            (Some(seqs), _) => self.diffs(seqs),
-            (None, Some(since)) => self.since(since),
-            (None, None) => unreachable!("check makes sure a stream has --seq or --since"),
+        match &changes.since {
+            Some(since) => self.since(since),
+            None => self.diffs(changes.seq.unwrap_or(Seqs::Latest)),
         }
     }
 
     /// The diffs after `since`, up to the latest state.
     fn since(&self, since: &Since) -> Result<Diffs> {
         let latest = self.latest()?;
+        let states = States(self.replication.clone(), latest);
         let start = match since {
             Since::Time(ms) => Start::Time { timestamp_ms: *ms },
-            Since::File(path) => start_after(
-                path,
-                &States(&self.replication, latest),
-                self.url.as_deref(),
-            )?,
+            Since::File(path) => after_file(path, &states, self.url())?.start(),
         };
-        let first = match plan(&[&States(&self.replication, latest)], start, None)?.first() {
+        let first = match plan(&[&states], start, None)?.first() {
             Some(step) => step.from.sequence + 1,
             None => latest.sequence + 1,
         };
@@ -245,6 +244,49 @@ impl Stream {
     }
 }
 
+/// The state files of the stream `input`, its latest state, and its server's URL: through [`Stream`] for a directory
+/// or a server with a `cache`, and straight from a server without one.
+pub fn stream_states(
+    input: &Input,
+    cache: Option<&Path>,
+) -> Result<(Box<dyn StateSource>, State, Option<String>)> {
+    if let (Input::Url(url), None) = (input, cache) {
+        let states = ServerStates::new(url, fetch(url)?);
+        let latest = states.latest()?;
+        return Ok((Box::new(states), latest, Some(url.clone())));
+    }
+    let stream = Stream::open(input, cache, None)?;
+    let latest = stream.latest()?;
+    let url = stream.url().map(str::to_owned);
+    Ok((Box::new(States(stream.replication, latest)), latest, url))
+}
+
+/// A server's latest state, read without a cache.
+pub fn remote_state(url: &str) -> Result<State> {
+    Ok(ServerStates::new(url, fetch(url)?).latest()?)
+}
+
+/// What a file says about where the changes after it start, from [`after_file`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum After {
+    /// A state file, of this state.
+    StateFile(State),
+    /// A PBF file whose header gives the diff of this stream it is up to.
+    Header(State),
+    /// A PBF file whose header gives only its time, in milliseconds since 1970, or a diff of another stream.
+    Snapshot(i64),
+}
+
+impl After {
+    /// Where a plan starts for this file.
+    pub fn start(self) -> Start {
+        match self {
+            Self::StateFile(state) | Self::Header(state) => Start::After { stream: 0, state },
+            Self::Snapshot(timestamp_ms) => Start::Snapshot { timestamp_ms },
+        }
+    }
+}
+
 /// Whether two URLs name the same stream: alike but for `http` or `https`, and a trailing `/`.
 fn same_server(a: &str, b: &str) -> bool {
     let bare = |u: &str| {
@@ -257,17 +299,14 @@ fn same_server(a: &str, b: &str) -> bool {
     bare(a) == bare(b)
 }
 
-/// Where the changes after `path` start in the stream of `source`, whose server is at `url`: after the state of a state
-/// file, or after a PBF file by the replication fields of its header. Its sequence is taken only with its base URL, as
-/// Geofabrik's extracts give them, and only for that server; otherwise its replication timestamp is the time of a
-/// snapshot, as planet files have.
-pub fn start_after(path: &Path, source: &dyn StateSource, url: Option<&str>) -> Result<Start> {
+/// Where the changes after `path` start in the stream of `source`, whose server is at `url`: after the state of a
+/// state file, or after a PBF file by the replication fields of its header. Its sequence is taken only with its base
+/// URL, as Geofabrik's extracts give them, and only for that server; otherwise its replication timestamp is the time
+/// of a snapshot, as planet files have.
+pub fn after_file(path: &Path, source: &dyn StateSource, url: Option<&str>) -> Result<After> {
     let name = path.display();
     match Input::of(path)? {
-        Input::State(path) => Ok(Start::After {
-            stream: 0,
-            state: State::read(&path)?,
-        }),
+        Input::State(path) => Ok(After::StateFile(State::read(&path)?)),
         Input::Pbf(path) => {
             let reader = PbfReader::open(&path)?;
             let header = reader.header();
@@ -280,12 +319,10 @@ pub fn start_after(path: &Path, source: &dyn StateSource, url: Option<&str>) -> 
                 let state = source.get(sequence)?.with_context(|| {
                     format!("{name} is up to sequence {sequence}, which {url} no longer has")
                 })?;
-                return Ok(Start::After { stream: 0, state });
+                return Ok(After::Header(state));
             }
             match header.replication_timestamp {
-                Some(seconds) => Ok(Start::Snapshot {
-                    timestamp_ms: seconds * 1000,
-                }),
+                Some(seconds) => Ok(After::Snapshot(seconds * 1000)),
                 None => {
                     bail!("{name} has no replication timestamp in its header: give --since a time")
                 }
@@ -297,79 +334,28 @@ pub fn start_after(path: &Path, source: &dyn StateSource, url: Option<&str>) -> 
     }
 }
 
+/// The client servers are read with; without the `http` feature, an error that says so.
 #[cfg(feature = "http")]
 #[expect(
     clippy::unnecessary_wraps,
     reason = "it fails without the http feature"
 )]
-fn remote(url: &str, cache: &Path) -> Result<Replication> {
-    Ok(Replication::http(url, cache))
+fn fetch(_url: &str) -> Result<Box<dyn Fetch>> {
+    use osmflow::osc::HttpFetch;
+
+    Ok(Box::new(HttpFetch::new()))
 }
 
 #[cfg(not(feature = "http"))]
-fn remote(url: &str, _cache: &Path) -> Result<Replication> {
-    Err(no_http(url))
+fn fetch(url: &str) -> Result<Box<dyn Fetch>> {
+    bail!("{url}: this osmflow was built without the http feature, so it reads no servers")
 }
 
-#[cfg(not(feature = "http"))]
-fn no_http(url: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "{url}: this osmflow was built without the http feature, so it reads no servers"
-    )
-}
-
-/// A server's latest state, read without a cache.
-#[cfg(feature = "http")]
-pub fn remote_state(url: &str) -> Result<State> {
-    use crate::remote::RemoteStates;
-
-    Ok(RemoteStates::new(url).latest()?)
-}
-
-#[cfg(not(feature = "http"))]
-pub fn remote_state(url: &str) -> Result<State> {
-    Err(no_http(url))
-}
-
-/// Calls `f` with the state files of the stream `input`, its latest state, and its server's URL: through
-/// [`Stream`] for a directory or a server with a `cache`, and straight from a server without one.
-pub fn with_states<T>(
-    input: &Input,
-    cache: Option<&Path>,
-    f: impl FnOnce(&dyn StateSource, State, Option<&str>) -> Result<T>,
-) -> Result<T> {
-    if let Some(stream) = Stream::open(input, cache, None)? {
-        let latest = stream.latest()?;
-        return f(
-            &States(&stream.replication, latest),
-            latest,
-            stream.url.as_deref(),
-        );
-    }
-    let Input::Url(url) = input else {
-        unreachable!("a stream that does not open is a server without a cache");
-    };
-    remote_with_states(url, f)
-}
-
-#[cfg(feature = "http")]
-fn remote_with_states<T>(
-    url: &str,
-    f: impl FnOnce(&dyn StateSource, State, Option<&str>) -> Result<T>,
-) -> Result<T> {
-    use crate::remote::RemoteStates;
-
-    let states = RemoteStates::new(url);
-    let latest = states.latest()?;
-    f(&states, latest, Some(url))
-}
-
-#[cfg(not(feature = "http"))]
-fn remote_with_states<T>(
-    url: &str,
-    _f: impl FnOnce(&dyn StateSource, State, Option<&str>) -> Result<T>,
-) -> Result<T> {
-    Err(no_http(url))
+/// The sequence of a diff or state file at `path`, from its last three components: `…/007/363/600.osc.gz` is 7363600.
+fn sequence_of(path: &Path) -> Option<u64> {
+    let mut parts = path.components().rev().map(|c| c.as_os_str().to_str());
+    let (c, b, a) = (parts.next()??, parts.next()??, parts.next()??);
+    path_sequence(&format!("{a}/{b}/{c}"))
 }
 
 /// The sequences of the diffs a local stream has, in order: every `AAA/BBB/CCC.osc.gz` three directories down.
@@ -384,10 +370,11 @@ pub fn local_sequences(dir: &Path) -> Result<Vec<u64>> {
             if depth < 2 && path.is_dir() {
                 walk.push((path, depth + 1));
             } else if depth == 2
-                && let Some(sequence) = path
-                    .to_str()
-                    .filter(|p| p.ends_with(".osc.gz"))
-                    .and_then(|p| path_sequence(&p.replace('\\', "/")))
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(".osc.gz"))
+                && let Some(sequence) = sequence_of(&path)
             {
                 found.push(sequence);
             }
@@ -399,10 +386,9 @@ pub fn local_sequences(dir: &Path) -> Result<Vec<u64>> {
 
 /// The state file beside an osmChange file named by its sequence, as `956.state.txt` is beside `956.osc.gz`.
 pub fn sibling_state(path: &Path) -> Option<State> {
-    let name = path.to_str()?.replace('\\', "/");
-    path_sequence(&name)?;
-    let state = PathBuf::from(name.strip_suffix(".osc.gz")?.to_owned() + ".state.txt");
-    State::read(state).ok()
+    let stem = path.file_name()?.to_str()?.strip_suffix(".osc.gz")?;
+    sequence_of(path)?;
+    State::read(path.with_file_name(format!("{stem}.state.txt"))).ok()
 }
 
 /// How long ago `ms`, in milliseconds since 1970, was, by this computer's clock: `2d 3h`, `5h 12m`, `3m`.
@@ -410,7 +396,8 @@ pub fn ago(ms: i64) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-    let minutes = (now - ms) / 60_000;
+    // A time ahead of this computer's clock is now.
+    let minutes = (now - ms).max(0) / 60_000;
     let (days, hours, minutes) = (minutes / 1440, minutes / 60 % 24, minutes % 60);
     match (days, hours) {
         (0, 0) => format!("{minutes}m"),
@@ -503,5 +490,6 @@ mod tests {
         assert_eq!(ago(now - 3 * 60_000), "3m");
         assert_eq!(ago(now - (5 * 60 + 12) * 60_000), "5h 12m");
         assert_eq!(ago(now - (2 * 1440 + 3 * 60) * 60_000), "2d 3h");
+        assert_eq!(ago(now + 5 * 60_000), "0m", "a time ahead of the clock");
     }
 }

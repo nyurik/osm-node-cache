@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::{fmt, io, result};
 
-use crate::osc::State;
+use crate::osc::{State, Timestamp};
 
 /// The result of every fallible call of [`osc`](crate::osc).
 pub(crate) type Result<T, E = OscError> = result::Result<T, E>;
@@ -80,12 +80,26 @@ pub enum OscError {
     },
     /// A plan needs diffs from before the oldest one the finest stream still has: start from a newer position, as
     /// a fresh extract or dump gives.
-    #[error("the stream's oldest state is sequence {} at {} ms, after the position {timestamp_ms} ms", oldest.sequence, oldest.timestamp_ms)]
+    #[error(
+        "the stream's oldest state is sequence {} at {}, after {}",
+        oldest.sequence,
+        Timestamp(oldest.timestamp_ms),
+        Timestamp(*timestamp_ms)
+    )]
     TooOld {
         /// The position the plan starts from, in milliseconds since 1970.
         timestamp_ms: i64,
         /// The oldest state of the finest stream.
         oldest: State,
+    },
+    /// A [`Start::After`](crate::osc::Start::After) names a stream that is not in the list given to
+    /// [`plan`](crate::osc::plan).
+    #[error("the plan starts after stream {stream}, but it has {streams} streams")]
+    UnknownStream {
+        /// The stream asked for.
+        stream: usize,
+        /// The number of streams given.
+        streams: usize,
     },
 }
 

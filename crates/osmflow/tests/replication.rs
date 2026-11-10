@@ -11,8 +11,8 @@ use std::{fs, mem};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use osmflow::osc::{
-    Diff, Fetch, Located, Object, OscError, Replication, State, StateError, StateSource as _,
-    locate, path_sequence, sequence_path,
+    Diff, Fetch, Located, Object, OscError, Replication, ServerStates, State, StateError,
+    StateSource as _, locate, path_sequence, sequence_path,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -509,6 +509,41 @@ fn a_search_by_time_downloads_state_files_once_and_no_diff() {
     let local = Replication::local(&cache);
     assert_eq!(local.get(30).unwrap(), Some(state(30)));
     assert_eq!(local.get(1000).unwrap(), None);
+}
+
+#[test]
+fn server_states_are_checked_and_downloaded_once_without_a_cache() {
+    // Diffs 10 to 59, the older ones deleted; state 20 is misrouted, and names sequence 21.
+    let mut files = stream(59, 10..=59, 1);
+    let misrouted = format!("{}.state.txt", sequence_path(20));
+    files.retain(|f| f.0 != misrouted);
+    files.push((misrouted, state_text(21).into_bytes()));
+    let mock = Mock::new(&files);
+    let states = ServerStates::new(BASE, mock.clone());
+
+    let t = state(30).timestamp_ms + 1000;
+    assert_eq!(locate(&states, t).unwrap(), Located::At(state(30)));
+    let requests = mock.requests();
+    assert!(
+        requests.len() <= 6 && requests.iter().all(|r| r.ends_with("state.txt")),
+        "{requests:?}"
+    );
+    // Searched again, nothing is downloaded: the states are kept in memory, the latest too.
+    assert_eq!(locate(&states, t).unwrap(), Located::At(state(30)));
+    assert_eq!(mock.requests(), Vec::<String>::new());
+
+    // A deleted state, and one past the latest, are not there; the second is not asked for.
+    assert_eq!(states.get(5).unwrap(), None);
+    assert_eq!(states.get(60).unwrap(), None);
+    assert_eq!(mock.requests(), ["000/000/005.state.txt"]);
+    // A state file that names another sequence is an error.
+    assert!(matches!(states.get(20), Err(OscError::State { .. })));
+    // A truncated state file is fetched again.
+    mock.answer_first("000/000/040.state.txt", Some(b"sequenceNumber=40\n"));
+    assert_eq!(states.get(40).unwrap(), Some(state(40)));
+    // A server without a `state.txt` is not a stream.
+    let nowhere = ServerStates::new("https://example.org/nowhere", mock.clone());
+    assert!(matches!(nowhere.latest(), Err(OscError::NoStream { .. })));
 }
 
 #[test]

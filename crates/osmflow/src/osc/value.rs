@@ -124,6 +124,21 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+/// The date of a day counted from 1970-01-01, in the proleptic Gregorian calendar: [`days_from_civil`] backwards
+/// (Howard Hinnant's algorithm).
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// Whether an attribute value's text is its raw bytes: it has no `&`, `<` or control character, which [`unescape`]
 /// replaces or rejects.
 pub(crate) fn is_plain(raw: &[u8]) -> bool {

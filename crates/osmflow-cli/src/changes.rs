@@ -30,14 +30,7 @@ enum Event<'a> {
 fn check(input: &Input, changes: &ChangeArgs) -> Result<()> {
     let name = input.name();
     if let Input::Osc(_) = input {
-        if let Some(flag) = [
-            (changes.seq.is_some(), "--seq"),
-            (changes.since.is_some(), "--since"),
-            (changes.cache.is_some(), "--cache"),
-        ]
-        .into_iter()
-        .find_map(|(given, flag)| given.then_some(flag))
-        {
+        if let Some(flag) = changes.stream_flag() {
             bail!("{flag} is for replication streams, and {name} is one osmChange file");
         }
     } else if !changes.chooses() {
@@ -71,9 +64,7 @@ fn read(
         }
         return Ok(());
     }
-    let Some(stream) = Stream::open(input, changes.cache.as_deref(), threads.count())? else {
-        unreachable!("check makes sure a server has --cache");
-    };
+    let stream = Stream::open(input, changes.cache.as_deref(), threads.count())?;
     for diff in stream.chosen(changes)? {
         let diff = diff?;
         if visit(Event::Diff(&diff.state))?.is_break() {
@@ -178,8 +169,8 @@ struct Tagged {
 struct ChangeStats {
     /// Changes by type, then action.
     changes: [[u64; 3]; 3],
-    /// The objects changed, each once however often it changes.
-    objects: HashSet<(Kind, i64)>,
+    /// The IDs of the objects changed, by [`Kind::index`], each once however often it changes.
+    objects: [Distinct<i64>; 3],
     /// By type, the created and modified versions with tags, and their tags. A deletion is left out: the planet's
     /// diffs, and most others, give it no tags.
     tags: [Tagged; 3],
@@ -188,8 +179,8 @@ struct ChangeStats {
     lon: Option<(i32, i32)>,
     time: Option<(i64, i64)>,
     max_version: Option<i32>,
-    changesets: HashSet<i64>,
-    uids: HashSet<i32>,
+    changesets: Distinct<i64>,
+    uids: Distinct<i32>,
     /// User names, counted when the input has names without IDs.
     users: HashSet<Arc<str>>,
     /// The states of the diffs read: the first and the last, and how many.
@@ -202,7 +193,7 @@ impl ChangeStats {
         let o = &change.object;
         let kind = Kind::from(o.kind());
         self.changes[kind.index()][action_index(change.action)] += 1;
-        self.objects.insert((kind, o.id()));
+        self.objects[kind.index()].insert(o.id());
         if change.action != Action::Delete {
             let t = &mut self.tags[kind.index()];
             let n = o.tags().len() as u64;
@@ -220,8 +211,12 @@ impl ChangeStats {
             widen(&mut self.time, ms, ms);
         }
         self.max_version = self.max_version.max(meta.version);
-        self.changesets.extend(meta.changeset);
-        self.uids.extend(meta.uid);
+        if let Some(changeset) = meta.changeset {
+            self.changesets.insert(changeset);
+        }
+        if let Some(uid) = meta.uid {
+            self.uids.insert(uid);
+        }
         if meta.uid.is_none() {
             self.users.extend(meta.user.clone());
         }
@@ -256,7 +251,54 @@ impl ChangeStats {
     }
 
     fn distinct(&self, kind: Kind) -> usize {
-        self.objects.iter().filter(|(k, _)| *k == kind).count()
+        self.objects[kind.index()].len()
+    }
+
+    /// The number of objects changed.
+    fn object_count(&self) -> usize {
+        self.objects.iter().map(Distinct::len).sum()
+    }
+
+    /// Counts each value once, before the counts are read.
+    fn finish(&mut self) {
+        for d in &mut self.objects {
+            d.dedup();
+        }
+        self.changesets.dedup();
+        self.uids.dedup();
+    }
+}
+
+/// Values seen, to count each once: kept in a `Vec`, sorted and deduplicated each time it doubles, which takes no
+/// more than twice the memory of the distinct values and hashes none. [`len`](Self::len) counts them after
+/// [`dedup`](Self::dedup).
+#[derive(Debug, Default)]
+struct Distinct<T> {
+    values: Vec<T>,
+    /// How many values were distinct at the last deduplication.
+    unique: usize,
+}
+
+impl<T: Ord> Distinct<T> {
+    fn insert(&mut self, value: T) {
+        self.values.push(value);
+        if self.values.len() >= (2 * self.unique).max(1 << 16) {
+            self.dedup();
+        }
+    }
+
+    fn dedup(&mut self) {
+        self.values.sort_unstable();
+        self.values.dedup();
+        self.unique = self.values.len();
+    }
+
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 }
 
@@ -277,6 +319,7 @@ pub fn stats(args: &stats::Args, input: &Input) -> Result<()> {
         }
         Ok(ControlFlow::Continue(()))
     })?;
+    s.finish();
     let bytes = if let Input::Osc(path) = input {
         fs::metadata(path).ok().map(|m| m.len())
     } else {
@@ -289,12 +332,6 @@ pub fn stats(args: &stats::Args, input: &Input) -> Result<()> {
     }
     Ok(out.flush()?)
 }
-
-const TYPES: [(Kind, &str); 3] = [
-    (Kind::Node, "nodes"),
-    (Kind::Way, "ways"),
-    (Kind::Relation, "relations"),
-];
 
 fn text(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) -> io::Result<()> {
     match bytes {
@@ -330,7 +367,7 @@ fn text(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) 
         ("changesets", s.changesets.len()),
         ("users", s.user_count()),
     ] {
-        if n > 0 || s.objects.is_empty() {
+        if n > 0 || s.objects.iter().all(Distinct::is_empty) {
             writeln!(o, "{name:13} {}", count(n as u64))?;
         } else {
             writeln!(o, "{name:13} not in the input")?;
@@ -343,12 +380,13 @@ fn text(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) 
         "{:13} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12}",
         "", "create", "modify", "tagged", "tags", "delete", "objects"
     )?;
-    for (kind, name) in TYPES {
+    for kind in Kind::ALL {
+        let name = kind.plural();
         let i = kind.index();
         text_row(o, name, s.changes[i], s.distinct(kind), s.tags[i])?;
     }
     let (changes, tags) = s.total();
-    text_row(o, "total", changes, s.objects.len(), tags)?;
+    text_row(o, "total", changes, s.object_count(), tags)?;
     Ok(())
 }
 
@@ -404,12 +442,13 @@ fn json(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) 
         o.write_all(br#","last_state":"#)?;
         opt_time(o, Some(last.timestamp_ms))?;
     }
-    for (kind, name) in TYPES {
+    for kind in Kind::ALL {
+        let name = kind.plural();
         let i = kind.index();
         json_row(o, name, s.changes[i], s.distinct(kind), s.tags[i])?;
     }
     let (changes, tags) = s.total();
-    json_row(o, "total", changes, s.objects.len(), tags)?;
+    json_row(o, "total", changes, s.object_count(), tags)?;
     o.write_all(br#","node_extent":"#)?;
     extent_json(o, s.lat, s.lon)?;
     o.write_all(b",")?;
@@ -435,13 +474,9 @@ fn stream_state(
     threads: &Threads,
     json: bool,
 ) -> Result<()> {
-    let state = match (
-        input,
-        Stream::open(input, changes.cache.as_deref(), threads.count())?,
-    ) {
-        (_, Some(stream)) => stream.latest()?,
+    let state = match (input, &changes.cache) {
         (Input::Url(url), None) => remote_state(url)?,
-        _ => unreachable!("a directory is always a stream"),
+        _ => Stream::open(input, changes.cache.as_deref(), threads.count())?.latest()?,
     };
     let local = if let Input::Dir(dir) = input {
         Some(local_sequences(dir)?)
@@ -526,7 +561,7 @@ mod tests {
         }
         let counted: u64 = s.changes.iter().flatten().sum();
         assert_eq!(counted, total);
-        assert!(s.objects.len() as u64 <= total);
+        assert!(s.object_count() as u64 <= total);
         // A planet diff has changesets and users.
         assert!(!s.changesets.is_empty() && !s.uids.is_empty());
         assert!(s.time.is_some() && s.max_version.is_some());

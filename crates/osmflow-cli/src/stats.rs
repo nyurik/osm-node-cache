@@ -13,7 +13,7 @@ use osmflow::{Block, Header, Info, PbfReader, Select};
 use crate::changes;
 use crate::input::{Input, ago};
 use crate::output::{
-    self, Format, count, extent_json, extent_line, json_str, nanodegrees, opt_num, opt_str,
+    self, SummaryFormat, count, extent_json, extent_line, json_str, nanodegrees, opt_num, opt_str,
     opt_time, str_array, time_span, time_span_json, timestamp, widen,
 };
 use crate::select::{ChangeArgs, Kind, Threads};
@@ -28,7 +28,7 @@ pub struct Args {
     input: PathBuf,
     /// The output format.
     #[arg(short, long, value_enum, default_value_t)]
-    format: Format,
+    format: SummaryFormat,
     /// Also read PBF metadata: time span, versions, deletions.
     ///
     /// Metadata is much of what a block holds, so it is not read by default. osmChange input always shows it, as its
@@ -44,7 +44,7 @@ pub struct Args {
 impl Args {
     /// Whether the summary is written as JSON.
     pub fn json(&self) -> bool {
-        self.format == Format::Json
+        self.format == SummaryFormat::Json
     }
 }
 
@@ -148,7 +148,7 @@ impl Stats {
         }
         let mut order = Order::default();
         for n in block.nodes() {
-            s.types[0].add(n.id(), n.tags().len());
+            s.types[Kind::Node.index()].add(n.id(), n.tags().len());
             s.info(n.info());
             let (lat, lon) = (n.decimicro_lat(), n.decimicro_lon());
             widen(&mut s.lat, lat, lat);
@@ -156,13 +156,13 @@ impl Stats {
             order.next(Kind::Node, n.id());
         }
         for w in block.ways() {
-            s.types[1].add(w.id(), w.tags().len());
+            s.types[Kind::Way.index()].add(w.id(), w.tags().len());
             s.info(w.info());
             s.refs += w.refs().len() as u64;
             order.next(Kind::Way, w.id());
         }
         for r in block.relations() {
-            s.types[2].add(r.id(), r.tags().len());
+            s.types[Kind::Relation.index()].add(r.id(), r.tags().len());
             s.info(r.info());
             s.members += r.members().len() as u64;
             order.next(Kind::Relation, r.id());
@@ -232,13 +232,8 @@ impl Stats {
 }
 
 /// An object's place in type-then-ID order.
-fn key((kind, id): (Kind, i64)) -> (u8, i64) {
-    let rank = match kind {
-        Kind::Node => 0,
-        Kind::Way => 1,
-        Kind::Relation => 2,
-    };
-    (rank, id)
+fn key((kind, id): (Kind, i64)) -> (usize, i64) {
+    (kind.index(), id)
 }
 
 /// Follows the objects of one block, to tell whether they are in type-then-ID order.
@@ -337,8 +332,6 @@ struct Report<'a> {
     /// Whether metadata was read.
     metadata: bool,
 }
-
-const TYPES: [&str; 3] = ["nodes", "ways", "relations"];
 
 impl Report<'_> {
     fn text(&self, o: &mut impl Write) -> io::Result<()> {
@@ -453,7 +446,8 @@ impl Report<'_> {
             "{:13} {:>15} {:>15} {:>15}   IDs",
             "", "count", "tagged", "tags"
         )?;
-        for (name, t) in TYPES.iter().zip(&self.stats.types) {
+        for (kind, t) in Kind::ALL.into_iter().zip(&self.stats.types) {
+            let name = kind.plural();
             write!(
                 o,
                 "{name:13} {:>15} {:>15} {:>15}",
@@ -522,7 +516,8 @@ impl Report<'_> {
             o,
             r#","groups":{{"nodes":{plain},"dense_nodes":{dense},"ways":{ways},"relations":{relations},"empty":{empty}}}"#
         )?;
-        for (name, t) in TYPES.iter().zip(&s.types) {
+        for (kind, t) in Kind::ALL.into_iter().zip(&s.types) {
+            let name = kind.plural();
             write!(
                 o,
                 r#","{name}":{{"count":{},"tagged":{},"tags":{}"#,

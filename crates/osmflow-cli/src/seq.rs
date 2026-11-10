@@ -5,10 +5,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use osmflow::osc::{LATE_MS, Located, Start, State, StateSource, locate, plan};
+use osmflow::osc::{LATE_MS, Located, Start, State, StateSource, Timestamp, locate, plan};
 
-use crate::input::{Input, Since, ago, parse_since, start_after, with_states};
-use crate::output::{Format, count, json_str, opt_time, timestamp};
+use crate::input::{After, Input, Since, after_file, ago, parse_since, stream_states};
+use crate::output::{SummaryFormat, count, json_str, opt_time};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -30,7 +30,7 @@ pub struct Args {
     cache: Option<PathBuf>,
     /// The output format.
     #[arg(short, long, value_enum, default_value_t)]
-    format: Format,
+    format: SummaryFormat,
 }
 
 /// The point of a stream to find.
@@ -79,13 +79,12 @@ pub fn run(args: &Args) -> Result<()> {
             input.name()
         );
     }
-    let found = with_states(&input, args.cache.as_deref(), |source, latest, url| {
-        find(source, latest, url, &args.when)
-    })?;
+    let (source, latest, url) = stream_states(&input, args.cache.as_deref())?;
+    let found = find(source.as_ref(), latest, url.as_deref(), &args.when)?;
     let mut o = io::stdout().lock();
     match args.format {
-        Format::Text => text(&mut o, &input, &found)?,
-        Format::Json => json(&mut o, &input, &found)?,
+        SummaryFormat::Text => text(&mut o, &input, &found)?,
+        SummaryFormat::Json => json(&mut o, &input, &found)?,
     }
     Ok(())
 }
@@ -101,16 +100,14 @@ fn find(source: &dyn StateSource, latest: State, url: Option<&str>, when: &When)
         ),
         When::Since(Since::Time(ms)) => (Start::Time { timestamp_ms: *ms }, Point::Time(*ms)),
         When::Since(Since::File(path)) => {
-            let start = start_after(path, source, url)?;
+            let after = after_file(path, source, url)?;
             let file = name(path);
-            let point = match start {
-                Start::After { .. } if matches!(Input::of(path)?, Input::State(_)) => {
-                    Point::StateFile(file)
-                }
-                Start::Snapshot { timestamp_ms } => Point::Snapshot(file, timestamp_ms),
-                Start::After { .. } | Start::Time { .. } => Point::Header(file),
+            let point = match after {
+                After::StateFile(_) => Point::StateFile(file),
+                After::Header(_) => Point::Header(file),
+                After::Snapshot(timestamp_ms) => Point::Snapshot(file, timestamp_ms),
             };
-            (start, point)
+            (after.start(), point)
         }
     };
     let (state, exact) = match start {
@@ -120,9 +117,9 @@ fn find(source: &dyn StateSource, latest: State, url: Option<&str>, when: &When)
                 Located::At(state) => (state, false),
                 Located::BeforeOldest(oldest) => bail!(
                     "{} is before the oldest diff the stream has, {} at {}",
-                    time(timestamp_ms),
+                    Timestamp(timestamp_ms),
                     oldest.sequence,
-                    time(oldest.timestamp_ms)
+                    Timestamp(oldest.timestamp_ms)
                 ),
             }
         }
@@ -147,12 +144,6 @@ fn name(path: &Path) -> String {
     )
 }
 
-fn time(ms: i64) -> String {
-    let mut out = Vec::new();
-    timestamp(&mut out, ms).expect("writing to a Vec does not fail");
-    String::from_utf8(out).expect("a timestamp is ASCII")
-}
-
 fn text(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
     let (latest, state) = (f.latest, f.state);
     writeln!(
@@ -160,14 +151,14 @@ fn text(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
         "The latest diff of {} is {}, at {}, {} ago.",
         input.name(),
         latest.sequence,
-        time(latest.timestamp_ms),
+        Timestamp(latest.timestamp_ms),
         ago(latest.timestamp_ms)
     )?;
-    let at = time(state.timestamp_ms);
+    let at = Timestamp(state.timestamp_ms);
     let changes = match &f.point {
         Point::Latest => return Ok(()),
         Point::Time(t) => {
-            let t = time(*t);
+            let t = Timestamp(*t);
             writeln!(
                 o,
                 "The last diff at or before {t} is {}, at {at}.",
@@ -196,7 +187,7 @@ fn text(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
                 o,
                 "{file} has the changes made up to {}, as its header says; the last diff at or before that time is \
                  {}, at {at}.",
-                time(*t),
+                Timestamp(*t),
                 state.sequence
             )?;
             format!(
@@ -311,12 +302,11 @@ mod tests {
 #[cfg(all(test, feature = "http"))]
 mod server_tests {
     use std::io;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    use osmflow::osc::{Fetch, OscError, parse_timestamp, path_sequence};
+    use osmflow::osc::{Fetch, OscError, ServerStates, parse_timestamp, path_sequence};
 
     use super::*;
-    use crate::remote::RemoteStates;
 
     const MINUTE: i64 = 60_000;
     const DAY: i64 = 1440 * MINUTE;
@@ -337,14 +327,14 @@ mod server_tests {
             first: u64,
             last: u64,
             time: impl Fn(u64) -> i64 + Send + Sync + 'static,
-        ) -> Self {
-            Self {
+        ) -> Arc<Self> {
+            Arc::new(Self {
                 base,
                 first,
                 last,
                 time: Box::new(time),
                 asked: Mutex::default(),
-            }
+            })
         }
 
         fn state(&self, sequence: u64) -> State {
@@ -355,8 +345,8 @@ mod server_tests {
         }
 
         /// Finds `when` on this server, as `osmflow seq` does with its URL.
-        fn find(&self, when: &When) -> Result<Found> {
-            let states = RemoteStates::with_fetch(self.base, self);
+        fn find(self: &Arc<Self>, when: &When) -> Result<Found> {
+            let states = ServerStates::new(self.base, Mock(Arc::clone(self)));
             let latest = states.latest()?;
             find(&states, latest, Some(self.base), when)
         }
@@ -369,21 +359,27 @@ mod server_tests {
         }
     }
 
-    impl Fetch for &Server {
+    /// A [`Server`] as a [`Fetch`], which [`ServerStates`] owns.
+    struct Mock(Arc<Server>);
+
+    impl Fetch for Mock {
         fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>> {
-            self.asked.lock().unwrap().push(url.to_owned());
-            let Some(relative) = url.strip_prefix(self.base) else {
+            let server = &self.0;
+            server.asked.lock().unwrap().push(url.to_owned());
+            let Some(relative) = url.strip_prefix(server.base) else {
                 return Ok(None);
             };
             let sequence = if relative == "/state.txt" {
-                self.last
+                server.last
             } else {
                 match path_sequence(url) {
-                    Some(n) if (self.first..=self.last).contains(&n) => n,
+                    Some(n) if (server.first..=server.last).contains(&n) => n,
                     _ => return Ok(None),
                 }
             };
-            let time = time((self.time)(sequence)).replace(':', "\\:");
+            let time = Timestamp((server.time)(sequence))
+                .to_string()
+                .replace(':', "\\:");
             Ok(Some(
                 format!("#written by a test\nsequenceNumber={sequence}\ntimestamp={time}\n")
                     .into_bytes(),
@@ -487,7 +483,7 @@ mod server_tests {
         assert!(e.to_string().contains("no longer has"), "{e}");
 
         let nowhere = Server::new("https://planet.test/nothing", 1, 1, |_| 0);
-        let states = RemoteStates::with_fetch("https://planet.test/elsewhere", &nowhere);
+        let states = ServerStates::new("https://planet.test/elsewhere", Mock(nowhere));
         assert!(matches!(states.latest(), Err(OscError::NoStream { .. })));
     }
 }

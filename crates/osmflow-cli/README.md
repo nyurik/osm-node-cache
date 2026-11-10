@@ -93,13 +93,13 @@ osmflow stats https://download.geofabrik.de/north-america/us/district-of-columbi
 | `--cache DIR` | the directory a server's files are downloaded into, once each, and read from after; needed to read a server's diffs |
 | `--action create,modify,delete` | only changes in these sections |
 | `--changeset ID,...` | only changes made in these changesets |
-| `--user NAME_OR_UID,...` | only changes by these users: a number is a user ID |
+| `--user NAME,...`, `--uid UID,...` | only changes by these user names or user IDs |
 
 `--id`, `-t`, `--tag`, `--limit`, `--metadata` and the output formats work as for PBF files. Each change is written
 with its action: `modify n49778624 lat=… lon=…` in text, and `"@action":"modify"` in GeoJSON, with `"@sequence"` for
 the diff of a stream it is in. Nodes are points, deleted ones too when the file gives their last location; ways and
 relations have no geometry, as a diff has the locations of the nodes it changes only. Geofabrik's public diffs have no
-changesets or users, so `--changeset` and `--user` match nothing there.
+changesets or users, so `--changeset`, `--user` and `--uid` match nothing there.
 
 `stats` of osmChange input counts its changes by type and action, and the objects they change. The columns under
 `created or modified` are of the versions created and modified: how many, how many of them have tags (`tagged`), and

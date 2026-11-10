@@ -11,8 +11,6 @@ mod dump;
 mod input;
 mod logging;
 mod output;
-#[cfg(feature = "http")]
-mod remote;
 mod select;
 mod seq;
 mod stats;
