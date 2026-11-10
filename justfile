@@ -192,7 +192,6 @@ udeps:  (cargo-install 'cargo-udeps')
 
 # Update all dependencies, including breaking changes. Requires nightly toolchain (install with `rustup install nightly`)
 update:
-    cargo +nightly -Z unstable-options update --breaking
     cargo update
 
 # Ensure that a certain command is available
