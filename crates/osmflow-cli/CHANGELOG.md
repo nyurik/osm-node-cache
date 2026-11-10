@@ -7,15 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.1](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.12.0...osmflow-cli-v0.12.1) - 2026-11-10
+## [0.13.0](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.12.0...osmflow-cli-v0.13.0) - 2026-11-10
 
 ### Added
 
-- add osmflow-sync -- OSM data to PostgreSQL repl ([#51](https://github.com/nyurik/osmflow/pull/51))
+- `osmflow sync import`, `update`, `rebuild` and `status` keep OpenStreetMap data in PostgreSQL with PostGIS, current
+  from replication diffs, through the new `osmflow-sync` crate ([#51](https://github.com/nyurik/osmflow/pull/51)).
+  The database and the directory of its files come from `--db` and `--dir`, or from `DATABASE_URL` and
+  `OSMFLOW_SYNC_DIR`. The command is in the default `sync` feature.
+- An error's causes are each printed once.
 
 ### Other
 
-- reduce dups ([#52](https://github.com/nyurik/osmflow/pull/52))
+- The node stores share their header code; the files they write are unchanged
+  ([#52](https://github.com/nyurik/osmflow/pull/52))
 
 ## [0.12.0](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.11.0...osmflow-cli-v0.12.0) - 2026-11-10
 

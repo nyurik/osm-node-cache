@@ -1,6 +1,6 @@
 [package]
 name = "osmflow-sync"
-version = "0.12.0-alpha.2"
+version = "0.13.0"
 description = "Imports OpenStreetMap PBF files into PostgreSQL and keeps them current from replication diffs"
 authors.workspace = true
 # The crate's own directory, ending in `/`: Dependabot then shows this crate's CHANGELOG.md in its PRs

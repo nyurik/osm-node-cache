@@ -1,6 +1,6 @@
 [package]
 name = "osmflow"
-version = "0.12.1"
+version = "0.13.0"
 description = "Fast, parallel reading of OpenStreetMap PBF files, and node location stores, from a city extract to the planet"
 authors.workspace = true
 # The crate's own directory, ending in `/`: Dependabot then shows this crate's CHANGELOG.md in its PRs
