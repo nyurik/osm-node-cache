@@ -11,11 +11,10 @@ use osmflow::nodes::prelude::{NodeRead as _, NodeStore as _};
 use osmflow::nodes::{MemoryReader, MemoryStore};
 use osmflow::{AreaRules, GeometryError, Header, Location, Locator, PbfReader, Select, Way};
 
-use crate::changes;
 use crate::input::Input;
-use crate::output::{self, timestamp};
 use crate::select::{ChangeArgs, Filter, Kind, TagSpec, Threads, first_given, parse_tag};
 use crate::write::{DumpFormat, Geometry, Props, Writer};
+use crate::{changes, output};
 
 /// A file larger than this is dumped whole only with `--all`.
 const WHOLE_FILE_LIMIT: u64 = 100 << 20;
@@ -245,9 +244,8 @@ fn header(w: &mut Writer, path: &Path, size: u64, h: &Header) -> io::Result<()> 
     if let Some(sequence) = h.replication_sequence {
         w.comment(|o| {
             write!(o, "replication: sequence {sequence}")?;
-            if let Some(secs) = h.replication_timestamp {
-                o.write_all(b", ")?;
-                timestamp(o, secs.saturating_mul(1000))?;
+            if let Some(at) = h.replication_timestamp {
+                write!(o, ", {at}")?;
             }
             if let Some(url) = &h.replication_base_url {
                 write!(o, ", {url}")?;

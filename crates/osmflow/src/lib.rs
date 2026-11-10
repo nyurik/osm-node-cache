@@ -51,6 +51,7 @@ mod peek;
 mod reader;
 #[cfg(all(feature = "pbf", feature = "nodes"))]
 mod resolve;
+mod time;
 
 /// The `rayon` that [`PbfReader::with_pool`] takes a pool of.
 #[cfg(feature = "pbf")]
@@ -78,3 +79,4 @@ pub use crate::reader::{ParOrdered, PbfReader};
 pub use crate::resolve::GeometryError;
 #[cfg(all(feature = "pbf", feature = "nodes"))]
 pub use crate::resolve::Locator;
+pub use crate::time::{Timestamp, TimestampError};

@@ -1,13 +1,12 @@
 ---
 source: crates/osmflow/tests/fixtures.rs
-assertion_line: 52
 expression: snapshot
 ---
 # required: OsmSchema-V0.6, DenseNodes
 # optional: Sort.Type_then_ID
 # writing program: Some("osmium/1.14.0"), source: None
 # bbox: Some((-110121465000, 9595339000, -108374639000, 11156851000))
-# replication: Some(1745439661) Some(1708) Some("https://download.geofabrik.de/australia-oceania/ile-de-clipperton-updates")
+# replication: Some("2025-04-23T20:21:01Z") Some(1708) Some("https://download.geofabrik.de/australia-oceania/ile-de-clipperton-updates")
 # 3097 nodes, 151 ways, 17 relations, hash 6fe7f04ad3c8dfd6
 # the first 20 objects:
 n1724610081 v1 dV c0 t1334956915000 i0 u T x-109214367900 y10287153800

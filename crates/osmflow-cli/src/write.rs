@@ -5,9 +5,9 @@ use std::path::Path;
 
 use geo_types::{Coord, LineString, Polygon};
 use osmflow::osc::{Action, Meta};
-use osmflow::{Block, GeometryError, Info, Location, Member, MemberType};
+use osmflow::{Block, GeometryError, Info, Location, Member, MemberType, Timestamp};
 
-use crate::output::{self, count, degrees, json_str, timestamp, to_decimicro};
+use crate::output::{self, count, degrees, json_str, to_decimicro};
 use crate::select::Kind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -51,7 +51,7 @@ pub struct Props<'a> {
     /// For a change of a replication stream: the diff it is in.
     pub sequence: Option<u64>,
     pub version: Option<i32>,
-    pub timestamp_ms: Option<i64>,
+    pub timestamp: Option<Timestamp>,
     pub changeset: Option<i64>,
     pub uid: Option<i32>,
     pub user: Option<&'a str>,
@@ -68,7 +68,7 @@ impl<'a> Props<'a> {
         };
         Self {
             version: Some(i.version).filter(|&v| v != -1),
-            timestamp_ms: Some(i.timestamp_ms).filter(|&t| t != 0),
+            timestamp: Some(i.timestamp).filter(|&t| t != Timestamp::EPOCH),
             changeset: Some(i.changeset).filter(|&c| c != 0),
             uid: Some(i.uid).filter(|&u| u != 0),
             user: Some(i.user).filter(|u| !u.is_empty()),
@@ -81,7 +81,7 @@ impl<'a> Props<'a> {
     pub fn of_meta(meta: &'a Meta) -> Self {
         Self {
             version: meta.version,
-            timestamp_ms: meta.timestamp_ms,
+            timestamp: meta.timestamp,
             changeset: meta.changeset,
             uid: meta.uid,
             user: meta.user.as_deref(),
@@ -320,9 +320,8 @@ impl Writer {
         if let Some(version) = props.version {
             write!(o, " v{version}")?;
         }
-        if let Some(ms) = props.timestamp_ms {
-            o.write_all(b" ")?;
-            timestamp(o, ms)?;
+        if let Some(at) = props.timestamp {
+            write!(o, " {at}")?;
         }
         if let Some(changeset) = props.changeset {
             write!(o, " c{changeset}")?;
@@ -381,10 +380,8 @@ impl Writer {
         if let Some(version) = props.version {
             write!(o, r#","@version":{version}"#)?;
         }
-        if let Some(ms) = props.timestamp_ms {
-            o.write_all(br#","@timestamp":""#)?;
-            timestamp(o, ms)?;
-            o.write_all(b"\"")?;
+        if let Some(at) = props.timestamp {
+            write!(o, r#","@timestamp":"{at}""#)?;
         }
         if let Some(changeset) = props.changeset {
             write!(o, r#","@changeset":{changeset}"#)?;
@@ -599,7 +596,7 @@ mod tests {
     fn metadata_a_pbf_file_leaves_out_is_left_out() {
         let info = Info {
             version: -1,
-            timestamp_ms: 0,
+            timestamp: Timestamp::EPOCH,
             changeset: 0,
             uid: 0,
             user: "",

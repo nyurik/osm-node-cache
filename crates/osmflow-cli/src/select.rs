@@ -11,7 +11,7 @@ use osmflow::osc::{Action, Change};
 use osmflow::rayon::ThreadPoolBuilder;
 use osmflow::{Block, MemberType, PbfError, PbfReader, Select, TagMode};
 
-use crate::input::{Overlap, Seqs, Since, parse_overlap, parse_seqs, parse_since};
+use crate::input::{Seqs, Since, parse_seqs, parse_since};
 
 /// The name of the first flag of `flags` that is given.
 pub fn first_given(flags: &[(bool, &'static str)]) -> Option<&'static str> {
@@ -393,16 +393,10 @@ pub struct ChangeArgs {
     ///
     /// After a PBF file, by the replication sequence in its header when its base URL is this stream's, and otherwise
     /// by its replication timestamp. After a state file of this stream. Or the changes made after a time, as
-    /// `2026-11-09T21:00:00Z` or `2026-11-09`. From a PBF file's timestamp, the diffs start --overlap before it, as a
+    /// `2026-11-09T21:00:00Z` or `2026-11-09`. From a PBF file's timestamp, the diffs start 6 minutes before it, as a
     /// change can show up in a diff that much after it is made, so the first ones may hold changes the file has.
     #[arg(long, value_name = "WHEN", value_parser = parse_since, conflicts_with = "seq")]
     pub since: Option<Since>,
-    /// How late a change may show up in a diff, for --since: `3m`, `90s` or `1h`.
-    ///
-    /// After a planet file, the diffs start this much before its time; a smaller overlap repeats fewer of the changes
-    /// it has, and misses a change that shows up later than that.
-    #[arg(long, value_name = "DURATION", default_value = "3m", value_parser = parse_overlap)]
-    pub overlap: Overlap,
     /// Where to keep a server's downloaded files.
     ///
     /// Each file is downloaded into it once, and read from it after. Reading a server's diffs needs it; its latest

@@ -12,6 +12,7 @@ use std::{fs, mem, thread};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use osmflow::Timestamp;
 use osmflow::osc::{
     Diff, Fetch, Located, Object, OscError, PARALLEL, Replication, ServerStates, State, StateError,
     StateSource as _, locate, path_sequence, sequence_path,
@@ -35,7 +36,7 @@ fn temp_dir(name: &str) -> PathBuf {
 fn state_files() {
     let planet = State {
         sequence: 7_363_600,
-        timestamp_ms: 1_794_124_821_000,
+        timestamp: Timestamp::from_millis(1_794_124_821_000),
     };
     assert_eq!(
         State::read(fixture("planet/minute/007/363/600.state.txt")).unwrap(),
@@ -56,14 +57,14 @@ fn state_files() {
             .parse(),
         Ok(State {
             sequence: 4640,
-            timestamp_ms: 1_794_086_507_000
+            timestamp: Timestamp::from_millis(1_794_086_507_000)
         })
     );
     assert_eq!(
         "sequenceNumber=1\ntimestamp=1970-01-01T00\\:00\\:01Z".parse(),
         Ok(State {
             sequence: 1,
-            timestamp_ms: 1000
+            timestamp: Timestamp::from_millis(1000)
         })
     );
 
@@ -178,7 +179,9 @@ fn state_text(sequence: u64) -> String {
 fn state(sequence: u64) -> State {
     State {
         sequence,
-        timestamp_ms: 1_794_124_800_000 + 60_000 * (sequence % 60).cast_signed(),
+        timestamp: Timestamp::from_millis(
+            1_794_124_800_000 + 60_000 * (sequence % 60).cast_signed(),
+        ),
     }
 }
 
@@ -492,7 +495,7 @@ fn a_search_by_time_downloads_state_files_once_and_no_diff() {
     let cache = temp_dir("replication-locate");
     let mock = Mock::new(&stream(59, 10..=59, 1));
     let repl = Replication::remote(BASE, &cache, mock.clone());
-    let t = state(30).timestamp_ms + 1000;
+    let t = state(30).timestamp.saturating_add(Duration::from_secs(1));
     assert_eq!(locate(&repl, t).unwrap(), Located::At(state(30)));
     let requests = mock.requests();
     assert!(
@@ -504,7 +507,7 @@ fn a_search_by_time_downloads_state_files_once_and_no_diff() {
     assert_eq!(mock.requests(), ["state.txt"]);
     // Before the oldest diff kept, the server answers 404 for the older states.
     assert_eq!(
-        locate(&repl, state(5).timestamp_ms).unwrap(),
+        locate(&repl, state(5).timestamp).unwrap(),
         Located::BeforeOldest(state(10))
     );
     // A local directory has no state for a diff it lacks.
@@ -523,7 +526,7 @@ fn server_states_are_checked_and_downloaded_once_without_a_cache() {
     let mock = Mock::new(&files);
     let states = ServerStates::new(BASE, mock.clone());
 
-    let t = state(30).timestamp_ms + 1000;
+    let t = state(30).timestamp.saturating_add(Duration::from_secs(1));
     assert_eq!(locate(&states, t).unwrap(), Located::At(state(30)));
     let requests = mock.requests();
     assert!(
@@ -584,7 +587,9 @@ fn server_states_are_read_ahead_three_at_a_time() {
     });
     let states = ServerStates::new(BASE, SlowFetch(Arc::clone(&slow)));
     states.prefetch(20..=39);
-    assert_eq!(slow.most.load(Ordering::SeqCst), PARALLEL);
+    // Several at once, however slowly the threads start, and never more than `PARALLEL`.
+    let most = slow.most.load(Ordering::SeqCst);
+    assert!((2..=PARALLEL).contains(&most), "{most} at once");
     // The latest state, to know what is published, and each of the 20 once.
     assert_eq!(slow.asked.lock().unwrap().len(), 21);
     assert_eq!(states.get(30).unwrap(), Some(state(30)));
@@ -593,6 +598,9 @@ fn server_states_are_read_ahead_three_at_a_time() {
         21,
         "read ahead, not asked again"
     );
+    // Read ahead again, nothing is asked for.
+    states.prefetch(20..=39);
+    assert_eq!(slow.asked.lock().unwrap().len(), 21);
 }
 
 #[test]

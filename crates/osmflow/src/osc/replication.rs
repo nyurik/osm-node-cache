@@ -18,8 +18,8 @@ use tracing::{debug, debug_span, warn};
 
 use crate::osc::error::{OscError, Result, StateError};
 use crate::osc::plan::read_ahead;
-use crate::osc::value::timestamp_ms;
 use crate::osc::{Change, OscReader, StateSource};
+use crate::time::Timestamp;
 
 /// How often a downloaded file that fails its check (a state file that does not parse, a diff that is not complete
 /// gzip) is fetched, and the pause between tries.
@@ -32,8 +32,8 @@ const CHECK_RETRY_PAUSE: Duration = Duration::from_secs(1);
 pub struct State {
     /// The diff's number in its stream; diff `n` is at the path [`sequence_path`]`(n)`.
     pub sequence: u64,
-    /// In milliseconds since 1970.
-    pub timestamp_ms: i64,
+    /// The time it covers changes up to: the newest timestamp of the diff's changes.
+    pub timestamp: Timestamp,
 }
 
 impl State {
@@ -77,15 +77,14 @@ impl FromStr for State {
                     sequence = Some(value.parse().map_err(|_| bad("sequenceNumber"))?);
                 }
                 "timestamp" => {
-                    timestamp =
-                        Some(timestamp_ms(value.as_bytes()).ok_or_else(|| bad("timestamp"))?);
+                    timestamp = Some(value.parse().map_err(|_| bad("timestamp"))?);
                 }
                 _ => {}
             }
         }
         Ok(Self {
             sequence: sequence.ok_or(StateError::Missing("sequenceNumber"))?,
-            timestamp_ms: timestamp.ok_or(StateError::Missing("timestamp"))?,
+            timestamp: timestamp.ok_or(StateError::Missing("timestamp"))?,
         })
     }
 }
@@ -234,6 +233,11 @@ impl Replication {
     pub fn with_read_ahead(mut self, diffs: usize) -> Self {
         self.read_ahead = diffs.max(1);
         self
+    }
+
+    /// Whether the state file of diff `sequence` is in the directory, downloaded or local.
+    pub(crate) fn has_state_file(&self, sequence: u64) -> bool {
+        self.source.path(sequence, ".state.txt").1.exists()
     }
 
     /// Whether the stream is read from a server, through the directory as a cache.
@@ -547,7 +551,11 @@ impl StateSource for ServerStates {
         if self.latest().is_err() {
             return;
         }
-        read_ahead(sequences, |sequence| {
+        let missing: Vec<u64> = {
+            let read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+            sequences.filter(|s| !read.contains_key(s)).collect()
+        };
+        read_ahead(&missing, |sequence| {
             let _ = self.get(sequence);
         });
     }

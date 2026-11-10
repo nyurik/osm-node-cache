@@ -8,13 +8,13 @@ use std::sync::{Mutex, PoisonError};
 
 use anyhow::{Context as _, Result};
 use osmflow::osc::State;
-use osmflow::{Block, Header, Info, PbfReader, Select};
+use osmflow::{Block, Header, Info, PbfReader, Select, Timestamp};
 
 use crate::changes;
 use crate::input::{Input, ago};
 use crate::output::{
     self, SummaryFormat, count, extent_json, extent_line, json_str, nanodegrees, opt_num, opt_str,
-    opt_time, str_array, time_span, time_span_json, timestamp, widen,
+    opt_time, str_array, time_span, time_span_json, widen,
 };
 use crate::select::{ChangeArgs, Kind, Threads};
 
@@ -115,7 +115,7 @@ struct Stats {
     lat: Option<(i32, i32)>,
     lon: Option<(i32, i32)>,
     /// Object timestamps, earliest and latest, in milliseconds since 1970.
-    time: Option<(i64, i64)>,
+    time: Option<(Timestamp, Timestamp)>,
     max_version: i32,
     deleted: u64,
     spans: Vec<Span>,
@@ -181,8 +181,8 @@ impl Stats {
     fn info(&mut self, info: Option<Info<'_>>) {
         if let Some(i) = info {
             // A timestamp of 0 is a file leaving it out, as some writers do, not an edit of 1970.
-            if i.timestamp_ms != 0 {
-                widen(&mut self.time, i.timestamp_ms, i.timestamp_ms);
+            if i.timestamp != Timestamp::EPOCH {
+                widen(&mut self.time, i.timestamp, i.timestamp);
             }
             self.max_version = self.max_version.max(i.version);
             self.deleted += u64::from(!i.visible);
@@ -271,12 +271,12 @@ fn state(args: &Args, path: &Path) -> Result<()> {
     let mut o = io::stdout().lock();
     if args.json() {
         write!(o, r#"{{"sequence":{},"timestamp":"#, state.sequence)?;
-        opt_time(&mut o, Some(state.timestamp_ms))?;
+        opt_time(&mut o, Some(state.timestamp))?;
         writeln!(o, "}}")?;
     } else {
         write!(o, "state         sequence {} at ", state.sequence)?;
-        timestamp(&mut o, state.timestamp_ms)?;
-        writeln!(o, ", {} ago", ago(state.timestamp_ms))?;
+        write!(&mut o, "{}", state.timestamp)?;
+        writeln!(o, ", {} ago", ago(state.timestamp))?;
     }
     Ok(())
 }
@@ -374,9 +374,8 @@ impl Report<'_> {
             if let Some(sequence) = h.replication_sequence {
                 write!(o, " sequence {sequence}")?;
             }
-            if let Some(secs) = h.replication_timestamp {
-                o.write_all(b" at ")?;
-                timestamp(o, secs.saturating_mul(1000))?;
+            if let Some(at) = h.replication_timestamp {
+                write!(o, " at {at}")?;
             }
             writeln!(o)?;
         }
@@ -499,11 +498,7 @@ impl Report<'_> {
         o.write_all(br#","replication_sequence":"#)?;
         opt_num(o, h.replication_sequence)?;
         o.write_all(br#","replication_timestamp":"#)?;
-        opt_time(
-            o,
-            h.replication_timestamp
-                .map(|secs| secs.saturating_mul(1000)),
-        )?;
+        opt_time(o, h.replication_timestamp)?;
         o.write_all(br#","replication_base_url":"#)?;
         opt_str(o, h.replication_base_url.as_deref())?;
         write!(

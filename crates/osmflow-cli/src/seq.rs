@@ -3,13 +3,14 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::thread;
+use std::{panic, thread};
 
 use anyhow::{Result, bail};
-use osmflow::osc::{Located, Start, State, StateSource, Timestamp, locate, plan_with_late};
+use osmflow::Timestamp;
+use osmflow::osc::{COMMIT_DELAY, Located, Start, State, StateSource, locate, plan};
 
 use crate::input::{
-    After, Input, Overlap, Since, after_file, ago, parse_overlap, parse_since, stream_states,
+    After, Input, Since, after_file, ago, is_no_stream, parse_since, stream_states,
 };
 use crate::output::{SummaryFormat, count, json_str, opt_time};
 
@@ -30,23 +31,10 @@ pub struct Args {
     when: When,
     /// Where to keep a server's downloaded state files.
     ///
-    /// Without it, the few state files the search reads are downloaded each time.
+    /// Without it, the few state files the search reads are downloaded each time. The streams beside it, which a
+    /// catch-up reads, are read without it.
     #[arg(long, value_name = "DIR")]
     cache: Option<PathBuf>,
-    /// Plan the catch-up exactly, rather than estimate it.
-    ///
-    /// The estimate reads each stream's latest state only. The exact plan finds where each coarser diff ends among
-    /// the finest, reading some state files around each place it changes streams, a few at a time, and gives the
-    /// diffs of each leg.
-    #[arg(long)]
-    exact: bool,
-    /// How late a change may show up in a diff: `3m`, `90s` or `1h`.
-    ///
-    /// After a planet file, the diffs start this much before its time, and the exact plan looks this far around each
-    /// place it changes streams. A smaller overlap reads fewer state files and repeats fewer changes, and misses a
-    /// change that shows up later than that.
-    #[arg(long, value_name = "DURATION", default_value = "3m", value_parser = parse_overlap)]
-    overlap: Overlap,
     /// The output format.
     #[arg(short, long, value_enum, default_value_t)]
     format: SummaryFormat,
@@ -78,50 +66,53 @@ struct Found {
     since: State,
     /// Where a plan from the point starts.
     start: Start,
-    /// Whether the catch-up is planned exactly, rather than estimated.
-    planned: bool,
-    /// How late a change may show up in a diff.
-    late: Overlap,
-    /// A catch-up through the streams beside this one, estimated from their latest states; empty with none beside it.
-    catch_up: Vec<Leg>,
-    /// The streams of the catch-up, coarsest first.
-    streams: Vec<&'static str>,
 }
 
-/// The streams of a replication server's layout, coarsest first, with how long each one's diffs are.
-const LAYOUT: [(&str, i64); 3] = [("day", 86_400_000), ("hour", 3_600_000), ("minute", 60_000)];
-
-/// One of the streams of a server's layout, and its latest state.
-#[derive(Debug, Clone, Copy)]
-struct Layer {
-    name: &'static str,
-    interval_ms: i64,
-    latest: State,
-}
-
-/// A run of diffs of one stream, in a catch-up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Leg {
-    stream: &'static str,
-    diffs: u64,
-    /// When its last diff ends, in milliseconds since 1970.
-    until_ms: i64,
-    /// The first and last diffs, when the catch-up is planned exactly.
-    sequences: Option<(u64, u64)>,
+/// What was given, for the text output.
+enum Point {
+    Latest,
+    Time(Timestamp),
+    /// A PBF file whose header gives its diff on this stream.
+    Header(String),
+    StateFile(String),
+    /// A PBF file whose header gives a time only, as a planet file's does, or a diff of another stream.
+    Snapshot(String, Timestamp),
 }
 
 /// A state source that can be read from several threads.
 type Source = Box<dyn StateSource + Send + Sync>;
 
-/// What was given, for the text output.
-enum Point {
-    Latest,
-    Time(i64),
-    /// A PBF file whose header gives its diff on this stream.
-    Header(String),
-    StateFile(String),
-    /// A PBF file whose header gives a time only, as a planet file's does, or a diff of another stream.
-    Snapshot(String, i64),
+/// A stream opened for searching: its input, state files, latest state, and its server's URL.
+struct Opened {
+    input: Input,
+    source: Source,
+    latest: State,
+    url: Option<String>,
+}
+
+/// The streams of a replication server's layout, coarsest first.
+const LAYOUT: [&str; 3] = ["day", "hour", "minute"];
+
+/// A stream of a server's layout.
+struct Member {
+    name: &'static str,
+    input: Input,
+}
+
+/// A catch-up from the point through the streams of the layout, as the plan reads it.
+struct CatchUp {
+    /// The streams it reads from, coarsest first.
+    streams: Vec<&'static str>,
+    legs: Vec<Leg>,
+}
+
+/// A run of diffs of one stream, in a catch-up.
+struct Leg {
+    stream: &'static str,
+    first: u64,
+    last: u64,
+    /// When its last diff ends.
+    until: Timestamp,
 }
 
 pub fn run(args: &Args) -> Result<()> {
@@ -133,45 +124,28 @@ pub fn run(args: &Args) -> Result<()> {
             input.name()
         );
     }
-    let late = args.overlap;
-    let (stream, layout, (source, latest, url)) = open(input, args.cache.as_deref())?;
-    let mut found = find(source.as_ref(), latest, url.as_deref(), &args.when, late)?;
-    if let Some(from) = found.catch_up_from(late) {
-        let layers = layers(&layout, &stream, (source, latest));
-        // Up to the finest stream's latest state, which is the newest.
-        if let [_, .., (finest, _)] = layers.as_slice() {
-            if args.exact {
-                found.catch_up =
-                    exact_legs(&layers, stream_name(&layout, &stream), found.start, late)?;
-                found.planned = true;
-            } else {
-                let plain: Vec<Layer> = layers.iter().map(|(layer, _)| *layer).collect();
-                legs(
-                    &plain,
-                    from,
-                    finest.latest.timestamp_ms,
-                    &mut found.catch_up,
-                );
-            }
-            found.streams = layers.iter().map(|(layer, _)| layer.name).collect();
-        }
-    }
-    let input = stream;
+    let (opened, layout) = open(&input, args.cache.as_deref())?;
+    let Opened {
+        input,
+        source,
+        latest,
+        url,
+    } = opened;
+    let found = find(source.as_ref(), latest, url.as_deref(), &args.when)?;
+    let catch_up = if matches!(found.point, Point::Latest) || layout.is_empty() {
+        None
+    } else {
+        catch_up(&layout, &input, source, found.start)?
+    };
     let mut o = io::stdout().lock();
     match args.format {
-        SummaryFormat::Text => text(&mut o, &input, &found)?,
-        SummaryFormat::Json => json(&mut o, &input, &found)?,
+        SummaryFormat::Text => text(&mut o, &input, &found, catch_up.as_ref())?,
+        SummaryFormat::Json => json(&mut o, &input, &found, catch_up.as_ref())?,
     }
     Ok(())
 }
 
-fn find(
-    source: &dyn StateSource,
-    latest: State,
-    url: Option<&str>,
-    when: &When,
-    late: Overlap,
-) -> Result<Found> {
+fn find(source: &dyn StateSource, latest: State, url: Option<&str>, when: &When) -> Result<Found> {
     let (start, point) = match when {
         When::Latest => (
             Start::After {
@@ -180,33 +154,30 @@ fn find(
             },
             Point::Latest,
         ),
-        When::Since(Since::Time(ms)) => (Start::Time { timestamp_ms: *ms }, Point::Time(*ms)),
+        When::Since(Since::Time(at)) => (Start::Time { at: *at }, Point::Time(*at)),
         When::Since(Since::File(path)) => {
             let after = after_file(path, source, url)?;
             let file = name(path);
             let point = match after {
                 After::StateFile(_) => Point::StateFile(file),
                 After::Header(_) => Point::Header(file),
-                After::Snapshot(timestamp_ms) => Point::Snapshot(file, timestamp_ms),
+                After::Snapshot(at) => Point::Snapshot(file, at),
             };
             (after.start(), point)
         }
     };
     let (state, exact) = match start {
         Start::After { state, .. } => (state, true),
-        Start::Time { timestamp_ms } | Start::Snapshot { timestamp_ms } => {
-            match locate(source, timestamp_ms)? {
-                Located::At(state) => (state, false),
-                Located::BeforeOldest(oldest) => bail!(
-                    "{} is before the oldest diff the stream has, {} at {}",
-                    Timestamp(timestamp_ms),
-                    oldest.sequence,
-                    Timestamp(oldest.timestamp_ms)
-                ),
-            }
-        }
+        Start::Time { at } | Start::Snapshot { at } => match locate(source, at)? {
+            Located::At(state) => (state, false),
+            Located::BeforeOldest(oldest) => bail!(
+                "{at} is before the oldest diff the stream has, {} at {}",
+                oldest.sequence,
+                oldest.timestamp
+            ),
+        },
     };
-    let since = plan_with_late(&[source], start, None, late.0)?
+    let since = plan(&[source], start, None)?
         .first()
         .map_or(latest, |step| step.from);
     Ok(Found {
@@ -216,36 +187,17 @@ fn find(
         exact,
         since,
         start,
-        planned: false,
-        late,
-        catch_up: Vec::new(),
-        streams: Vec::new(),
     })
 }
 
-impl Found {
-    /// The time after which changes are to be read, for a catch-up: none for `latest`.
-    fn catch_up_from(&self, late: Overlap) -> Option<i64> {
-        match self.point {
-            Point::Latest => None,
-            Point::Time(t) => Some(t),
-            Point::Snapshot(_, t) => Some(t - late.0),
-            Point::Header(_) | Point::StateFile(_) => Some(self.state.timestamp_ms),
-        }
-    }
-}
-
-/// The layout name of a stream: `day`, `hour` or `minute`, as the last part of its path or URL.
-fn layout_name(input: &Input) -> Option<&'static str> {
+/// Whether a stream is named as one of the layout: `day`, `hour` or `minute`, as the last part of its path or URL.
+fn in_layout(input: &Input) -> bool {
     let last = match input {
-        Input::Url(url) => url.rsplit('/').next()?.to_owned(),
-        Input::Dir(dir) => dir.file_name()?.to_str()?.to_owned(),
-        Input::Pbf(_) | Input::Osc(_) | Input::State(_) => return None,
+        Input::Url(url) => url.rsplit('/').next(),
+        Input::Dir(dir) => dir.file_name().and_then(|n| n.to_str()),
+        Input::Pbf(_) | Input::Osc(_) | Input::State(_) => None,
     };
-    LAYOUT
-        .iter()
-        .find(|(name, _)| *name == last)
-        .map(|(name, _)| *name)
+    last.is_some_and(|last| LAYOUT.contains(&last))
 }
 
 /// The stream `name` inside `root`.
@@ -266,160 +218,139 @@ fn root_of(stream: &Input) -> Option<Input> {
     }
 }
 
-/// A stream input as a stream: its state files, latest state and URL, with the streams of its server's layout,
-/// coarsest first. A stream named `day`, `hour` or `minute` has the others beside it, a root of streams, which is
-/// no stream itself, is read as its `minute` stream, and any other stream has none.
-#[expect(clippy::type_complexity, reason = "used once, and taken apart at once")]
-fn open(
-    input: Input,
-    cache: Option<&Path>,
-) -> Result<(
-    Input,
-    Vec<(&'static str, i64, Input)>,
-    (Source, State, Option<String>),
-)> {
-    match stream_states(&input, cache) {
-        Ok(states) => {
-            let layout = layout_name(&input)
-                .and_then(|_| root_of(&input))
-                .map_or_else(Vec::new, |root| layout_of(&root));
-            Ok((input, layout, states))
-        }
-        Err(e) => match inside(&input, "minute").map(|m| (stream_states(&m, cache), m)) {
-            Some((Ok(states), minute)) => Ok((minute, layout_of(&input), states)),
-            _ => Err(e),
-        },
-    }
-}
-
-/// The streams of a server's layout inside `root`, coarsest first, with how long each one's diffs are.
-fn layout_of(root: &Input) -> Vec<(&'static str, i64, Input)> {
+/// The streams of the layout inside `root`, coarsest first.
+fn members(root: &Input) -> Vec<Member> {
     LAYOUT
         .iter()
-        .filter_map(|&(name, interval)| Some((name, interval, inside(root, name)?)))
-        .collect()
-}
-
-/// The streams of `layout` that exist, with their latest states and state files: `stream`'s are `main`, and the
-/// others' latest states are read now, all at once.
-fn layers(
-    layout: &[(&'static str, i64, Input)],
-    stream: &Input,
-    main: (Source, State),
-) -> Vec<(Layer, Source)> {
-    let mut main = Some(main);
-    let opened: Vec<Option<(Source, State)>> = thread::scope(|scope| {
-        let reading: Vec<_> = layout
-            .iter()
-            .map(|(_, _, input)| {
-                (input != stream).then(|| {
-                    scope.spawn(move || stream_states(input, None).ok().map(|(s, l, _)| (s, l)))
-                })
-            })
-            .collect();
-        reading
-            .into_iter()
-            .map(|r| match r {
-                Some(handle) => handle.join().ok().flatten(),
-                None => main.take(),
-            })
-            .collect()
-    });
-    layout
-        .iter()
-        .zip(opened)
-        .filter_map(|((name, interval_ms, _), opened)| {
-            let (source, latest) = opened?;
-            let layer = Layer {
+        .filter_map(|&name| {
+            Some(Member {
                 name,
-                interval_ms: *interval_ms,
-                latest,
-            };
-            Some((layer, source))
+                input: inside(root, name)?,
+            })
         })
         .collect()
 }
 
-/// The name of `stream` in `layout`, which the exact plan starts in for a point after one of its states.
-fn stream_name(layout: &[(&'static str, i64, Input)], stream: &Input) -> Option<&'static str> {
-    layout
-        .iter()
-        .find(|(_, _, i)| i == stream)
-        .map(|(name, _, _)| *name)
+/// Opens a stream input for searching, with the streams of its server's layout: the others beside a stream named
+/// `day`, `hour` or `minute`, and none beside any other. A root of streams, which is no stream itself, is opened as
+/// its `minute` stream, with the streams it holds.
+fn open(input: &Input, cache: Option<&Path>) -> Result<(Opened, Vec<Member>)> {
+    let opened = |input: Input| -> Result<Opened> {
+        let (source, latest, url) = stream_states(&input, cache)?;
+        Ok(Opened {
+            input,
+            source,
+            latest,
+            url,
+        })
+    };
+    if is_root(input) {
+        let minute = inside(input, "minute").expect("a directory has streams inside it");
+        return Ok((opened(minute)?, members(input)));
+    }
+    match opened(input.clone()) {
+        Ok(stream) => {
+            let layout = if in_layout(input) {
+                root_of(input).map_or_else(Vec::new, |root| members(&root))
+            } else {
+                Vec::new()
+            };
+            Ok((stream, layout))
+        }
+        // A server's root of streams has no `state.txt` of its own.
+        Err(e) if is_no_stream(&e) && matches!(input, Input::Url(_)) => {
+            let minute = inside(input, "minute").expect("a URL has streams inside it");
+            Ok((opened(minute)?, members(input)))
+        }
+        Err(e) => Err(e),
+    }
 }
 
-/// The legs of the exact plan from `start` through `layers`, whose stream `stream` the start is in.
-fn exact_legs(
-    layers: &[(Layer, Source)],
-    stream: Option<&'static str>,
+/// Whether a directory is a root of streams: it holds a `minute` stream, and has no state of its own.
+fn is_root(input: &Input) -> bool {
+    matches!(input, Input::Dir(dir) if !dir.join("state.txt").exists() && dir.join("minute").is_dir())
+}
+
+/// The state files and latest state of a stream beside the one searched, or `None` if it is not there: a directory
+/// that does not exist, or a server's stream without a `state.txt`.
+fn open_member(member: &Member) -> Result<Option<(Source, State)>> {
+    if let Input::Dir(dir) = &member.input
+        && !dir.is_dir()
+    {
+        return Ok(None);
+    }
+    match stream_states(&member.input, None) {
+        Ok((source, latest, _)) => Ok(Some((source, latest))),
+        Err(e) if is_no_stream(&e) => Ok(None),
+        Err(e) => Err(e.context(format!(
+            "cannot read the {} stream {}",
+            member.name,
+            member.input.name()
+        ))),
+    }
+}
+
+/// The catch-up from `start` in `stream`, read through `source`, through the streams of `layout` that are there:
+/// `None` if `stream` is the only one. The others' latest states are read at once.
+fn catch_up(
+    layout: &[Member],
+    stream: &Input,
+    source: Source,
     start: Start,
-    late: Overlap,
-) -> Result<Vec<Leg>> {
-    let sources: Vec<&dyn StateSource> = layers
+) -> Result<Option<CatchUp>> {
+    let opened: Vec<Option<Source>> = thread::scope(|scope| {
+        let reading: Vec<_> = layout
+            .iter()
+            .map(|member| (member.input != *stream).then(|| scope.spawn(|| open_member(member))))
+            .collect();
+        let mut source = Some(source);
+        reading
+            .into_iter()
+            .map(|reading| match reading {
+                None => Ok(source.take()),
+                Some(handle) => handle
+                    .join()
+                    .unwrap_or_else(|panic| panic::resume_unwind(panic))
+                    .map(|opened| opened.map(|(source, _)| source)),
+            })
+            .collect::<Result<_>>()
+    })?;
+    let streams: Vec<(&'static str, Source)> = layout
         .iter()
-        .map(|(_, source)| source.as_ref() as &dyn StateSource)
+        .zip(opened)
+        .filter_map(|(member, source)| Some((member.name, source?)))
         .collect();
+    if streams.len() < 2 {
+        return Ok(None);
+    }
     let start = match start {
         Start::After { state, .. } => Start::After {
-            stream: layers
+            stream: layout
                 .iter()
-                .position(|(layer, _)| Some(layer.name) == stream)
-                .unwrap_or(layers.len() - 1),
+                .filter(|m| streams.iter().any(|(name, _)| *name == m.name))
+                .position(|m| m.input == *stream)
+                .unwrap_or(streams.len() - 1),
             state,
         },
         start @ (Start::Time { .. } | Start::Snapshot { .. }) => start,
     };
-    Ok(plan_with_late(&sources, start, None, late.0)?
+    let sources: Vec<&dyn StateSource> = streams
+        .iter()
+        .map(|(_, source)| source.as_ref() as &dyn StateSource)
+        .collect();
+    let legs = plan(&sources, start, None)?
         .iter()
         .map(|step| Leg {
-            stream: layers[step.stream].0.name,
-            diffs: step.to.sequence - step.from.sequence,
-            until_ms: step.to.timestamp_ms,
-            sequences: Some((step.from.sequence + 1, step.to.sequence)),
+            stream: streams[step.stream].0,
+            first: step.from.sequence + 1,
+            last: step.to.sequence,
+            until: step.to.timestamp,
         })
-        .collect())
-}
-
-/// Appends the legs of a catch-up from `from` to `to`, in milliseconds since 1970, through `layers`, coarsest first:
-/// finer diffs up to where a coarser diff starts, as many coarser ones as fit, and finer ones again. The states of a
-/// coarser stream fall on its interval, so its diffs are counted exactly; the finest are about one an interval.
-fn legs(layers: &[Layer], from: i64, to: i64, out: &mut Vec<Leg>) {
-    if from >= to {
-        return;
-    }
-    let Some((layer, finer)) = layers.split_first() else {
-        return;
-    };
-    let interval = layer.interval_ms;
-    if finer.is_empty() {
-        let diffs = u64::try_from((to - from + interval - 1) / interval).unwrap_or(0);
-        out.push(Leg {
-            stream: layer.name,
-            diffs,
-            until_ms: to,
-            sequences: None,
-        });
-        return;
-    }
-    let first = from.div_euclid(interval) * interval
-        + if from.rem_euclid(interval) == 0 {
-            0
-        } else {
-            interval
-        };
-    let last = to.min(layer.latest.timestamp_ms).div_euclid(interval) * interval;
-    if last > first {
-        legs(finer, from, first, out);
-        out.push(Leg {
-            stream: layer.name,
-            diffs: u64::try_from((last - first) / interval).unwrap_or(0),
-            until_ms: last,
-            sequences: None,
-        });
-        legs(finer, last, to, out);
-    } else {
-        legs(finer, from, to, out);
-    }
+        .collect();
+    Ok(Some(CatchUp {
+        streams: streams.iter().map(|(name, _)| *name).collect(),
+        legs,
+    }))
 }
 
 /// The file name of `path`, for the text output.
@@ -430,21 +361,26 @@ fn name(path: &Path) -> String {
     )
 }
 
-fn text(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
+fn text(
+    o: &mut impl Write,
+    input: &Input,
+    f: &Found,
+    catch_up: Option<&CatchUp>,
+) -> io::Result<()> {
     let (latest, state) = (f.latest, f.state);
     writeln!(
         o,
         "The latest diff of {} is {}, at {}, {} ago.",
         input.name(),
         latest.sequence,
-        Timestamp(latest.timestamp_ms),
-        ago(latest.timestamp_ms)
+        latest.timestamp,
+        ago(latest.timestamp)
     )?;
-    let at = Timestamp(state.timestamp_ms);
+    let at = state.timestamp;
     let changes = match &f.point {
         Point::Latest => return Ok(()),
         Point::Time(t) => {
-            let t = Timestamp(*t);
+            let t = *t;
             writeln!(
                 o,
                 "The last diff at or before {t} is {}, at {at}.",
@@ -473,12 +409,11 @@ fn text(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
                 o,
                 "{file} has the changes made up to {}, as its header says; the last diff at or before that time is \
                  {}, at {at}.",
-                Timestamp(*t),
-                state.sequence
+                *t, state.sequence
             )?;
             format!(
-                "A change can show up in a diff {} after it is made, so the changes it may not have are in",
-                f.late.words()
+                "A change can show up in a diff {} minutes after it is made, so the changes it may not have are in",
+                COMMIT_DELAY.as_secs() / 60
             )
         }
     };
@@ -493,45 +428,44 @@ fn text(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
             count(diffs)
         )?,
     }
-    catch_up(o, &f.streams, &f.catch_up, f.planned)
+    match catch_up {
+        Some(catch_up) if !catch_up.legs.is_empty() => catch_up_text(o, catch_up),
+        _ => Ok(()),
+    }
 }
 
-/// The legs of a catch-up through the server's `streams`, if it has more than one.
-fn catch_up(o: &mut impl Write, streams: &[&str], legs: &[Leg], planned: bool) -> io::Result<()> {
-    let Some((last, rest)) = streams.split_last() else {
+/// The legs of a catch-up through the server's streams.
+fn catch_up_text(o: &mut impl Write, catch_up: &CatchUp) -> io::Result<()> {
+    let Some((last, rest)) = catch_up.streams.split_last() else {
         return Ok(());
     };
-    if rest.is_empty() || legs.is_empty() {
-        return Ok(());
-    }
-    let total: u64 = legs.iter().map(|l| l.diffs).sum();
+    let legs = &catch_up.legs;
+    let total: u64 = legs.iter().map(|l| l.last + 1 - l.first).sum();
     writeln!(
         o,
-        "Through the {} and {last} streams, catching up to the latest diff takes {}{} diffs, in this order:",
+        "Through the {} and {last} streams, catching up to the latest diff takes {} diffs, in this order:",
         rest.join(", "),
-        if planned { "" } else { "about " },
         count(total)
     )?;
-    let counts: Vec<String> = legs.iter().map(|l| count(l.diffs)).collect();
+    let counts: Vec<String> = legs.iter().map(|l| count(l.last + 1 - l.first)).collect();
     let width = counts.iter().map(String::len).max().unwrap_or(0);
     let stream_width = legs.iter().map(|l| l.stream.len()).max().unwrap_or(0);
     for (leg, n) in legs.iter().zip(&counts) {
-        write!(o, "  {n:>width$} {:stream_width$} diffs", leg.stream)?;
-        if let Some((first, last)) = leg.sequences {
-            write!(o, ", --seq {first}..{last}")?;
-        }
-        writeln!(o, ", up to {}", Timestamp(leg.until_ms))?;
-    }
-    if !planned {
         writeln!(
             o,
-            "The day and hour diffs are counted exactly, and the minutes at one a minute; --exact plans them."
+            "  {n:>width$} {:stream_width$} diffs, --seq {}..{}, up to {}",
+            leg.stream, leg.first, leg.last, leg.until
         )?;
     }
     Ok(())
 }
 
-fn json(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
+fn json(
+    o: &mut impl Write,
+    input: &Input,
+    f: &Found,
+    catch_up: Option<&CatchUp>,
+) -> io::Result<()> {
     o.write_all(br#"{"stream":"#)?;
     json_str(o, &input.name())?;
     write!(
@@ -539,30 +473,29 @@ fn json(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
         r#","latest_sequence":{},"latest_state":"#,
         f.latest.sequence
     )?;
-    opt_time(o, Some(f.latest.timestamp_ms))?;
+    opt_time(o, Some(f.latest.timestamp))?;
     write!(o, r#","sequence":{},"state":"#, f.state.sequence)?;
-    opt_time(o, Some(f.state.timestamp_ms))?;
+    opt_time(o, Some(f.state.timestamp))?;
     write!(
         o,
-        r#","exact":{},"read_from":{},"diffs":{},"catch_up_planned":{},"catch_up":["#,
+        r#","exact":{},"read_from":{},"diffs":{},"catch_up":["#,
         f.exact,
         f.since.sequence + 1,
         f.latest.sequence - f.since.sequence,
-        f.planned
     )?;
-    for (i, leg) in f.catch_up.iter().enumerate() {
+    for (i, leg) in catch_up.iter().flat_map(|c| &c.legs).enumerate() {
         if i > 0 {
             o.write_all(b",")?;
         }
         write!(
             o,
-            r#"{{"stream":"{}","diffs":{},"until":"#,
-            leg.stream, leg.diffs
+            r#"{{"stream":"{}","diffs":{},"first":{},"last":{},"until":"#,
+            leg.stream,
+            leg.last + 1 - leg.first,
+            leg.first,
+            leg.last
         )?;
-        opt_time(o, Some(leg.until_ms))?;
-        if let Some((first, last)) = leg.sequences {
-            write!(o, r#","first":{first},"last":{last}"#)?;
-        }
+        opt_time(o, Some(leg.until))?;
         o.write_all(b"}")?;
     }
     writeln!(o, "]}}")
@@ -570,9 +503,10 @@ fn json(o: &mut impl Write, input: &Input, f: &Found) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::RangeInclusive;
     use std::{env, fs, process};
 
-    use osmflow::osc::OscError;
+    use osmflow::osc::{OscError, sequence_path};
 
     use super::*;
 
@@ -594,18 +528,21 @@ mod tests {
     fn minute(sequence: u64) -> State {
         State {
             sequence,
-            timestamp_ms: i64::try_from(sequence).unwrap() * 60_000,
+            timestamp: Timestamp::from_millis(i64::try_from(sequence).unwrap() * 60_000),
         }
     }
 
     fn find_in(when: &When) -> Result<Found> {
         let stream = Minutes(100, 1000);
-        find(&stream, minute(1000), None, when, Overlap::default())
+        find(&stream, minute(1000), None, when)
     }
 
     #[test]
     fn a_time_finds_the_diff_before_it_and_reads_on_from_there() {
-        let found = find_in(&When::Since(Since::Time(500 * 60_000 + 30_000))).unwrap();
+        let found = find_in(&When::Since(Since::Time(Timestamp::from_millis(
+            500 * 60_000 + 30_000,
+        ))))
+        .unwrap();
         assert_eq!((found.state, found.since), (minute(500), minute(500)));
         assert!(!found.exact);
     }
@@ -629,97 +566,98 @@ mod tests {
     }
 
     const HOUR: i64 = 3_600_000;
-    const DAY: i64 = 24 * HOUR;
 
-    fn layer(name: &'static str, interval_ms: i64, latest_ms: i64) -> Layer {
-        let latest = State {
-            sequence: 1,
-            timestamp_ms: latest_ms,
+    /// Writes a stream into `dir`: the state of each of `sequences` at `time(n)`, and the latest as `state.txt`.
+    fn write_stream(dir: &Path, sequences: RangeInclusive<u64>, time: impl Fn(u64) -> i64) {
+        let escaped = |n| {
+            Timestamp::from_millis(time(n))
+                .to_string()
+                .replace(':', "\\:")
         };
-        Layer {
-            name,
-            interval_ms,
-            latest,
-        }
-    }
-
-    #[test]
-    fn a_catch_up_steps_up_to_days_and_down_to_minutes() {
-        // From 10 days, 5 hours and 7 minutes back, to minute 40 of hour 3 of the latest day.
-        let (day, latest) = (100 * DAY, 100 * DAY + 3 * HOUR + 40 * 60_000);
-        let layers = [
-            layer("day", DAY, day),
-            layer("hour", HOUR, day + 3 * HOUR),
-            layer("minute", 60_000, latest),
-        ];
-        let mut legs_found = Vec::new();
-        legs(
-            &layers,
-            90 * DAY - 5 * HOUR - 7 * 60_000,
-            latest,
-            &mut legs_found,
-        );
-        let shape: Vec<_> = legs_found.iter().map(|l| (l.stream, l.diffs)).collect();
-        assert_eq!(
-            shape,
-            [
-                ("minute", 7),
-                ("hour", 5),
-                ("day", 10),
-                ("hour", 3),
-                ("minute", 40)
-            ]
-        );
-        assert_eq!(legs_found.last().unwrap().until_ms, latest);
-        // Within an hour, only minutes; at a day's end exactly, days and no finer lead-in.
-        let mut short = Vec::new();
-        legs(&layers, latest - 20 * 60_000, latest, &mut short);
-        assert_eq!(
-            short
-                .iter()
-                .map(|l| (l.stream, l.diffs))
-                .collect::<Vec<_>>(),
-            [("minute", 20)]
-        );
-        let mut exact = Vec::new();
-        legs(&layers, 99 * DAY, latest, &mut exact);
-        assert_eq!(exact[0].stream, "day");
-    }
-
-    #[test]
-    fn a_root_of_streams_is_read_as_its_minute_stream_with_the_others() {
-        let root = env::temp_dir().join(format!("osmflow-seq-root-{}", process::id()));
-        for (name, sequence, time) in [
-            ("day", 5172, "2026-11-10T00\\:00\\:00Z"),
-            ("hour", 124_124, "2026-11-10T03\\:00\\:00Z"),
-            ("minute", 7_366_177, "2026-11-10T03\\:46\\:50Z"),
-        ] {
-            fs::create_dir_all(root.join(name)).unwrap();
+        for n in sequences.clone() {
+            let path = dir.join(format!("{}.state.txt", sequence_path(n)));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(
-                root.join(name).join("state.txt"),
-                format!("sequenceNumber={sequence}\ntimestamp={time}\n"),
+                &path,
+                format!("sequenceNumber={n}\ntimestamp={}\n", escaped(n)),
             )
             .unwrap();
         }
-        let (stream, layout, (source, latest, _)) = open(Input::Dir(root.clone()), None).unwrap();
-        assert_eq!(stream, Input::Dir(root.join("minute")));
-        assert_eq!(latest.sequence, 7_366_177);
-        let names: Vec<_> = layers(&layout, &stream, (source, latest))
+        let last = *sequences.end();
+        fs::write(
+            dir.join("state.txt"),
+            format!("sequenceNumber={last}\ntimestamp={}\n", escaped(last)),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_root_of_streams_is_planned_through_them_all() {
+        // Three hours of minutes and hours, each state on its time, and a day stream with one state.
+        let root = env::temp_dir().join(format!("osmflow-seq-root-{}", process::id()));
+        let t0 = 20_000 * 24 * HOUR;
+        write_stream(&root.join("minute"), 0..=180, |n| {
+            t0 + i64::try_from(n).unwrap() * 60_000
+        });
+        write_stream(&root.join("hour"), 0..=3, |n| {
+            t0 + i64::try_from(n).unwrap() * HOUR
+        });
+        write_stream(&root.join("day"), 0..=0, |_| t0);
+
+        let (opened, layout) = open(&Input::Dir(root.clone()), None).unwrap();
+        assert_eq!(opened.input, Input::Dir(root.join("minute")));
+        assert_eq!(opened.latest.sequence, 180);
+        assert_eq!(layout.iter().map(|m| m.name).collect::<Vec<_>>(), LAYOUT);
+        // Half an hour in: minutes to the first hour's end, then the two hours after it.
+        let start = Start::Time {
+            at: Timestamp::from_millis(t0 + 30 * 60_000),
+        };
+        let plan = catch_up(&layout, &opened.input, opened.source, start)
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.streams, LAYOUT);
+        let legs: Vec<_> = plan
+            .legs
             .iter()
-            .map(|(l, _)| l.name)
+            .map(|l| (l.stream, l.first, l.last))
             .collect();
-        assert_eq!(names, ["day", "hour", "minute"]);
+        assert_eq!(legs, [("minute", 31, 60), ("hour", 2, 3)]);
         // A stream of the layout has the others beside it.
-        let (_, beside, _) = open(Input::Dir(root.join("hour")), None).unwrap();
+        let (_, beside) = open(&Input::Dir(root.join("hour")), None).unwrap();
         assert_eq!(beside.len(), 3);
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn a_time_before_the_stream_is_an_error() {
-        let e = find_in(&When::Since(Since::Time(50 * 60_000)))
+    fn a_stream_beside_that_cannot_be_read_is_an_error() {
+        let root = env::temp_dir().join(format!("osmflow-seq-broken-{}", process::id()));
+        write_stream(&root.join("minute"), 0..=10, |n| {
+            i64::try_from(n).unwrap() * 60_000
+        });
+        // The hour stream's state.txt is not a state file.
+        fs::create_dir_all(root.join("hour")).unwrap();
+        fs::write(root.join("hour").join("state.txt"), "not a state\n").unwrap();
+        let (opened, layout) = open(&Input::Dir(root.clone()), None).unwrap();
+        let start = Start::Time {
+            at: Timestamp::EPOCH,
+        };
+        let e = catch_up(&layout, &opened.input, opened.source, start)
             .err()
             .unwrap();
+        assert!(
+            format!("{e:#}").contains("cannot read the hour stream"),
+            "{e:#}"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_time_before_the_stream_is_an_error() {
+        let e = find_in(&When::Since(Since::Time(Timestamp::from_millis(
+            50 * 60_000,
+        ))))
+        .err()
+        .unwrap();
         assert!(e.to_string().contains("before the oldest diff"), "{e}");
     }
 }
@@ -730,7 +668,7 @@ mod server_tests {
     use std::sync::{Arc, Mutex};
     use std::{env, fs, io, process};
 
-    use osmflow::osc::{Fetch, OscError, ServerStates, parse_timestamp, path_sequence};
+    use osmflow::osc::{Fetch, OscError, ServerStates, path_sequence};
 
     use super::*;
 
@@ -766,20 +704,15 @@ mod server_tests {
         fn state(&self, sequence: u64) -> State {
             State {
                 sequence,
-                timestamp_ms: (self.time)(sequence),
+                timestamp: Timestamp::from_millis((self.time)(sequence)),
             }
         }
 
         /// Finds `when` on this server, as `osmflow seq` does with its URL.
         fn find(self: &Arc<Self>, when: &When) -> Result<Found> {
-            self.find_late(when, Overlap::default())
-        }
-
-        /// [`find`](Self::find), allowing changes to be `late`.
-        fn find_late(self: &Arc<Self>, when: &When, late: Overlap) -> Result<Found> {
             let states = ServerStates::new(self.base, Mock(Arc::clone(self)));
             let latest = states.latest()?;
-            find(&states, latest, Some(self.base), when, late)
+            find(&states, latest, Some(self.base), when)
         }
 
         /// The URLs asked for, and checks that each was a state file.
@@ -808,7 +741,7 @@ mod server_tests {
                     _ => return Ok(None),
                 }
             };
-            let time = Timestamp((server.time)(sequence))
+            let time = Timestamp::from_millis((server.time)(sequence))
                 .to_string()
                 .replace(':', "\\:");
             Ok(Some(
@@ -819,11 +752,11 @@ mod server_tests {
     }
 
     fn at(s: &str) -> i64 {
-        parse_timestamp(s).unwrap()
+        s.parse::<Timestamp>().unwrap().as_millis()
     }
 
     fn after(s: &str) -> When {
-        When::Since(Since::Time(at(s)))
+        When::Since(Since::Time(Timestamp::from_millis(at(s))))
     }
 
     /// A PBF file of Monaco from Geofabrik, whose header gives sequence 2947 of
@@ -861,12 +794,13 @@ mod server_tests {
             |n| i64::try_from(n * 60 + n * 7919 % 50).unwrap() * 1000,
         );
         for t in (0..100).map(|i| 200 * MINUTE + i * 997 * MINUTE + i * 1777) {
+            let t = Timestamp::from_millis(t);
             let found = minute.find(&When::Since(Since::Time(t))).unwrap();
             let first_after = (100..=100_000)
-                .find(|&n| minute.state(n).timestamp_ms > t)
+                .find(|&n| minute.state(n).timestamp > t)
                 .unwrap();
             assert_eq!(found.since.sequence + 1, first_after, "time {t}");
-            assert!(found.state.timestamp_ms <= t);
+            assert!(found.state.timestamp <= t);
         }
     }
 
@@ -890,7 +824,7 @@ mod server_tests {
     }
 
     #[test]
-    fn a_file_on_another_stream_is_found_by_its_time_from_the_overlap_before() {
+    fn a_file_on_another_stream_is_found_by_its_time_from_the_commit_delay_before() {
         // Minute 2000 ends 30 seconds before the file's time.
         let minute = Server::new("https://planet.test/replication/minute", 1000, 3000, |n| {
             at("2021-04-21T20:21:46Z") + (i64::try_from(n).unwrap() - 2000) * MINUTE - 30_000
@@ -898,11 +832,8 @@ mod server_tests {
         let found = minute.find(&monaco()).unwrap();
         assert!(!found.exact);
         assert_eq!(found.state, minute.state(2000));
-        // The first minute after the file's time less 3 minutes is 1998, at 2 minutes 30 seconds before it.
-        assert_eq!(found.since, minute.state(1997));
-        // With an overlap of 10 minutes, 1991, at 9 minutes 30 seconds before it.
-        let found = minute.find_late(&monaco(), Overlap(10 * MINUTE)).unwrap();
-        assert_eq!(found.since, minute.state(1990));
+        // The first minute after the file's time less 6 minutes is 1995, at 5 minutes 30 seconds before it.
+        assert_eq!(found.since, minute.state(1994));
     }
 
     #[test]
@@ -929,7 +860,9 @@ mod server_tests {
             &path,
             format!(
                 "sequenceNumber=5000\ntimestamp={}\n",
-                Timestamp(5000 * DAY).to_string().replace(':', "\\:")
+                Timestamp::from_millis(5000 * DAY)
+                    .to_string()
+                    .replace(':', "\\:")
             ),
         )
         .unwrap();

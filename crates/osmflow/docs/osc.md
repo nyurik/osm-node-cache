@@ -114,7 +114,8 @@ What a diff holds, and what its state's time means, comes from how the planet's 
   (`osmdbt`), sorted by type, ID and version: an object edited three times that minute is in it three times. Its
   state's time is the newest timestamp of its changes, which the API server sets while it saves them, so a change
   that commits late is in a later diff than changes made after it: by up to 42 seconds over the 1842 diffs 7364100 to
-  7365941 of November 2026, in which no state was older than the one before it. `LATE_MS`, three minutes, is how late a
+  7365941 of November 2026, in which no state was older than the one before it. The OSM web servers end a request
+  after 300 seconds, so a change can commit that long after its timestamp. `COMMIT_DELAY`, six minutes, is how late a
   change is taken to show.
 * **An hour diff is its minute diffs merged, every version kept** (`osmosis --merge-replication-files`, run every 15
   minutes): it holds the minute diffs after the previous hour's, up to the last before the first whose state is past
@@ -137,11 +138,11 @@ What a diff holds, and what its state's time means, comes from how the planet's 
   lead up to where a coarser one starts, as many coarser diffs follow as fit whole, and finer diffs end the plan, so
   ten days behind takes about 10 day diffs and some tens of hour and minute diffs, instead of 14,400 minute diffs.
 * **A plan starts after a state, a time, or a snapshot.** `Start::After { stream, state }` is exact: where a step of
-  an earlier plan ended, or a Geofabrik extract's sequence on its stream. `Start::Time { timestamp_ms }` reads every
+  an earlier plan ended, or a Geofabrik extract's sequence on its stream. `Start::Time { at }` reads every
   change made after a time and none before, from the first diff whose state is after it, as a diff's state is the
-  newest change it holds. `Start::Snapshot { timestamp_ms }` is a planet file's timestamp: a change the planet does
-  not have committed after it was taken and can be up to `LATE_MS` older than that, so the plan starts as from the
-  time `LATE_MS` before it, and its first diffs may repeat changes the planet has.
+  newest change it holds. `Start::Snapshot { at }` is a planet file's timestamp: a change the planet does
+  not have committed after it was taken and can be up to `COMMIT_DELAY` older than that, so the plan starts as from
+  the time `COMMIT_DELAY` before it, and its first diffs may repeat changes the planet has.
 * **No change is read twice where a plan changes streams:** it finds where each coarser diff ends among the finest
   diffs, from the finest states around its time, by the rule the merge cuts it by. After an outage of the stream a
   coarser one is merged from, longer than the coarser interval, the coarser diff in which it resumes may have been cut
@@ -150,15 +151,14 @@ What a diff holds, and what its state's time means, comes from how the planet's 
   objects, so applying them again changes nothing, and a reader that counts changes drops each (type, ID, version) it
   has seen. The tests model the merge run by run, outages included, and check that every plan reads every finest
   diff.
-* **`plan_with_late`** takes another allowance than `LATE_MS`: a smaller one reads fewer state files and repeats
-  fewer changes after a snapshot, and misses a change that shows up later than it.
 * **`StateSource::prefetch`** is told the states a plan is about to read one after another, around each place it
   changes streams; `ServerStates` and a server's `Replication` download them `PARALLEL` (3) at a time. A search's own
   reads stay one after another, as each depends on the one before.
 * **How long it takes** depends mostly on the server's answers, one search read at a time. From a laptop to
   `planet.openstreetmap.org`, whose files redirect to S3, on 2026-11-10: finding the minute diff of a time an hour back
-  took about 4.6 s, `osmflow seq`'s estimated catch-up over the three streams about 10 s, and its exact plan, with a
-  3-minute allowance, 59 state files in about 28 s.
+  took about 4.6 s, and `osmflow seq`'s plan over the three streams, with a 3-minute delay rather than today's 6, 59 state files in
+  about 28 s; with one HTTP client for every stream, its some 60 requests to each host used 7 connections to the
+  planet's server and 3 to S3.
 * **A plan reads only state files,** each a few hundred bytes: the latest state of each stream, and some around each
   place it changes streams, some 130 for ten days of the planet's three streams in the tests. A `Replication` caches
   the ones it downloads, so the diffs read after the plan come from the same cache, and planning again downloads only

@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, bail};
-use osmflow::PbfReader;
 use osmflow::osc::{
-    Diffs, Fetch, LATE_MS, OscError, Replication, ServerStates, Start, State, StateSource,
-    Timestamp, parse_timestamp, path_sequence, plan_with_late,
+    Diffs, Fetch, OscError, Replication, ServerStates, Start, State, StateSource, path_sequence,
+    plan,
 };
+use osmflow::{PbfReader, Timestamp};
 
 use crate::select::ChangeArgs;
 
@@ -109,60 +109,23 @@ pub fn parse_seqs(s: &str) -> Result<Seqs> {
     }
 }
 
-/// How late a change may show up in a diff after its timestamp, in milliseconds: an `--overlap` value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Overlap(pub i64);
-
-impl Default for Overlap {
-    fn default() -> Self {
-        Self(LATE_MS)
-    }
-}
-
-impl Overlap {
-    /// The overlap in words: `3 minutes`, `90 seconds`.
-    pub fn words(self) -> String {
-        match (self.0 / 60_000, self.0 % 60_000) {
-            (1, 0) => "1 minute".to_owned(),
-            (m, 0) => format!("{m} minutes"),
-            _ => format!("{} seconds", self.0 / 1000),
-        }
-    }
-}
-
-/// An `--overlap` value: `3m`, `90s` or `1h`, or a number of minutes.
-pub fn parse_overlap(s: &str) -> Result<Overlap> {
-    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    let (n, unit) = s.split_at(digits);
-    let n: i64 = n
-        .parse()
-        .with_context(|| format!("{s:?} is not a duration, as 3m, 90s or 1h"))?;
-    let ms = match unit {
-        "s" => 1000,
-        "" | "m" => 60_000,
-        "h" => 3_600_000,
-        _ => bail!("{s:?} is not a duration, as 3m, 90s or 1h"),
-    };
-    Ok(Overlap(n * ms))
-}
-
 /// A `--since` value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Since {
-    /// A time, in milliseconds since 1970.
-    Time(i64),
+    /// A time.
+    Time(Timestamp),
     /// A PBF file or a state file.
     File(PathBuf),
 }
 
 pub fn parse_since(s: &str) -> Result<Since> {
-    let time = parse_timestamp(s).or_else(|| {
+    let time = s.parse::<Timestamp>().ok().or_else(|| {
         (s.len() == 10)
-            .then(|| parse_timestamp(&format!("{s}T00:00:00Z")))
+            .then(|| format!("{s}T00:00:00Z").parse().ok())
             .flatten()
     });
     match time {
-        Some(ms) => Ok(Since::Time(ms)),
+        Some(at) => Ok(Since::Time(at)),
         None if Path::new(s).exists() => Ok(Since::File(PathBuf::from(s))),
         None => bail!("{s:?} is neither a file nor a time, as 2026-11-09T21:00:00Z or 2026-11-09"),
     }
@@ -251,20 +214,20 @@ impl Stream {
     /// The diffs `--seq` or `--since` chooses, or with neither, the latest one.
     pub fn chosen(&self, changes: &ChangeArgs) -> Result<Diffs> {
         match &changes.since {
-            Some(since) => self.since(since, changes),
+            Some(since) => self.since(since),
             None => self.diffs(changes.seq.unwrap_or(Seqs::Latest)),
         }
     }
 
     /// The diffs after `since`, up to the latest state.
-    fn since(&self, since: &Since, changes: &ChangeArgs) -> Result<Diffs> {
+    fn since(&self, since: &Since) -> Result<Diffs> {
         let latest = self.latest()?;
         let states = States(self.replication.clone(), latest);
         let start = match since {
-            Since::Time(ms) => Start::Time { timestamp_ms: *ms },
+            Since::Time(at) => Start::Time { at: *at },
             Since::File(path) => after_file(path, &states, self.url())?.start(),
         };
-        let first = match plan_with_late(&[&states], start, None, changes.overlap.0)?.first() {
+        let first = match plan(&[&states], start, None)?.first() {
             Some(step) => step.from.sequence + 1,
             None => latest.sequence + 1,
         };
@@ -303,6 +266,16 @@ pub fn stream_states(
     Ok((Box::new(States(stream.replication, latest)), latest, url))
 }
 
+/// Whether `e` says there is no stream where one was looked for: no `state.txt` on a server.
+pub fn is_no_stream(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        matches!(
+            c.downcast_ref::<OscError>(),
+            Some(OscError::NoStream { .. })
+        )
+    })
+}
+
 /// A server's latest state, read without a cache.
 pub fn remote_state(url: &str) -> Result<State> {
     Ok(ServerStates::new(url, fetch(url)?).latest()?)
@@ -315,8 +288,8 @@ pub enum After {
     StateFile(State),
     /// A PBF file whose header gives the diff of this stream it is up to.
     Header(State),
-    /// A PBF file whose header gives only its time, in milliseconds since 1970, or a diff of another stream.
-    Snapshot(i64),
+    /// A PBF file whose header gives only its time, or a diff of another stream.
+    Snapshot(Timestamp),
 }
 
 impl After {
@@ -324,7 +297,7 @@ impl After {
     pub fn start(self) -> Start {
         match self {
             Self::StateFile(state) | Self::Header(state) => Start::After { stream: 0, state },
-            Self::Snapshot(timestamp_ms) => Start::Snapshot { timestamp_ms },
+            Self::Snapshot(at) => Start::Snapshot { at },
         }
     }
 }
@@ -355,7 +328,7 @@ pub fn after_file(path: &Path, source: &dyn StateSource, url: Option<&str>) -> R
                 bail!(
                     "{name} is the state of diff {} at {}, which is not a state of this stream",
                     state.sequence,
-                    Timestamp(state.timestamp_ms)
+                    state.timestamp
                 );
             }
             Ok(After::StateFile(state))
@@ -375,7 +348,7 @@ pub fn after_file(path: &Path, source: &dyn StateSource, url: Option<&str>) -> R
                 return Ok(After::Header(state));
             }
             match header.replication_timestamp {
-                Some(seconds) => Ok(After::Snapshot(seconds * 1000)),
+                Some(at) => Ok(After::Snapshot(at)),
                 None => {
                     bail!("{name} has no replication timestamp in its header: give --since a time")
                 }
@@ -394,9 +367,14 @@ pub fn after_file(path: &Path, source: &dyn StateSource, url: Option<&str>) -> R
     reason = "it fails without the http feature"
 )]
 fn fetch(_url: &str) -> Result<Box<dyn Fetch>> {
+    use std::sync::OnceLock;
+
     use osmflow::osc::HttpFetch;
 
-    Ok(Box::new(HttpFetch::new()))
+    // One client for every stream, so that requests to the same server, from several threads too, share its
+    // connections rather than each making its own.
+    static CLIENT: OnceLock<HttpFetch> = OnceLock::new();
+    Ok(Box::new(CLIENT.get_or_init(HttpFetch::new).clone()))
 }
 
 #[cfg(not(feature = "http"))]
@@ -444,13 +422,13 @@ pub fn sibling_state(path: &Path) -> Option<State> {
     State::read(path.with_file_name(format!("{stem}.state.txt"))).ok()
 }
 
-/// How long ago `ms`, in milliseconds since 1970, was, by this computer's clock: `2d 3h`, `5h 12m`, `3m`.
-pub fn ago(ms: i64) -> String {
+/// How long ago `time` was, by this computer's clock: `2d 3h`, `5h 12m`, `3m`.
+pub fn ago(time: Timestamp) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
     // A time ahead of this computer's clock is now.
-    let minutes = (now - ms).max(0) / 60_000;
+    let minutes = Timestamp::from_millis(now).millis_since(time).max(0) / 60_000;
     let (days, hours, minutes) = (minutes / 1440, minutes / 60 % 24, minutes % 60);
     match (days, hours) {
         (0, 0) => format!("{minutes}m"),
@@ -517,25 +495,15 @@ mod tests {
     }
 
     #[test]
-    fn overlaps_are_durations() {
-        assert_eq!(parse_overlap("3m").unwrap(), Overlap(180_000));
-        assert_eq!(parse_overlap("90s").unwrap(), Overlap(90_000));
-        assert_eq!(parse_overlap("1h").unwrap(), Overlap(3_600_000));
-        assert_eq!(parse_overlap("5").unwrap(), Overlap(300_000));
-        assert_eq!(Overlap(90_000).words(), "90 seconds");
-        assert_eq!(Overlap(60_000).words(), "1 minute");
-        for bad in ["3d", "m", "", "-1m"] {
-            assert!(parse_overlap(bad).is_err(), "{bad}");
-        }
-    }
-
-    #[test]
     fn since_is_a_time_or_a_file() {
         let day = 20_401 * 86_400_000;
-        assert_eq!(parse_since("2025-11-09").unwrap(), Since::Time(day));
+        assert_eq!(
+            parse_since("2025-11-09").unwrap(),
+            Since::Time(Timestamp::from_millis(day))
+        );
         assert_eq!(
             parse_since("2025-11-09T21:00:00Z").unwrap(),
-            Since::Time(day + 21 * 3_600_000)
+            Since::Time(Timestamp::from_millis(day + 21 * 3_600_000))
         );
         assert_eq!(
             parse_since("Cargo.toml").unwrap(),
@@ -553,9 +521,10 @@ mod tests {
             .unwrap()
             .as_millis();
         let now = i64::try_from(now).unwrap();
-        assert_eq!(ago(now - 3 * 60_000), "3m");
-        assert_eq!(ago(now - (5 * 60 + 12) * 60_000), "5h 12m");
-        assert_eq!(ago(now - (2 * 1440 + 3 * 60) * 60_000), "2d 3h");
-        assert_eq!(ago(now + 5 * 60_000), "0m", "a time ahead of the clock");
+        let ago = |ms| ago(Timestamp::from_millis(now + ms));
+        assert_eq!(ago(-3 * 60_000), "3m");
+        assert_eq!(ago(-(5 * 60 + 12) * 60_000), "5h 12m");
+        assert_eq!(ago(-(2 * 1440 + 3 * 60) * 60_000), "2d 3h");
+        assert_eq!(ago(5 * 60_000), "0m", "a time ahead of the clock");
     }
 }

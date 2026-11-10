@@ -11,7 +11,7 @@ use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use osmflow::osc::{self, Action, Change, Object, OscError, OscReader, XmlError};
-use osmflow::{MemberType, PbfReader, Select};
+use osmflow::{MemberType, PbfReader, Select, Timestamp};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -50,7 +50,7 @@ fn dump(change: &Change) -> String {
         change.action,
         object.id(),
         opt(meta.version),
-        opt(meta.timestamp_ms),
+        opt(meta.timestamp.map(Timestamp::as_millis)),
         opt(meta.changeset),
         opt(meta.uid),
         opt(meta.user.as_deref().map(esc)),
@@ -370,7 +370,7 @@ fn planet_minute_diff() {
         let m = c.object.meta();
         // The planet's diffs have every field.
         assert!(
-            m.version.is_some() && m.timestamp_ms.is_some() && m.changeset.is_some(),
+            m.version.is_some() && m.timestamp.is_some() && m.changeset.is_some(),
             "{}",
             dump(c)
         );

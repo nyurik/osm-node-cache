@@ -4,6 +4,7 @@ use buffa::MessageView as _;
 
 use crate::error::{BlobPosition, PbfError, PbfFormatError, Result};
 use crate::generated::osmpbf::OSMPBF::HeaderBlockView;
+use crate::time::Timestamp;
 
 /// The required features osmflow can read. Any other required feature makes [`Header::parse`] fail.
 const SUPPORTED: [&str; 4] = [
@@ -40,8 +41,8 @@ pub struct Header {
     pub writing_program: Option<String>,
     /// Where the data came from, in the writer's own words.
     pub source: Option<String>,
-    /// The replication timestamp, in seconds since 1970, of the diffs that continue this file.
-    pub replication_timestamp: Option<i64>,
+    /// The time of the replication state this file is up to: for a planet file, the newest change in it.
+    pub replication_timestamp: Option<Timestamp>,
     /// The replication sequence number of the diffs that continue this file.
     pub replication_sequence: Option<i64>,
     /// The replication server's base URL.
@@ -72,7 +73,7 @@ impl Header {
                 .collect(),
             writing_program: view.writingprogram.map(str::to_owned),
             source: view.source.map(str::to_owned),
-            replication_timestamp: view.osmosis_replication_timestamp,
+            replication_timestamp: view.osmosis_replication_timestamp.map(Timestamp::from_secs),
             replication_sequence: view.osmosis_replication_sequence_number,
             replication_base_url: view.osmosis_replication_base_url.map(str::to_owned),
         };

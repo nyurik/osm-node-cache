@@ -22,12 +22,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
-use osmflow::{Block, Info, MemberType, PbfError, PbfReader, Select, TagKey};
+use osmflow::{Block, Info, MemberType, PbfError, PbfReader, Select, TagKey, Timestamp};
 
 /// How an object without metadata is shown.
 const NO_INFO: Info<'static> = Info {
     version: -1,
-    timestamp_ms: 0,
+    timestamp: Timestamp::EPOCH,
     changeset: 0,
     uid: 0,
     user: "",
@@ -76,7 +76,7 @@ fn head<'a>(
         i.version,
         if i.visible { 'V' } else { 'D' },
         i.changeset,
-        i.timestamp_ms,
+        i.timestamp.as_millis(),
         i.uid,
         escape(i.user),
         tags.join(",")
@@ -147,7 +147,9 @@ pub fn osmflow_header(file: &PbfReader) -> Vec<String> {
         ),
         format!(
             "# replication: {:?} {:?} {:?}",
-            h.replication_timestamp, h.replication_sequence, h.replication_base_url
+            h.replication_timestamp.map(|t| t.to_string()),
+            h.replication_sequence,
+            h.replication_base_url
         ),
     ]
 }
@@ -229,7 +231,7 @@ pub fn osmflow_ordered(file: &PbfReader) -> Result<Vec<String>, PbfError> {
 fn osmpbf_info<'a>(i: &osmpbf::Info<'a>) -> Info<'a> {
     Info {
         version: i.version().unwrap_or(-1),
-        timestamp_ms: i.milli_timestamp().unwrap_or(0),
+        timestamp: Timestamp::from_millis(i.milli_timestamp().unwrap_or(0)),
         changeset: i.changeset().unwrap_or(0),
         uid: i.uid().unwrap_or(0),
         user: i.user().transpose().unwrap().unwrap_or(""),
@@ -259,7 +261,7 @@ pub fn osmpbf(path: &Path) -> Result<Vec<String>, osmpbf::Error> {
                 Element::DenseNode(n) => {
                     let info = n.info().map(|i| Info {
                         version: i.version(),
-                        timestamp_ms: i.milli_timestamp(),
+                        timestamp: Timestamp::from_millis(i.milli_timestamp()),
                         changeset: i.changeset(),
                         uid: i.uid(),
                         user: i.user().unwrap(),

@@ -7,12 +7,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
+use osmflow::Timestamp;
 use osmflow::osc::{Action, Change, Object, OscReader, State};
 
 use crate::input::{Input, Stream, ago, local_sequences, remote_state, sibling_state};
 use crate::output::{
-    count, extent_json, extent_line, json_str, opt_time, size, time_span, time_span_json,
-    timestamp, widen,
+    count, extent_json, extent_line, json_str, opt_time, size, time_span, time_span_json, widen,
 };
 use crate::select::{ChangeArgs, Kind, Matcher, Threads};
 use crate::write::Props;
@@ -120,7 +120,7 @@ pub fn dump(args: &dump::Args, input: &Input) -> Result<()> {
                     sequence = stream.then_some(state.sequence);
                     w.comment(|o| {
                         write!(o, "sequence {} at ", state.sequence)?;
-                        timestamp(o, state.timestamp_ms)
+                        write!(o, "{}", state.timestamp)
                     })?;
                     return Ok(ControlFlow::Continue(()));
                 }
@@ -183,7 +183,7 @@ struct ChangeStats {
     /// Node latitudes and longitudes, smallest and largest, in 1e-7 degrees.
     lat: Option<(i32, i32)>,
     lon: Option<(i32, i32)>,
-    time: Option<(i64, i64)>,
+    time: Option<(Timestamp, Timestamp)>,
     max_version: Option<i32>,
     changesets: Distinct<i64>,
     uids: Distinct<i32>,
@@ -213,7 +213,7 @@ impl ChangeStats {
             widen(&mut self.lon, loc.lon, loc.lon);
         }
         let meta = o.meta();
-        if let Some(ms) = meta.timestamp_ms {
+        if let Some(ms) = meta.timestamp {
             widen(&mut self.time, ms, ms);
         }
         self.max_version = self.max_version.max(meta.version);
@@ -351,12 +351,12 @@ fn text(
                 last.sequence,
                 count(s.diffs)
             )?;
-            timestamp(o, first.timestamp_ms)?;
+            write!(o, "{}", first.timestamp)?;
             o.write_all(b" .. ")?;
         } else {
             write!(o, "sequence      {} at ", last.sequence)?;
         }
-        timestamp(o, last.timestamp_ms)?;
+        write!(o, "{}", last.timestamp)?;
         writeln!(o)?;
     }
     extent_line(o, s.lat, s.lon)?;
@@ -447,9 +447,9 @@ fn json(
             r#","diffs":{},"first_sequence":{},"last_sequence":{},"first_state":"#,
             s.diffs, first.sequence, last.sequence
         )?;
-        opt_time(o, Some(first.timestamp_ms))?;
+        opt_time(o, Some(first.timestamp))?;
         o.write_all(br#","last_state":"#)?;
-        opt_time(o, Some(last.timestamp_ms))?;
+        opt_time(o, Some(last.timestamp))?;
     }
     for kind in Kind::ALL {
         let name = kind.plural();
@@ -500,7 +500,7 @@ fn stream_state(
             r#","latest_sequence":{},"latest_state":"#,
             state.sequence
         )?;
-        opt_time(o, Some(state.timestamp_ms))?;
+        opt_time(o, Some(state.timestamp))?;
         if let Some(local) = &local {
             write!(
                 o,
@@ -520,8 +520,8 @@ fn stream_state(
     }
     writeln!(o, "stream        {}", input.name())?;
     write!(o, "latest        sequence {} at ", state.sequence)?;
-    timestamp(o, state.timestamp_ms)?;
-    writeln!(o, ", {} ago", ago(state.timestamp_ms))?;
+    write!(o, "{}", state.timestamp)?;
+    writeln!(o, ", {} ago", ago(state.timestamp))?;
     if let Some(local) = &local {
         match (local.first(), local.last()) {
             (Some(first), Some(last)) => writeln!(

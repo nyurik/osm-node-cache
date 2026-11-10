@@ -1,13 +1,12 @@
 ---
 source: crates/osmflow/tests/fixtures.rs
-assertion_line: 52
 expression: snapshot
 ---
 # required: OsmSchema-V0.6, DenseNodes
 # optional: 
 # writing program: Some("osmium/1.11.0"), source: None
 # bbox: Some((7409205000, 43723350000, 7448637000, 43751690000))
-# replication: Some(1658262119) Some(3397) Some("http://download.geofabrik.de/europe/monaco-updates")
+# replication: Some("2022-07-19T20:21:59Z") Some(3397) Some("http://download.geofabrik.de/europe/monaco-updates")
 # 27135 nodes, 4295 ways, 255 relations, hash 5cc286cdfb609b06
 # the first 20 objects:
 n21911883 v6 dV c0 t1335884779000 i0 u T x7422909300 y43737117500

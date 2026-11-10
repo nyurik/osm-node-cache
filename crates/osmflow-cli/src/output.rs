@@ -3,8 +3,7 @@
 
 use std::io::{self, Write};
 
-use osmflow::GroupKind;
-use osmflow::osc::Timestamp;
+use osmflow::{GroupKind, Timestamp};
 
 /// How `stats` and `seq` write what they find.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -95,11 +94,6 @@ fn fixed(out: &mut impl Write, value: i64, decimals: usize) -> io::Result<()> {
 )]
 pub fn to_decimicro(deg: f64) -> i32 {
     (deg * 1e7).round() as i32
-}
-
-/// Writes milliseconds since 1970 as an ISO 8601 UTC time, with milliseconds only when there are some.
-pub fn timestamp(out: &mut impl Write, ms: i64) -> io::Result<()> {
-    write!(out, "{}", Timestamp(ms))
 }
 
 /// A count with thousands separators: `1,958,977`.
@@ -196,7 +190,7 @@ pub fn extent_json(
 }
 
 /// Writes `"first_timestamp":…,"last_timestamp":…` of a JSON summary, `null` without timestamps.
-pub fn time_span_json(o: &mut impl Write, time: Option<(i64, i64)>) -> io::Result<()> {
+pub fn time_span_json(o: &mut impl Write, time: Option<(Timestamp, Timestamp)>) -> io::Result<()> {
     o.write_all(br#""first_timestamp":"#)?;
     opt_time(o, time.map(|t| t.0))?;
     o.write_all(br#","last_timestamp":"#)?;
@@ -204,21 +198,14 @@ pub fn time_span_json(o: &mut impl Write, time: Option<(i64, i64)>) -> io::Resul
 }
 
 /// Writes the start of a summary's timestamps line, `timestamps    FIRST .. LAST`, without its end of line.
-pub fn time_span(o: &mut impl Write, (first, last): (i64, i64)) -> io::Result<()> {
-    o.write_all(b"timestamps    ")?;
-    timestamp(o, first)?;
-    o.write_all(b" .. ")?;
-    timestamp(o, last)
+pub fn time_span(o: &mut impl Write, (first, last): (Timestamp, Timestamp)) -> io::Result<()> {
+    write!(o, "timestamps    {first} .. {last}")
 }
 
-/// Writes milliseconds since 1970 as a quoted ISO 8601 time, or `null`.
-pub fn opt_time(o: &mut impl Write, ms: Option<i64>) -> io::Result<()> {
-    match ms {
-        Some(ms) => {
-            o.write_all(b"\"")?;
-            timestamp(o, ms)?;
-            o.write_all(b"\"")
-        }
+/// Writes a time as a quoted ISO 8601 time, or `null`.
+pub fn opt_time(o: &mut impl Write, time: Option<Timestamp>) -> io::Result<()> {
+    match time {
+        Some(time) => write!(o, "\"{time}\""),
         None => o.write_all(b"null"),
     }
 }
@@ -263,20 +250,6 @@ mod tests {
         assert_eq!(to_decimicro(-77.036_512_3), -770_365_123);
         assert_eq!(text(|o| nanodegrees(o, -180_000_000_000)), "-180");
         assert_eq!(text(|o| nanodegrees(o, 38_791_600_100)), "38.7916001");
-    }
-
-    #[test]
-    fn timestamps_are_utc() {
-        assert_eq!(text(|o| timestamp(o, 0)), "1970-01-01T00:00:00Z");
-        assert_eq!(
-            text(|o| timestamp(o, 1_794_124_821_000)),
-            "2026-11-08T08:00:21Z"
-        );
-        assert_eq!(
-            text(|o| timestamp(o, 951_782_400_123)),
-            "2000-02-29T00:00:00.123Z"
-        );
-        assert_eq!(text(|o| timestamp(o, -1000)), "1969-12-31T23:59:59Z");
     }
 
     #[test]

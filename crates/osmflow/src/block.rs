@@ -15,6 +15,7 @@ use crate::generated::raw::osmflow_raw::{
 };
 use crate::model::{Member, MemberType};
 use crate::packed::{self, Value};
+use crate::time::Timestamp;
 
 type FResult<T> = result::Result<T, PbfFormatError>;
 
@@ -1059,7 +1060,7 @@ impl<T: TagMode> Block<T> {
         let raw = (*objects.infos.get(i)?)?;
         Some(Info {
             version: raw.version,
-            timestamp_ms: raw.timestamp_ms,
+            timestamp: Timestamp::from_millis(raw.timestamp_ms),
             changeset: raw.changeset,
             uid: raw.uid,
             user: self.c.strings.get(raw.user),
@@ -1079,8 +1080,8 @@ fn decimicro(nano: i64) -> i32 {
 pub struct Info<'a> {
     /// The object's version; -1 when the file does not give it.
     pub version: i32,
-    /// When this version was made, in milliseconds since 1970.
-    pub timestamp_ms: i64,
+    /// When this version was made; [`Timestamp::EPOCH`] when the file does not give it.
+    pub timestamp: Timestamp,
     /// The changeset that made this version; 0 when the file does not give it.
     pub changeset: i64,
     /// The ID of the user who made this version; 0 when the file does not give it.
