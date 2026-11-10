@@ -34,7 +34,7 @@ libc = "0.2.171"
 memchr = "2.7"
 memmap2 = "0.9"
 osm-bench = { path = "benches/common" }
-osmflow = { path = "crates/osmflow", version = "0.11.0" }
+osmflow = { path = "crates/osmflow", version = "0.12.0" }
 osmpbf = { version = "0.3.8", default-features = false, features = ["zlib-ng"] }
 osmpbfreader = "0.19"
 rand = "0.10"
