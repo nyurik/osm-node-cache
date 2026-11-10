@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use super::store::{check, check_order};
+use super::store::{check, check_next};
 use super::{
     BulkLoad, LoadState, Metadata, NodeRead, NodeReader, NodeStore, NodeStoreError, Result,
 };
@@ -182,9 +182,7 @@ impl BulkLoad for MemoryLoader<'_> {
     }
 
     fn push(&mut self, id: u64, loc: Location) -> Result<()> {
-        check(id, loc)?;
-        check_order(self.last_id, id)?;
-        self.last_id = Some(id);
+        check_next(&mut self.last_id, id, loc)?;
         self.store.nodes.insert(id, loc);
         Ok(())
     }

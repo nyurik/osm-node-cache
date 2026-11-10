@@ -1,11 +1,14 @@
 {
   "ignore": [
     ".git/**",
+    "**/CHANGELOG.md",
     "crates/osmflow/src/generated/**",
     "crates/osmflow/fixtures/**",
     "crates/osmflow/tests/snapshots/**",
     "tmp/**"
   ],
+  "mode": "weak",
+  "ignorePattern": ["\\buse\\s[^;]*;"],
   "output": "target/jscpd",
   "noTips": true
 }

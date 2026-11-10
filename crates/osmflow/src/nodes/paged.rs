@@ -37,9 +37,10 @@ use super::codec::{
     page_header, rank, read_block, set_entry, set_page_crc, set_page_header, u32_at, u64_at,
 };
 use super::file::{
-    At as _, crc, header_copies, map_file, open_ro, open_rw, read_at, sidecar, sync_dir, write_at,
+    At as _, crc, header_copies, map_file, open_ro, open_rw, read_at, seal, sealed, sidecar,
+    sync_dir, write_at,
 };
-use super::store::{check, check_order, check_resumed};
+use super::store::{check, check_next, check_order, check_resumed};
 use super::{
     BulkLoad, FileStore, FixReport, LoadState, MAX_NODE_ID, Metadata, Mode, NodeRead, NodeReader,
     NodeStore, NodeStoreError, ReadOnly, ReadWrite, Result,
@@ -157,21 +158,14 @@ impl Header {
         h[32..40].copy_from_slice(&self.pages.to_le_bytes());
         h[40..48].copy_from_slice(&self.dir_len.to_le_bytes());
         h[48..56].copy_from_slice(&self.stamp.to_le_bytes());
-        if let LoadState::Loading { last_id } = self.state {
-            h[56..64].copy_from_slice(&last_id.unwrap_or(0).to_le_bytes());
-            h[64] = 1 + u8::from(last_id.is_some());
-        }
+        self.state.encode(&mut h, 56);
         metadata.encode(&mut h);
-        h.resize(SLOT - 4, 0);
-        let crc = crc(&h);
-        h.extend_from_slice(&crc.to_le_bytes());
-        h
+        seal(h, SLOT)
     }
 
     /// The header and metadata from a copy, if it is intact.
     fn decode(h: &[u8]) -> Option<(Self, Metadata)> {
-        let intact = &h[..8] == MAGIC
-            && crc(&h[..SLOT - 4]) == u32_at(h, SLOT - 4)
+        let intact = sealed(h, *MAGIC, SLOT)
             && u32_at(h, 12) as usize == PAGE_SIZE
             && u32_at(h, 16) as usize == BLOCK_LEN;
         let metadata = Metadata::decode(&h[METADATA_AT..SLOT - 4]).filter(|_| intact)?;
@@ -180,13 +174,7 @@ impl Header {
             pages: u64_at(h, 32),
             dir_len: u64_at(h, 40),
             stamp: u64_at(h, 48),
-            state: match h[64] {
-                0 => LoadState::Complete,
-                1 => LoadState::Loading { last_id: None },
-                _ => LoadState::Loading {
-                    last_id: Some(u64_at(h, 56)),
-                },
-            },
+            state: LoadState::decode(h, 56),
         };
         Some((header, metadata))
     }
@@ -692,16 +680,20 @@ impl NodeStore for PagedStore<ReadWrite> {
 }
 
 impl PagedStore<ReadWrite> {
-    fn write_commit(&mut self, stamp: u64) -> Result<()> {
-        let generation = self.committed.generation + 1;
-        let undo = self.write_changes(generation)?;
-        let header = Header {
-            generation,
+    /// The header of the next commit, of the pages and directory as they are now.
+    fn next_header(&self, stamp: u64, state: LoadState) -> Header {
+        Header {
+            generation: self.committed.generation + 1,
             pages: self.allocated,
             dir_len: self.dir.len(),
             stamp,
-            state: LoadState::Complete,
-        };
+            state,
+        }
+    }
+
+    fn write_commit(&mut self, stamp: u64) -> Result<()> {
+        let undo = self.write_changes(self.committed.generation + 1)?;
+        let header = self.next_header(stamp, LoadState::Complete);
         self.write_committed(header)?;
         if let Some(undo) = undo {
             // the commit is kept, so the old pages are not needed
@@ -1284,13 +1276,7 @@ impl PagedLoader<'_> {
         self.write_pending()?;
         self.wait_for_checkpoint()?;
         let store = &mut *self.store;
-        let header = Header {
-            generation: store.committed.generation + 1,
-            pages: store.allocated,
-            dir_len: store.dir.len(),
-            stamp: store.committed.stamp,
-            state,
-        };
+        let header = store.next_header(store.committed.stamp, state);
         let file = store.file.try_clone().at(&store.path)?;
         let dir_file = store.dir_file.try_clone().at(&store.path)?;
         let path = store.path.clone();
@@ -1385,9 +1371,7 @@ impl BulkLoad for PagedLoader<'_> {
     }
 
     fn push(&mut self, id: u64, loc: Location) -> Result<()> {
-        check(id, loc)?;
-        check_order(self.last_id, id)?;
-        self.last_id = Some(id);
+        check_next(&mut self.last_id, id, loc)?;
         if self.resume.is_some_and(|r| id <= r) {
             return self.check_resumed(id, loc);
         }
@@ -1477,15 +1461,8 @@ impl BulkLoad for PagedLoader<'_> {
         self.write_page()?;
         self.write_pending()?;
         self.wait_for_checkpoint()?;
-        let store = &mut *self.store;
-        let header = Header {
-            generation: store.committed.generation + 1,
-            pages: store.allocated,
-            dir_len: store.dir.len(),
-            stamp,
-            state: LoadState::Complete,
-        };
-        store.write_committed(header)?;
+        let header = self.store.next_header(stamp, LoadState::Complete);
+        self.store.write_committed(header)?;
         self.finished = true;
         Ok(())
     }
