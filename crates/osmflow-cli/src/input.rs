@@ -3,14 +3,15 @@
 
 use std::fs::{self, File};
 use std::io::Read as _;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, bail};
 use osmflow::PbfReader;
 use osmflow::osc::{
-    Diffs, Fetch, OscError, Replication, ServerStates, Start, State, StateSource, parse_timestamp,
-    path_sequence, plan,
+    Diffs, Fetch, LATE_MS, OscError, Replication, ServerStates, Start, State, StateSource,
+    Timestamp, parse_timestamp, path_sequence, plan_with_late,
 };
 
 use crate::select::ChangeArgs;
@@ -108,6 +109,43 @@ pub fn parse_seqs(s: &str) -> Result<Seqs> {
     }
 }
 
+/// How late a change may show up in a diff after its timestamp, in milliseconds: an `--overlap` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overlap(pub i64);
+
+impl Default for Overlap {
+    fn default() -> Self {
+        Self(LATE_MS)
+    }
+}
+
+impl Overlap {
+    /// The overlap in words: `3 minutes`, `90 seconds`.
+    pub fn words(self) -> String {
+        match (self.0 / 60_000, self.0 % 60_000) {
+            (1, 0) => "1 minute".to_owned(),
+            (m, 0) => format!("{m} minutes"),
+            _ => format!("{} seconds", self.0 / 1000),
+        }
+    }
+}
+
+/// An `--overlap` value: `3m`, `90s` or `1h`, or a number of minutes.
+pub fn parse_overlap(s: &str) -> Result<Overlap> {
+    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (n, unit) = s.split_at(digits);
+    let n: i64 = n
+        .parse()
+        .with_context(|| format!("{s:?} is not a duration, as 3m, 90s or 1h"))?;
+    let ms = match unit {
+        "s" => 1000,
+        "" | "m" => 60_000,
+        "h" => 3_600_000,
+        _ => bail!("{s:?} is not a duration, as 3m, 90s or 1h"),
+    };
+    Ok(Overlap(n * ms))
+}
+
 /// A `--since` value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Since {
@@ -152,6 +190,10 @@ impl StateSource for States {
 
     fn get(&self, sequence: u64) -> Result<Option<State>, OscError> {
         self.0.get(sequence)
+    }
+
+    fn prefetch(&self, sequences: RangeInclusive<u64>) {
+        self.0.prefetch(sequences);
     }
 }
 
@@ -209,20 +251,20 @@ impl Stream {
     /// The diffs `--seq` or `--since` chooses, or with neither, the latest one.
     pub fn chosen(&self, changes: &ChangeArgs) -> Result<Diffs> {
         match &changes.since {
-            Some(since) => self.since(since),
+            Some(since) => self.since(since, changes),
             None => self.diffs(changes.seq.unwrap_or(Seqs::Latest)),
         }
     }
 
     /// The diffs after `since`, up to the latest state.
-    fn since(&self, since: &Since) -> Result<Diffs> {
+    fn since(&self, since: &Since, changes: &ChangeArgs) -> Result<Diffs> {
         let latest = self.latest()?;
         let states = States(self.replication.clone(), latest);
         let start = match since {
             Since::Time(ms) => Start::Time { timestamp_ms: *ms },
             Since::File(path) => after_file(path, &states, self.url())?.start(),
         };
-        let first = match plan(&[&states], start, None)?.first() {
+        let first = match plan_with_late(&[&states], start, None, changes.overlap.0)?.first() {
             Some(step) => step.from.sequence + 1,
             None => latest.sequence + 1,
         };
@@ -249,7 +291,7 @@ impl Stream {
 pub fn stream_states(
     input: &Input,
     cache: Option<&Path>,
-) -> Result<(Box<dyn StateSource>, State, Option<String>)> {
+) -> Result<(Box<dyn StateSource + Send + Sync>, State, Option<String>)> {
     if let (Input::Url(url), None) = (input, cache) {
         let states = ServerStates::new(url, fetch(url)?);
         let latest = states.latest()?;
@@ -278,7 +320,7 @@ pub enum After {
 }
 
 impl After {
-    /// Where a plan starts for this file.
+    /// Where a plan over this one stream starts for this file: its state is of stream 0, the only one.
     pub fn start(self) -> Start {
         match self {
             Self::StateFile(state) | Self::Header(state) => Start::After { stream: 0, state },
@@ -306,7 +348,18 @@ fn same_server(a: &str, b: &str) -> bool {
 pub fn after_file(path: &Path, source: &dyn StateSource, url: Option<&str>) -> Result<After> {
     let name = path.display();
     match Input::of(path)? {
-        Input::State(path) => Ok(After::StateFile(State::read(&path)?)),
+        Input::State(path) => {
+            // A state file of another stream would name a sequence this one has at another time, or none.
+            let state = State::read(&path)?;
+            if source.get(state.sequence)? != Some(state) {
+                bail!(
+                    "{name} is the state of diff {} at {}, which is not a state of this stream",
+                    state.sequence,
+                    Timestamp(state.timestamp_ms)
+                );
+            }
+            Ok(After::StateFile(state))
+        }
         Input::Pbf(path) => {
             let reader = PbfReader::open(&path)?;
             let header = reader.header();
@@ -461,6 +514,19 @@ mod tests {
             "https://download.geofabrik.de/europe/monaco-updates",
             url
         ));
+    }
+
+    #[test]
+    fn overlaps_are_durations() {
+        assert_eq!(parse_overlap("3m").unwrap(), Overlap(180_000));
+        assert_eq!(parse_overlap("90s").unwrap(), Overlap(90_000));
+        assert_eq!(parse_overlap("1h").unwrap(), Overlap(3_600_000));
+        assert_eq!(parse_overlap("5").unwrap(), Overlap(300_000));
+        assert_eq!(Overlap(90_000).words(), "90 seconds");
+        assert_eq!(Overlap(60_000).words(), "1 minute");
+        for bad in ["3d", "m", "", "-1m"] {
+            assert!(parse_overlap(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

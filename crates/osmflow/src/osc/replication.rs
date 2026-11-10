@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
-use std::ops::{Bound, RangeBounds};
+use std::ops::{Bound, RangeBounds, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, sync_channel};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 use std::{process, thread};
 
@@ -17,6 +17,7 @@ use flate2::bufread::MultiGzDecoder;
 use tracing::{debug, debug_span, warn};
 
 use crate::osc::error::{OscError, Result, StateError};
+use crate::osc::plan::read_ahead;
 use crate::osc::value::timestamp_ms;
 use crate::osc::{Change, OscReader, StateSource};
 
@@ -147,6 +148,8 @@ pub trait Fetch: Send + Sync {
     fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>>;
 }
 
+/// A boxed `Fetch`, chosen at run time, as a program that reads servers only with a feature does, can be given
+/// wherever a `Fetch` is taken.
 impl<F: Fetch + ?Sized> Fetch for Box<F> {
     fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>> {
         (**self).fetch(url)
@@ -231,6 +234,11 @@ impl Replication {
     pub fn with_read_ahead(mut self, diffs: usize) -> Self {
         self.read_ahead = diffs.max(1);
         self
+    }
+
+    /// Whether the stream is read from a server, through the directory as a cache.
+    pub(crate) fn is_remote(&self) -> bool {
+        self.source.remote.is_some()
     }
 
     /// The local directory: the source, or the cache.
@@ -489,6 +497,9 @@ fn check_sequence(origin: &str, state: State, sequence: u64) -> Result<State> {
 /// checked as [`Replication`] checks it, a state file must parse and name its sequence, and downloaded once.
 pub struct ServerStates {
     remote: Remote,
+    /// The latest state, read the first time it is asked for.
+    latest: OnceLock<State>,
+    /// The other states read, and those the server does not have.
     read: Mutex<HashMap<u64, Option<State>>>,
 }
 
@@ -502,6 +513,7 @@ impl ServerStates {
                 fetch: Box::new(fetch),
                 latest: Mutex::new(None),
             },
+            latest: OnceLock::new(),
             read: Mutex::default(),
         }
     }
@@ -516,32 +528,28 @@ impl ServerStates {
 }
 
 impl StateSource for ServerStates {
-    /// The server's `state.txt`, downloaded the first time only.
+    /// The server's `state.txt`, downloaded the first time only. Threads that ask at once may each download it, as no
+    /// lock is held while it downloads; the first to finish sets it.
     fn latest(&self) -> Result<State> {
-        let mut known = self
-            .remote
-            .latest
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if let Some(sequence) = *known
-            && let Some(&Some(state)) = self
-                .read
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .get(&sequence)
-        {
-            return Ok(state);
+        if let Some(&latest) = self.latest.get() {
+            return Ok(latest);
         }
         let (_, _, state) = self
             .remote
             .fetch_checked("state.txt", parse_state)
             .map_err(no_stream)?;
-        *known = Some(state.sequence);
-        self.read
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(state.sequence, Some(state));
-        Ok(state)
+        Ok(*self.latest.get_or_init(|| state))
+    }
+
+    /// Downloads the states of `sequences` not read yet, [`PARALLEL`](crate::osc::PARALLEL) at a time.
+    fn prefetch(&self, sequences: RangeInclusive<u64>) {
+        // Once, before the threads that each need it.
+        if self.latest().is_err() {
+            return;
+        }
+        read_ahead(sequences, |sequence| {
+            let _ = self.get(sequence);
+        });
     }
 
     /// `None` for a state past the latest one, or one the server does not have.

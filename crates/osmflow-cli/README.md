@@ -88,8 +88,9 @@ osmflow stats https://download.geofabrik.de/north-america/us/district-of-columbi
 
 | Flag | Does |
 |---|---|
-| `--seq N`, `--seq A..B`, `--seq A..`, `--seq latest` | which diffs of a stream to read, both ends included; `A..` runs to the latest state. `dump` of a stream needs it or `--since`, and `stats` without either shows only the latest state. |
-| `--since FILE`, `--since TIME` | the diffs after what is already applied, up to the latest state: after a Geofabrik extract by the sequence in its header, when the stream is the server its header names; after a state file of the stream; the changes made after a time such as `2026-11-09T21:00:00Z` or `2026-11-09`; or after a planet file, from ten minutes before its timestamp, as a change can show up in a diff that much after it is made. `osmflow seq` shows where each starts. |
+| `--seq N`, `--seq A..B`, `--seq A..`, `--seq latest` | which diffs of a stream to read, both ends included; `A..` runs to the latest state. Without it or `--since`, `dump` of a stream reads the latest diff, and `stats` shows only the latest state. |
+| `--since FILE`, `--since TIME` | the diffs after what is already applied, up to the latest state: after a Geofabrik extract by the sequence in its header, when the stream is the server its header names; after a state file of the stream; the changes made after a time such as `2026-11-09T21:00:00Z` or `2026-11-09`; or after a planet file, from `--overlap` before its timestamp, as a change can show up in a diff that much after it is made. `osmflow seq` shows where each starts. |
+| `--overlap DURATION` | how late a change may show up in a diff, as `3m` (the default), `90s` or `1h`: how much earlier `--since` starts after a planet file |
 | `--cache DIR` | the directory a server's files are downloaded into, once each, and read from after; needed to read a server's diffs |
 | `--action create,modify,delete` | only changes in these sections |
 | `--changeset ID,...` | only changes made in these changesets |
@@ -165,15 +166,19 @@ it; or with `latest`, the stream's latest diff. It reads state files only: the l
 time. A server is read without a cache unless `--cache` gives one.
 
 ```sh
+osmflow seq https://planet.openstreetmap.org/replication 2026-11-01
 osmflow seq https://planet.openstreetmap.org/replication/day latest
-osmflow seq https://planet.openstreetmap.org/replication/minute 2026-11-10T01:29:11Z
 osmflow seq https://download.geofabrik.de/north-america/us/district-of-columbia-updates dc.osm.pbf -f json
 ```
 
 ```text
-The latest diff of https://planet.openstreetmap.org/replication/minute is 7366100, at 2026-11-10T02:28:06Z, 1m ago.
-The last diff at or before 2026-11-10T01:29:11Z is 7366042, at 2026-11-10T01:28:51Z.
-The changes made after 2026-11-10T01:29:11Z are in diffs 7366043 to 7366100 (58 diffs). Read them with --seq 7366043..
+The latest diff of https://planet.openstreetmap.org/replication/minute is 7366179, at 2026-11-10T03:48:50Z, 1m ago.
+The last diff at or before 2026-11-01T00:00:00Z is 7353229, at 2026-10-31T23:59:58Z.
+The changes made after 2026-11-01T00:00:00Z are in diffs 7353230 to 7366179 (12,950 diffs). Read them with --seq 7353230..
+Through the day, hour and minute streams, catching up to the latest diff takes about 61 diffs, in this order:
+   9 day diffs, up to 2026-11-10T00:00:00Z
+   3 hour diffs, up to 2026-11-10T03:00:00Z
+  49 minute diffs, up to 2026-11-10T03:48:50Z
 ```
 
 ```text
@@ -182,12 +187,23 @@ district-of-columbia-261027.osm.pbf is up to date with diff 4954, at 2026-10-27T
 The changes after it are in diffs 4955 to 4966 (12 diffs). Read them with --seq 4955..
 ```
 
+- **A catch-up through several streams** is shown for a stream named `day`, `hour` or `minute` with the others beside
+  it, as on the planet's server, and for the directory or URL that holds them, which is read as its `minute` stream.
+  By default it is estimated from each stream's latest state alone, read all at once: day and hour diffs end on
+  their interval, so they are counted exactly, and minute diffs at one a minute.
+- **`--exact`** plans it instead, as `osmflow` reads it: it finds the minute diff each day and hour diff ends at,
+  reading some state files around each place the plan changes streams, up to 3 at a time, and gives each leg's
+  diffs, as `--seq 5164..5172`. A search reads one state file after another, as each depends on the last, so this
+  takes some tens of requests, about half a minute on the planet's server. With `-f json`, the legs are in
+  `catch_up`, with `first` and `last` when planned.
+- **`--overlap`** is how late a change may show up in a diff, 3 minutes by default: how much before a planet file's
+  time the diffs start, and how far around each change of streams `--exact` looks.
 - **A time** finds the last diff at or before it. A diff's time is the newest change in it, so every change made after
   the time is in a later diff: reading from the next one misses none, and reads none made before.
 - **A Geofabrik extract** on its own stream, and **a state file**, say exactly which diff they are up to.
 - **A planet file** has only a time in its header, the newest change in it. A change can commit after the planet was
-  taken and still be up to 10 minutes older than that, so the diffs to read start 10 minutes before its time, and the
-  first of them may repeat changes it has.
+  taken and still be older than that, by up to `--overlap`, so the diffs to read start that much before its time, and
+  the first of them may repeat changes it has.
 - **`--since`** of `dump` and `stats` reads the same diffs as `--seq` with the number given. With `-f json`, `seq`
   gives them as `read_from` and `diffs`.
 - **A time before the stream's oldest diff**, or a file whose diff the server no longer keeps, is an error.

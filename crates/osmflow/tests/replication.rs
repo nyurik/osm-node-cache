@@ -5,13 +5,15 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{fs, mem};
+use std::time::Duration;
+use std::{fs, mem, thread};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use osmflow::osc::{
-    Diff, Fetch, Located, Object, OscError, Replication, ServerStates, State, StateError,
+    Diff, Fetch, Located, Object, OscError, PARALLEL, Replication, ServerStates, State, StateError,
     StateSource as _, locate, path_sequence, sequence_path,
 };
 
@@ -544,6 +546,53 @@ fn server_states_are_checked_and_downloaded_once_without_a_cache() {
     // A server without a `state.txt` is not a stream.
     let nowhere = ServerStates::new("https://example.org/nowhere", mock.clone());
     assert!(matches!(nowhere.latest(), Err(OscError::NoStream { .. })));
+}
+
+/// A server that answers slowly, counting the requests it answers at once.
+#[derive(Default)]
+struct Slow {
+    files: HashMap<String, Vec<u8>>,
+    asked: Mutex<Vec<String>>,
+    now: AtomicUsize,
+    most: AtomicUsize,
+}
+
+/// A [`Slow`] server as a [`Fetch`], which [`ServerStates`] owns.
+struct SlowFetch(Arc<Slow>);
+
+impl Fetch for SlowFetch {
+    fn fetch(&self, url: &str) -> io::Result<Option<Vec<u8>>> {
+        let slow = &self.0;
+        let at_once = slow.now.fetch_add(1, Ordering::SeqCst) + 1;
+        slow.most.fetch_max(at_once, Ordering::SeqCst);
+        thread::sleep(Duration::from_millis(20));
+        slow.asked.lock().unwrap().push(url.to_owned());
+        slow.now.fetch_sub(1, Ordering::SeqCst);
+        Ok(slow.files.get(url).cloned())
+    }
+}
+
+#[test]
+fn server_states_are_read_ahead_three_at_a_time() {
+    let files = stream(59, 10..=59, 1)
+        .into_iter()
+        .map(|(p, d)| (format!("{BASE}/{p}"), d))
+        .collect();
+    let slow = Arc::new(Slow {
+        files,
+        ..Slow::default()
+    });
+    let states = ServerStates::new(BASE, SlowFetch(Arc::clone(&slow)));
+    states.prefetch(20..=39);
+    assert_eq!(slow.most.load(Ordering::SeqCst), PARALLEL);
+    // The latest state, to know what is published, and each of the 20 once.
+    assert_eq!(slow.asked.lock().unwrap().len(), 21);
+    assert_eq!(states.get(30).unwrap(), Some(state(30)));
+    assert_eq!(
+        slow.asked.lock().unwrap().len(),
+        21,
+        "read ahead, not asked again"
+    );
 }
 
 #[test]

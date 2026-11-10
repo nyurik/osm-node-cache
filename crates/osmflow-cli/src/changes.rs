@@ -1,9 +1,9 @@
 //! `dump` and `stats` of osmChange input: one file, or the diffs of a replication stream in a directory or on a server.
 
-use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -25,46 +25,49 @@ enum Event<'a> {
     Change(&'a Change),
 }
 
-/// Fails unless the flags can read the changes of `input`: a stream needs `--seq` or `--since`, and a server
-/// `--cache`; a file takes none of them. Checked before anything is written.
-fn check(input: &Input, changes: &ChangeArgs) -> Result<()> {
-    let name = input.name();
-    if let Input::Osc(_) = input {
-        if let Some(flag) = changes.stream_flag() {
-            bail!("{flag} is for replication streams, and {name} is one osmChange file");
-        }
-    } else if !changes.chooses() {
-        bail!(
-            "give --seq to choose the diffs of {name} (N, A..B, A.. or latest), or --since for those after a file \
-             or a time"
-        );
-    } else if matches!(input, Input::Url(_)) && changes.cache.is_none() {
-        bail!("give --cache DIR to read the diffs of {name}: they are downloaded into it");
-    }
-    Ok(())
+/// osmChange input, ready to read.
+enum Opened {
+    File(PathBuf),
+    Stream(Stream),
 }
 
-/// Reads the changes of `input`, until `visit` breaks; [`check`] must have passed.
+/// Opens osmChange input: a file, which takes no stream flag, or a stream. Opened before anything is written, so a
+/// flag that does not fit fails first.
+fn open(input: &Input, changes: &ChangeArgs, threads: &Threads) -> Result<Opened> {
+    if let Input::Osc(path) = input {
+        if let Some(flag) = changes.stream_flag() {
+            bail!(
+                "{flag} is for replication streams, and {} is one osmChange file",
+                input.name()
+            );
+        }
+        return Ok(Opened::File(path.clone()));
+    }
+    Stream::open(input, changes.cache.as_deref(), threads.count()).map(Opened::Stream)
+}
+
+/// Reads the changes of `opened`, until `visit` breaks.
 fn read(
-    input: &Input,
+    opened: &Opened,
     changes: &ChangeArgs,
-    threads: &Threads,
     mut visit: impl FnMut(Event<'_>) -> Result<ControlFlow<()>>,
 ) -> Result<()> {
-    if let Input::Osc(path) = input {
-        if let Some(state) = sibling_state(path)
-            && visit(Event::Diff(&state))?.is_break()
-        {
+    let stream = match opened {
+        Opened::Stream(stream) => stream,
+        Opened::File(path) => {
+            if let Some(state) = sibling_state(path)
+                && visit(Event::Diff(&state))?.is_break()
+            {
+                return Ok(());
+            }
+            for change in OscReader::open(path)? {
+                if visit(Event::Change(&change?))?.is_break() {
+                    break;
+                }
+            }
             return Ok(());
         }
-        for change in OscReader::open(path)? {
-            if visit(Event::Change(&change?))?.is_break() {
-                break;
-            }
-        }
-        return Ok(());
-    }
-    let stream = Stream::open(input, changes.cache.as_deref(), threads.count())?;
+    };
     for diff in stream.chosen(changes)? {
         let diff = diff?;
         if visit(Event::Diff(&diff.state))?.is_break() {
@@ -94,21 +97,24 @@ pub fn dump(args: &dump::Args, input: &Input) -> Result<()> {
             input.name()
         );
     }
-    check(input, &args.changes)?;
+    let opened = open(input, &args.changes, &args.threads)?;
     let mut w = args.writer()?;
-    let stream = if let Input::Osc(path) = input {
-        let bytes = fs::metadata(path).map_or(0, |m| m.len());
-        w.comment(|o| write!(o, "file: {} ({})", path.display(), size(bytes)))?;
-        false
-    } else {
-        w.comment(|o| write!(o, "replication: {}", input.name()))?;
-        true
+    let stream = match &opened {
+        Opened::File(path) => {
+            let bytes = fs::metadata(path).map_or(0, |m| m.len());
+            w.comment(|o| write!(o, "file: {} ({})", path.display(), size(bytes)))?;
+            false
+        }
+        Opened::Stream(_) => {
+            w.comment(|o| write!(o, "replication: {}", input.name()))?;
+            true
+        }
     };
     let matcher = args.filter.matcher();
     let mut left = args.limit.unwrap_or(u64::MAX);
     let mut sequence = None;
     if left > 0 {
-        read(input, &args.changes, &args.threads, |event| {
+        read(&opened, &args.changes, |event| {
             let change = match event {
                 Event::Diff(state) => {
                     sequence = stream.then_some(state.sequence);
@@ -182,7 +188,7 @@ struct ChangeStats {
     changesets: Distinct<i64>,
     uids: Distinct<i32>,
     /// User names, counted when the input has names without IDs.
-    users: HashSet<Arc<str>>,
+    users: Distinct<Arc<str>>,
     /// The states of the diffs read: the first and the last, and how many.
     states: Option<(State, State)>,
     diffs: u64,
@@ -217,8 +223,10 @@ impl ChangeStats {
         if let Some(uid) = meta.uid {
             self.uids.insert(uid);
         }
-        if meta.uid.is_none() {
-            self.users.extend(meta.user.clone());
+        if meta.uid.is_none()
+            && let Some(user) = &meta.user
+        {
+            self.users.insert(Arc::clone(user));
         }
     }
 
@@ -231,8 +239,8 @@ impl ChangeStats {
     }
 
     /// The number of distinct users: by ID, or by name when the input has names alone.
-    fn user_count(&self) -> usize {
-        self.uids.len() + self.users.len()
+    fn user_count(&mut self) -> usize {
+        self.uids.count() + self.users.count()
     }
 
     /// The changes of all types together, by action, and their tags.
@@ -250,28 +258,18 @@ impl ChangeStats {
         (total, tags)
     }
 
-    fn distinct(&self, kind: Kind) -> usize {
-        self.objects[kind.index()].len()
+    fn distinct(&mut self, kind: Kind) -> usize {
+        self.objects[kind.index()].count()
     }
 
     /// The number of objects changed.
-    fn object_count(&self) -> usize {
-        self.objects.iter().map(Distinct::len).sum()
-    }
-
-    /// Counts each value once, before the counts are read.
-    fn finish(&mut self) {
-        for d in &mut self.objects {
-            d.dedup();
-        }
-        self.changesets.dedup();
-        self.uids.dedup();
+    fn object_count(&mut self) -> usize {
+        self.objects.iter_mut().map(Distinct::count).sum()
     }
 }
 
-/// Values seen, to count each once: kept in a `Vec`, sorted and deduplicated each time it doubles, which takes no
-/// more than twice the memory of the distinct values and hashes none. [`len`](Self::len) counts them after
-/// [`dedup`](Self::dedup).
+/// Values seen, to count each once: kept in a `Vec`, sorted and deduplicated each time it doubles, so it holds at most
+/// about twice as many values as are distinct, and hashes none.
 #[derive(Debug, Default)]
 struct Distinct<T> {
     values: Vec<T>,
@@ -287,18 +285,20 @@ impl<T: Ord> Distinct<T> {
         }
     }
 
+    /// Sorts and deduplicates the values. They are a sorted run and the values added since, which a stable sort
+    /// would merge, but with a buffer of half of them, for no measured gain.
     fn dedup(&mut self) {
         self.values.sort_unstable();
         self.values.dedup();
         self.unique = self.values.len();
     }
 
-    fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.values.is_empty()
+    /// The number of distinct values.
+    fn count(&mut self) -> usize {
+        if self.values.len() != self.unique {
+            self.dedup();
+        }
+        self.unique
     }
 }
 
@@ -309,9 +309,9 @@ pub fn stats(args: &stats::Args, input: &Input) -> Result<()> {
         stream_state(&mut out, input, &args.changes, &args.threads, args.json())?;
         return Ok(out.flush()?);
     }
-    check(input, &args.changes)?;
+    let opened = open(input, &args.changes, &args.threads)?;
     let mut s = ChangeStats::default();
-    read(input, &args.changes, &args.threads, |event| {
+    read(&opened, &args.changes, |event| {
         match event {
             Event::Diff(state) => s.diff(state),
             Event::Change(change) if args.changes.matches(change) => s.add(change),
@@ -319,21 +319,25 @@ pub fn stats(args: &stats::Args, input: &Input) -> Result<()> {
         }
         Ok(ControlFlow::Continue(()))
     })?;
-    s.finish();
     let bytes = if let Input::Osc(path) = input {
         fs::metadata(path).ok().map(|m| m.len())
     } else {
         None
     };
     if args.json() {
-        json(&mut out, input, bytes, &s)?;
+        json(&mut out, input, bytes, &mut s)?;
     } else {
-        text(&mut out, input, bytes, &s)?;
+        text(&mut out, input, bytes, &mut s)?;
     }
     Ok(out.flush()?)
 }
 
-fn text(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) -> io::Result<()> {
+fn text(
+    o: &mut impl Write,
+    input: &Input,
+    bytes: Option<u64>,
+    s: &mut ChangeStats,
+) -> io::Result<()> {
     match bytes {
         Some(bytes) => writeln!(o, "file          {} ({})", input.name(), size(bytes))?,
         None => writeln!(o, "stream        {}", input.name())?,
@@ -364,10 +368,10 @@ fn text(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) 
         writeln!(o)?;
     }
     for (name, n) in [
-        ("changesets", s.changesets.len()),
+        ("changesets", s.changesets.count()),
         ("users", s.user_count()),
     ] {
-        if n > 0 || s.objects.iter().all(Distinct::is_empty) {
+        if n > 0 || s.object_count() == 0 {
             writeln!(o, "{name:13} {}", count(n as u64))?;
         } else {
             writeln!(o, "{name:13} not in the input")?;
@@ -426,7 +430,12 @@ fn json_row(
     )
 }
 
-fn json(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) -> io::Result<()> {
+fn json(
+    o: &mut impl Write,
+    input: &Input,
+    bytes: Option<u64>,
+    s: &mut ChangeStats,
+) -> io::Result<()> {
     o.write_all(br#"{"input":"#)?;
     json_str(o, &input.name())?;
     if let Some(bytes) = bytes {
@@ -461,7 +470,7 @@ fn json(o: &mut impl Write, input: &Input, bytes: Option<u64>, s: &ChangeStats) 
     writeln!(
         o,
         r#","changesets":{},"users":{}}}"#,
-        s.changesets.len(),
+        s.changesets.count(),
         s.user_count()
     )
 }
@@ -537,6 +546,7 @@ fn gaps(sequences: &[u64]) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::io::Cursor;
     use std::path::Path;
 
@@ -561,9 +571,23 @@ mod tests {
         }
         let counted: u64 = s.changes.iter().flatten().sum();
         assert_eq!(counted, total);
-        assert!(s.object_count() as u64 <= total);
+        // Each object once, however many versions of it the diff has.
+        let objects: HashSet<(Kind, i64)> = OscReader::open(&path)
+            .unwrap()
+            .map(|c| {
+                let c = c.unwrap();
+                (Kind::from(c.object.kind()), c.object.id())
+            })
+            .collect();
+        assert!(
+            objects.len() < usize::try_from(total).unwrap(),
+            "the diff has objects changed twice"
+        );
+        assert_eq!(s.object_count(), objects.len());
+        let nodes = objects.iter().filter(|(k, _)| *k == Kind::Node).count();
+        assert_eq!(s.distinct(Kind::Node), nodes);
         // A planet diff has changesets and users.
-        assert!(!s.changesets.is_empty() && !s.uids.is_empty());
+        assert!(s.changesets.count() > 0 && s.uids.count() > 0);
         assert!(s.time.is_some() && s.max_version.is_some());
     }
 

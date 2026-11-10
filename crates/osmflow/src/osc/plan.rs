@@ -6,22 +6,23 @@
 //!
 //! [`Replication`]: crate::osc::Replication
 
-use std::io;
 use std::ops::RangeInclusive;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::{io, thread};
 
 use tracing::{debug, debug_span, trace};
 
 use crate::osc::{OscError, Replication, State};
 
-/// How long after its timestamp a change may first show in a diff, in milliseconds: ten minutes.
+/// How long after its timestamp a change may first show in a diff, in milliseconds, unless a plan is given another
+/// allowance with [`plan_with_late`]: three minutes.
 ///
 /// The API server gives a change its timestamp while it saves it, and the change shows in the first diff cut after
 /// the save commits, so a change can be older than diffs cut before it. A diff's state is the newest timestamp of its
 /// changes, so a state can also be older than the one before it, by as much. On the planet's minute stream, over the
 /// 1842 diffs 7364100 to 7365941 of November 2026, the latest change came 42 seconds after the state of the diff
-/// before its own, and no state was older than the one before it; the OSM web servers end a request after 300
-/// seconds.
-pub const LATE_MS: i64 = 10 * 60_000;
+/// before its own, and no state was older than the one before it.
+pub const LATE_MS: i64 = 3 * 60_000;
 
 /// The state files of one replication stream: what [`locate`] and [`plan`] read.
 ///
@@ -35,6 +36,42 @@ pub trait StateSource {
     /// The state of diff `sequence`, or `None` if the stream does not have it: deleted as too old, or not published
     /// yet. Errors are for failures to read, which end a search.
     fn get(&self, sequence: u64) -> Result<Option<State>, OscError>;
+
+    /// Reads ahead the states of `sequences`, which a plan is about to [`get`](Self::get) one after another, so that
+    /// they are there when asked for. A source that downloads them does so [`PARALLEL`] at a time, and leaves an
+    /// error for `get` to report; by default, nothing is read ahead.
+    fn prefetch(&self, sequences: RangeInclusive<u64>) {
+        let _ = sequences;
+    }
+}
+
+/// The most states read ahead for one scan, however irregular the stream.
+const MAX_AHEAD: u64 = 64;
+
+/// The most state files a source downloads at once, reading ahead.
+pub const PARALLEL: usize = 3;
+
+/// Calls `read` for each of `sequences`, on up to [`PARALLEL`] threads, for a source whose reads keep what they read.
+pub(crate) fn read_ahead(sequences: RangeInclusive<u64>, read: impl Fn(u64) + Sync) {
+    let (first, last) = (*sequences.start(), *sequences.end());
+    if first > last {
+        return;
+    }
+    let next = AtomicU64::new(first);
+    let threads = usize::try_from(last - first + 1).map_or(PARALLEL, |n| n.min(PARALLEL));
+    thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let sequence = next.fetch_add(1, Ordering::Relaxed);
+                    if sequence > last {
+                        break;
+                    }
+                    read(sequence);
+                }
+            });
+        }
+    });
 }
 
 /// The states of a stream read through a [`Replication`]: a state file it has not cached is downloaded once, then
@@ -52,6 +89,16 @@ impl StateSource for Replication {
                 Ok(None)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Downloads the state files of `sequences` that are not cached yet, [`PARALLEL`] at a time; a local directory
+    /// has nothing to read ahead.
+    fn prefetch(&self, sequences: RangeInclusive<u64>) {
+        if self.is_remote() {
+            read_ahead(sequences, |sequence| {
+                let _ = self.sequence_state(sequence);
+            });
         }
     }
 }
@@ -305,12 +352,25 @@ pub fn plan(
     start: Start,
     to_ms: Option<i64>,
 ) -> Result<Vec<Step>, OscError> {
-    let _span = debug_span!("plan", streams = streams.len(), ?start, to_ms).entered();
+    plan_with_late(streams, start, to_ms, LATE_MS)
+}
+
+/// [`plan`], allowing a change to show in a diff up to `late_ms` milliseconds after its timestamp rather than
+/// [`LATE_MS`]: a smaller allowance reads fewer state files and repeats fewer changes after a snapshot, and misses a
+/// change that shows later than it.
+pub fn plan_with_late(
+    streams: &[&dyn StateSource],
+    start: Start,
+    to_ms: Option<i64>,
+    late_ms: i64,
+) -> Result<Vec<Step>, OscError> {
+    let _span = debug_span!("plan", streams = streams.len(), ?start, to_ms, late_ms).entered();
     let Some((&finest, coarser)) = streams.split_last() else {
         return Ok(Vec::new());
     };
     let fine = Fine {
         known: Known::new(coarser.len(), finest)?,
+        late_ms,
     };
     let coarser = coarser
         .iter()
@@ -319,7 +379,7 @@ pub fn plan(
         .collect::<Result<Vec<_>, _>>()?;
     let from = match start {
         Start::Time { timestamp_ms } => fine.after(timestamp_ms)?,
-        Start::Snapshot { timestamp_ms } => fine.after(timestamp_ms - LATE_MS)?,
+        Start::Snapshot { timestamp_ms } => fine.after(timestamp_ms - late_ms)?,
         Start::After { stream, state } if stream == fine.known.index => state,
         Start::After { stream, state } => {
             let Some(coarse) = coarser.get(stream..) else {
@@ -330,7 +390,7 @@ pub fn plan(
             };
             match fine.end(state.timestamp_ms)? {
                 Some(end) => fine.resumed(coarse, state.timestamp_ms, end.low)?,
-                None => return Err(fine.too_old(state.timestamp_ms)?),
+                None => return fine.too_old(state.timestamp_ms),
             }
         }
     };
@@ -374,6 +434,22 @@ impl<'a> Known<'a> {
         locate_from(self.source, self.latest, t)
     }
 
+    /// Reads ahead the states from the one after `from` to about the first after `t`, which a scan reads in turn: as
+    /// many as diffs come in that time at the rate between `from` and the latest state, and one more.
+    fn prefetch_to(&self, from: State, t: i64) {
+        let Some(rate) = ms_per_diff(from, self.latest) else {
+            return;
+        };
+        let ahead = sequences_in(t - from.timestamp_ms, rate)
+            .saturating_add(1)
+            .min(MAX_AHEAD);
+        let last = from
+            .sequence
+            .saturating_add(ahead)
+            .min(self.latest.sequence);
+        self.source.prefetch(from.sequence + 1..=last);
+    }
+
     /// The state after `state`, if the stream has one yet.
     fn next(&self, state: State) -> Result<Option<State>, OscError> {
         if state.sequence >= self.latest.sequence {
@@ -415,6 +491,8 @@ struct End {
 /// The finest stream, whose diffs every other stream's diffs are made of.
 struct Fine<'a> {
     known: Known<'a>,
+    /// How late a change may show in a diff, in milliseconds.
+    late_ms: i64,
 }
 
 impl Fine<'_> {
@@ -423,15 +501,16 @@ impl Fine<'_> {
     fn after(&self, t: i64) -> Result<State, OscError> {
         match self.end(t)? {
             Some(end) => Ok(end.high),
-            None => Err(self.too_old(t)?),
+            None => self.too_old(t),
         }
     }
 
-    /// The error for a position at `t` that this stream does not go back to.
-    fn too_old(&self, t: i64) -> Result<OscError, OscError> {
+    /// The [`OscError::TooOld`] error for a position at `t` this stream does not go back to, or the error searching
+    /// for its oldest state: an `Err` always.
+    fn too_old<T>(&self, t: i64) -> Result<T, OscError> {
         let (Located::At(oldest) | Located::BeforeOldest(oldest)) =
-            self.known.locate(t - LATE_MS)?;
-        Ok(OscError::TooOld {
+            self.known.locate(t - self.late_ms)?;
+        Err(OscError::TooOld {
             timestamp_ms: t,
             oldest,
         })
@@ -442,9 +521,10 @@ impl Fine<'_> {
         // A state at or before `t - LATE_MS` is before every finest diff after the coarser one, so the coarser diff
         // ends before the first state after it that is after `t`; a run of the merge that reached a state at `t`
         // ended it there.
-        let Located::At(mut high) = self.known.locate(t - LATE_MS)? else {
+        let Located::At(mut high) = self.known.locate(t - self.late_ms)? else {
             return Ok(None);
         };
+        self.known.prefetch_to(high, t);
         let mut low = None;
         while let Some(next) = self.known.next(high)?
             && next.timestamp_ms <= t
@@ -555,7 +635,7 @@ fn whole(
         }
     };
     // The last that ends at or before `to`.
-    let Located::At(mut last) = known.locate(to.timestamp_ms + LATE_MS)? else {
+    let Located::At(mut last) = known.locate(to.timestamp_ms + fine.late_ms)? else {
         return Ok(None);
     };
     let tail = loop {

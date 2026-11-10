@@ -141,6 +141,10 @@ _check-msrv-default:  (cargo-install 'cargo-minimal-versions') (cargo-install 'c
     export CARGO="$(rustup which --toolchain "$toolchain" cargo)"
     cargo minimal-versions check --direct --all-features --package {{main_crate}}
 
+# Run release-plz, which CI also runs to publish the crates: `just release update` updates versions and changelogs
+release *args='':  (cargo-install 'release-plz')
+    release-plz {{args}}
+
 # Run the osmflow command, built in debug mode, with the given arguments: `just run stats dc.osm.pbf`
 [positional-arguments]
 run *args:

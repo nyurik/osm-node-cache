@@ -53,7 +53,9 @@ pub use self::error::{OscError, StateError, XmlError, XmlPosition};
 #[cfg(feature = "http")]
 pub use self::http::HttpFetch;
 pub use self::parse::OscReader;
-pub use self::plan::{LATE_MS, Located, Start, StateSource, Step, locate, plan};
+pub use self::plan::{
+    LATE_MS, Located, PARALLEL, Start, StateSource, Step, locate, plan, plan_with_late,
+};
 pub use self::replication::{
     Diff, Diffs, Fetch, Replication, ServerStates, State, path_sequence, sequence_path,
 };
