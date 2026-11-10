@@ -50,8 +50,9 @@ jobs:
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features --all-targets
-      - run: cargo test --workspace --all-features --doc
+      - uses: taiki-e/install-action@v2
+        with: { tool: just }
+      - run: just env-info test
 
   test-msrv:
     name: Test MSRV
@@ -86,15 +87,14 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/llvm-cov/lcov.info
 
-  # Build the release binaries on pull requests without uploading them, so a target that stops building shows up before
-  # a release. The same matrix uploads them in `release-binaries` below.
+  # Build the release binaries on every run, kept as its artifacts, which release-plz attaches to an osmflow-cli release.
+  # Run by hand with cli_tag, it builds that tag.
   build-binaries:
     name: Build ${{ matrix.target }}
-    if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: &binary-targets
+      matrix:
         include:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-latest }
@@ -104,24 +104,21 @@ jobs:
           - { target: aarch64-pc-windows-msvc, os: windows-latest }
     steps:
       - uses: actions/checkout@v7
-        with: { persist-credentials: false }
+        with:
+          ref: ${{ inputs.cli_tag }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - if: contains(matrix.target, '-linux-')
         uses: taiki-e/setup-cross-toolchain-action@v1
         with: { target: '${{ matrix.target }}' }
-      - if: endsWith(matrix.target, 'windows-msvc')
-        run: echo "RUSTFLAGS=${RUSTFLAGS} -C target-feature=+crt-static" >> "${GITHUB_ENV}"
-      - uses: taiki-e/upload-rust-binary-action@v1
+      - uses: taiki-e/install-action@v2
+        with: { tool: just }
+      - run: just dist '${{ matrix.target }}'
+      - uses: actions/upload-artifact@v7
         with:
-          bin: osmflow
-          package: osmflow-cli
-          target: '${{ matrix.target }}'
-          tar: unix
-          zip: windows
-          include: LICENSE-MIT,LICENSE-APACHE
-          checksum: sha256
-          locked: true
-          dry-run: true
+          name: osmflow-${{ matrix.target }}
+          path: target/dist/osmflow-${{ matrix.target }}.*
+          if-no-files-found: error
 
   cpd:
     name: Copy/Paste Detection
@@ -168,9 +165,11 @@ jobs:
     if: |
       always()
       && needs.ci-passed.result == 'success'
-      && github.event_name == 'push'
-      && github.ref == 'refs/heads/main'
       && github.repository_owner == 'nyurik'
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || (github.event_name == 'workflow_dispatch' && startsWith(inputs.cli_tag, 'osmflow-cli-v'))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -179,13 +178,12 @@ jobs:
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
-    outputs:
-      cli_tag: ${{ steps.cli.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish to crates.io if crate's version is newer
+      - if: github.event_name == 'push'
+        name: Publish to crates.io if crate's version is newer
         uses: release-plz/action@v0.5
         id: release
         with: { command: release }
@@ -203,47 +201,13 @@ jobs:
         with: { command: release-pr }
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-
-  # Attach the osmflow binaries to the GitHub release of osmflow-cli, named as the binstall metadata in
-  # crates/osmflow-cli/Cargo.toml expects: osmflow-<target>.tar.gz, or .zip on Windows. It runs once release-plz has
-  # released osmflow-cli, or when the workflow is run by hand with the tag of an existing release (cli_tag).
-  # always(): without it, the job is skipped whenever any job above it is, and build-binaries, which ci-passed needs,
-  # is skipped on every push.
-  release-binaries:
-    name: Release ${{ matrix.target }}
-    needs: [ release-plz ]
-    if: |
-      always()
-      && (
-        (needs.release-plz.result == 'success' && needs.release-plz.outputs.cli_tag != '')
-        || (github.event_name == 'workflow_dispatch' && startsWith(inputs.cli_tag, 'osmflow-cli-v'))
-      )
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix: *binary-targets
-    steps:
-      - uses: actions/checkout@v7
+      # Attach this run's binaries to the osmflow-cli release just made, or to cli_tag's; the release's notes are kept
+      - if: steps.cli.outputs.tag || inputs.cli_tag
+        uses: actions/download-artifact@v8
+        with: { pattern: osmflow-*, merge-multiple: true, path: target/dist }
+      - if: steps.cli.outputs.tag || inputs.cli_tag
+        uses: softprops/action-gh-release@v3
         with:
-          ref: ${{ needs.release-plz.outputs.cli_tag || inputs.cli_tag }}
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - if: contains(matrix.target, '-linux-')
-        uses: taiki-e/setup-cross-toolchain-action@v1
-        with: { target: '${{ matrix.target }}' }
-      - if: endsWith(matrix.target, 'windows-msvc')
-        run: echo "RUSTFLAGS=${RUSTFLAGS} -C target-feature=+crt-static" >> "${GITHUB_ENV}"
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: osmflow
-          package: osmflow-cli
-          target: '${{ matrix.target }}'
-          ref: refs/tags/${{ needs.release-plz.outputs.cli_tag || inputs.cli_tag }}
-          tar: unix
-          zip: windows
-          include: LICENSE-MIT,LICENSE-APACHE
-          checksum: sha256
-          locked: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.cli.outputs.tag || inputs.cli_tag }}
+          files: target/dist/*
+          fail_on_unmatched_files: true

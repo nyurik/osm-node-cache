@@ -37,7 +37,7 @@ memmap2 = "0.9"
 osm-bench = { path = "benches/common" }
 osmflow = { path = "crates/osmflow", version = "0.13.0" }
 osmflow-sync = { path = "crates/osmflow-sync", version = "0.13.0" }
-osmpbf = { version = "0.3.8", default-features = false, features = ["zlib-ng"] }
+osmpbf = { version = "0.3.8", default-features = false }
 osmpbfreader = "0.19"
 postgres = "0.19.14"
 rand = "0.10"
@@ -109,3 +109,9 @@ cargo = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 missing_errors_doc = "allow"
 module_name_repetitions = "allow"
+
+# libz-ng-sys, which only the osmpbf bench uses, builds zlib-ng with CMake, in its Debug configuration at opt-level 0.
+# On Windows that links the debug C runtime, which conflicts with the one Rust uses (linker warning LNK4098), so it is
+# built optimized, which CMake links with the release runtime
+[profile.dev.package.libz-ng-sys]
+opt-level = 1

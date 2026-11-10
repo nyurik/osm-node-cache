@@ -1,5 +1,13 @@
 # osmflow-sync
 
+[![GitHub repo](https://img.shields.io/badge/github-nyurik/osmflow-8da0cb?logo=github)](https://github.com/nyurik/osmflow)
+[![crates.io version](https://img.shields.io/crates/v/osmflow-sync)](https://crates.io/crates/osmflow-sync)
+[![crate usage](https://img.shields.io/crates/d/osmflow-sync)](https://crates.io/crates/osmflow-sync)
+[![docs.rs status](https://img.shields.io/docsrs/osmflow-sync)](https://docs.rs/osmflow-sync)
+[![crates.io license](https://img.shields.io/crates/l/osmflow-sync)](https://github.com/nyurik/osmflow/blob/main/LICENSE-APACHE)
+[![CI build status](https://github.com/nyurik/osmflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nyurik/osmflow/actions)
+[![Codecov](https://img.shields.io/codecov/c/github/nyurik/osmflow?component=osmflow-sync)](https://app.codecov.io/gh/nyurik/osmflow/components)
+
 Keeps OpenStreetMap data in PostgreSQL with PostGIS: imports a PBF file, a planet or an extract, then applies the
 replication diffs after it, so the database follows OpenStreetMap minute by minute, hour by hour or day by day. Every
 row says when it last changed, and a log lists every change, so tables made from these can be kept current too.
