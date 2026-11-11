@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.13.0...osmflow-cli-v0.13.1) - 2026-11-11
+
+### Changed
+
+- `osmflow sync update` goes through `osmflow-sync`'s new `Mirror::open`, and applies the diffs as before; it checks
+  the reverse index against the database before it reads the stream ([#56](https://github.com/nyurik/osmflow/pull/56)).
+- The release binaries are built and packed by `just dist`, on every CI run, and attached to the release by the
+  release-plz job: the same `osmflow-<target>.tar.gz`, or `.zip` on Windows, each with the binary and both licenses,
+  as `cargo binstall osmflow-cli` expects. The Windows binaries link the C runtime statically, as before, so they
+  need no Visual C++ redistributable. The release has no `.sha256` files any more: GitHub shows each file's SHA-256
+  digest ([#53](https://github.com/nyurik/osmflow/pull/53)).
+
+### Other
+
+- Building the whole workspace, as the coverage run does, no longer fails on osmpbf's two zlib backends
+  ([#54](https://github.com/nyurik/osmflow/pull/54)).
+- The README has status badges: crates.io, docs.rs, license, CI, and this crate's coverage from Codecov ([#53](https://github.com/nyurik/osmflow/pull/53)).
+
 ## [0.13.0](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.12.0...osmflow-cli-v0.13.0) - 2026-11-10
 
 ### Added

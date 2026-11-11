@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/nyurik/osmflow/compare/osmflow-v0.13.0...osmflow-v0.13.1) - 2026-11-11
+
+The library's code is unchanged: this release fixes how its tests are built, and adds badges to its README.
+
+### Fixed
+
+- A build of the whole workspace, as the coverage run makes, no longer fails on osmpbf's two zlib backends: osmflow's
+  tests asked for its `rust-zlib` and the osmpbf benchmark for its `zlib-ng`, which osmpbf refuses together. osmflow's
+  tests now leave the backend to flate2, and so decode with zlib-rs, as osmflow's users do; only the benchmark builds
+  zlib-ng ([#53](https://github.com/nyurik/osmflow/pull/53)) ([#54](https://github.com/nyurik/osmflow/pull/54)).
+
+### Other
+
+- The README has status badges: crates.io, docs.rs, license, CI, and this crate's coverage from Codecov ([#53](https://github.com/nyurik/osmflow/pull/53)).
+
 ## [0.13.0](https://github.com/nyurik/osmflow/compare/osmflow-v0.12.0...osmflow-v0.13.0) - 2026-11-10
 
 ### Other
