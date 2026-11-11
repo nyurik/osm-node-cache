@@ -10,7 +10,7 @@ use osmflow::Location;
 use osmflow::nodes::PagedStore;
 use osmflow::nodes::prelude::*;
 use osmflow::osc::Replication;
-use osmflow_sync::{FileStamp, ImportOpts, Mirror, Rebuild, UpdateOpts};
+use osmflow_sync::{FileStamp, ImportOpts, Mirror, NodeWay, Rebuild, UpdateOpts};
 use postgres::{Client, NoTls};
 
 const PBF: &str = concat!(
@@ -93,8 +93,22 @@ fn import_update_rebuild() {
         (restored.nodes.unwrap().rev, restored.index.unwrap().rev),
         (1, 1)
     );
-    let stats = mirror.update(&replication, &until(1712, 1)).unwrap();
+    // One open mirror for the lookups and the update. Opening it brings the index up to revision 4 from the
+    // database's rows, which only adds: it still lists way 210476684 for the node.
+    let mut open = mirror.open().unwrap();
+    assert_eq!(
+        open.ways_through(&[NODE]).unwrap(),
+        [way(NODE, 178_300_745), way(NODE, 210_476_684)]
+    );
+    let stats = open.update(&replication, &until(1712, 1)).unwrap();
     assert_eq!(stats.batches, 1);
+    // The ways through two nodes, asked in any order, with a repeat and a negative ID
+    let through = open.ways_through(&[13_000_000_000, NODE, NODE, -1]);
+    assert_eq!(
+        through.unwrap(),
+        [way(NODE, 178_300_745), way(13_000_000_000, 2_000_000_000)]
+    );
+    drop(open);
     assert_eq!(
         changes(&mut db, 5),
         [
@@ -105,6 +119,8 @@ fn import_update_rebuild() {
         .map(owned)
     );
     check_files(&mirror, 5);
+
+    update_failures(&mirror, &replication, &mut db, &saved, &one_by_one);
 
     // The same diffs in one batch: the same rows, each way changed once
     import(&mirror);
@@ -133,6 +149,63 @@ fn import_update_rebuild() {
     }
 }
 
+/// Updates that fail on an open mirror, from a fresh import: a batch the database refuses, a database behind the
+/// files, and a node file of another database (from the files in `saved`). `one_by_one` holds the rows after diffs
+/// 1709 to 1711 applied one per batch.
+fn update_failures(
+    mirror: &Mirror,
+    replication: &Replication,
+    db: &mut Client,
+    saved: &Path,
+    one_by_one: &[String],
+) {
+    // The third batch of an update fails after its moved node reached the node file, the first two committed: the
+    // retry on the same mirror applies the third, moving the way through the node, and gives the same rows
+    import(mirror);
+    let mut open = mirror.open().unwrap();
+    db.batch_execute(
+        "CREATE FUNCTION osm.fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE 'injected'; END $$; \
+         CREATE TRIGGER fail BEFORE INSERT ON osm.batches FOR EACH ROW WHEN (NEW.rev = 4) \
+         EXECUTE FUNCTION osm.fail();",
+    )
+    .unwrap();
+    let err = open.update(replication, &until(1711, 1)).unwrap_err();
+    assert!(format!("{err:?}").contains("injected"), "{err:?}");
+    assert_eq!(minor_rev(db, 178_300_745), (1, 2));
+    db.batch_execute("DROP TRIGGER fail ON osm.batches; DROP FUNCTION osm.fail();")
+        .unwrap();
+    let stats = open.update(replication, &until(1711, 1)).unwrap();
+    assert_eq!(stats.batches, 1);
+    assert_eq!(rows(db), one_by_one);
+    assert_eq!(minor_rev(db, 178_300_745), (2, 4));
+    assert_eq!(minor_rev(db, 210_476_684), (0, 3));
+    // The files are checked on every update: a database behind them, as after a restore, is an error
+    db.batch_execute("UPDATE osm.state SET rev = rev - 1")
+        .unwrap();
+    let err = open.update(replication, &until(1712, 1)).unwrap_err();
+    assert!(err.to_string().contains("ahead of the database's"), "{err}");
+    drop(open);
+    db.batch_execute("UPDATE osm.state SET rev = rev + 1")
+        .unwrap();
+    // A node file of another database, under an index of this one, is an error of the first update
+    for entry in fs::read_dir(saved).unwrap() {
+        let name = entry.unwrap().file_name();
+        if name.to_string_lossy().starts_with("nodes.cache") {
+            fs::copy(saved.join(&name), mirror.node_path().with_file_name(&name)).unwrap();
+        }
+    }
+    let err = mirror
+        .open()
+        .unwrap()
+        .update(replication, &until(1712, 1))
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("nodes.cache was not made for this database"),
+        "{err}"
+    );
+}
+
 fn import(mirror: &Mirror) {
     let opts = ImportOpts {
         replace: true,
@@ -143,6 +216,10 @@ fn import(mirror: &Mirror) {
         (stats.nodes, stats.tagged_nodes, stats.ways, stats.relations),
         (3097, 238, 151, 17)
     );
+}
+
+fn way(node: i64, way: i64) -> NodeWay {
+    NodeWay { node, way }
 }
 
 fn until(sequence: u64, max_diffs: u64) -> UpdateOpts {

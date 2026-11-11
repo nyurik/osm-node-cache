@@ -83,8 +83,14 @@ impl ReverseIndex {
         .map_err(|e| SyncError::index(&self.path, e))
     }
 
-    /// The (node, way) pairs of `nodes`, which must be sorted.
-    pub(crate) fn ways_of(&self, nodes: &[u64]) -> Result<Vec<Pair>, SyncError> {
+    /// The (node, way) pairs of `nodes`, in any order and with repeats, sorted.
+    pub(crate) fn ways_of(
+        &self,
+        nodes: impl IntoIterator<Item = u64>,
+    ) -> Result<Vec<Pair>, SyncError> {
+        let mut nodes: Vec<u64> = nodes.into_iter().collect();
+        nodes.sort_unstable();
+        nodes.dedup();
         (|| -> Result<_, redb::Error> {
             let txn = self.db.begin_read()?;
             let ways = txn.open_table(WAYS)?;
@@ -256,11 +262,11 @@ mod tests {
         let (index, count) = ReverseIndex::create(&path, 7, 1, pairs.into_iter().map(Ok)).unwrap();
         assert_eq!(count, 3);
         assert_eq!(index.stamp().unwrap(), (7, 1));
-        assert_eq!(index.ways_of(&[1, 2]).unwrap(), [(1, 10), (1, 11)]);
+        assert_eq!(index.ways_of([2, 1, 2]).unwrap(), [(1, 10), (1, 11)]);
         index.apply(&[(1, 10), (300, 10)], &[(2, 12)], 2).unwrap();
         drop(index);
         let index = ReverseIndex::open(&path).unwrap();
         assert_eq!(index.stamp().unwrap(), (7, 2));
-        assert_eq!(index.ways_of(&[1, 2, 300]).unwrap(), [(1, 11), (2, 12)]);
+        assert_eq!(index.ways_of([1, 2, 300]).unwrap(), [(1, 11), (2, 12)]);
     }
 }
