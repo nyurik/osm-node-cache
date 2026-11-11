@@ -49,6 +49,9 @@ fn import_and_update() -> Result<(), Box<dyn std::error::Error>> {
 * **A way's `minor`** counts the batches that changed its geometry since its version: OSM gives a way a new version
   when its tags or node list change, not when one of its nodes moves. A moved node rewrites the geometry of every way
   through it, adds 1 to their `minor`, and logs them with action `g`. A new version of the way sets `minor` back to 0.
+* **The ways through a node** come from the reverse index: [`Mirror::open`], then `ways_through`, the lookup an
+  update makes itself. It may list a way that no longer has the node, after a crash between the database's commit
+  and the index's, and may miss ways after a failed update until the next one succeeds.
 * **`rev`, `minor` and `osm.changes` depend on the batches:** a way whose nodes move in two diffs has `minor` 2 if the
   diffs were applied in two batches, and 1 if in one, and the log lists each object once per batch. Two databases
   kept from one stream have the same rows otherwise.

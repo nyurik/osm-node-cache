@@ -14,7 +14,7 @@ use crate::copy::Rows;
 use crate::db::{self, DbState, Table};
 use crate::files::{read_diffs, set_locations, way_pairs};
 use crate::index::{Pair, ReverseIndex};
-use crate::{Mirror, SyncError};
+use crate::{OpenMirror, SyncError};
 
 /// How to update.
 #[derive(Debug, Clone)]
@@ -85,17 +85,48 @@ impl Changes {
     }
 }
 
-pub(crate) fn update(
-    m: &Mirror,
+impl OpenMirror {
+    /// Applies the diffs of `replication` after the database's sequence, up to the stream's latest or
+    /// [`UpdateOpts::until`]. The files are checked against the database first, and brought up to it if a crash or an
+    /// earlier error left them behind; a file of another database or ahead of it is an error, as on
+    /// [`Mirror::open`](crate::Mirror::open).
+    pub fn update(
+        &mut self,
+        replication: &Replication,
+        opts: &UpdateOpts,
+    ) -> Result<UpdateStats, SyncError> {
+        let mut state = DbState::read(&mut self.client)?;
+        check_stream(&state, replication)?;
+        self.sync_index(&state)?;
+        // Out of the mirror until every batch succeeds: a failed batch can leave locations in the node file that its
+        // database did not commit, so the file is opened again on the next update
+        let mut store = self.take_node_file(&state, replication)?;
+        if !self.temp_tables {
+            create_temp_tables(&mut self.client)?;
+            self.temp_tables = true;
+        }
+        let total = apply_diffs(
+            &mut self.client,
+            &mut store,
+            &self.index,
+            &mut state,
+            replication,
+            opts,
+        )?;
+        self.store = Some(store);
+        Ok(total)
+    }
+}
+
+/// Applies the diffs after `state`'s sequence in batches, moving `state` along.
+fn apply_diffs(
+    client: &mut Client,
+    store: &mut PagedStore,
+    index: &ReverseIndex,
+    state: &mut DbState,
     replication: &Replication,
     opts: &UpdateOpts,
 ) -> Result<UpdateStats, SyncError> {
-    let mut client = db::connect(&m.url)?;
-    let mut state = DbState::read(&mut client)?;
-    check_stream(&state, replication)?;
-    let mut store = m.open_node_file(&mut client, &state, replication)?;
-    let index = m.open_index(&mut client, &state)?;
-    create_temp_tables(&mut client)?;
     let latest = match opts.until {
         Some(until) => until,
         None => replication.state()?.sequence,
@@ -116,7 +147,7 @@ pub(crate) fn update(
             last: last.cast_signed(),
             timestamp: last_state.map(|s| s.timestamp),
         };
-        let applied = apply(&mut client, &mut store, &index, &changes, &batch)?;
+        let applied = apply(client, store, index, &changes, &batch)?;
         info!(
             rev = batch.rev,
             sequences = format!("{next}..={last}"),
@@ -212,7 +243,7 @@ fn apply(
 ) -> Result<UpdateStats, SyncError> {
     let t = Instant::now();
     let moved = set_locations(store, changes)?;
-    let through = index.ways_of(&moved)?;
+    let through = index.ways_of(moved.iter().copied())?;
     // The node lists of the changed ways, and of the ways the index says pass through a moved node
     let mut ids: Vec<i64> = changes
         .ways

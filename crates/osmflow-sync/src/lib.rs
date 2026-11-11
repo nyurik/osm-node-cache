@@ -16,6 +16,7 @@ use std::{fmt, thread};
 use osmflow::nodes::PagedStore;
 use osmflow::nodes::prelude::*;
 use osmflow::osc::Replication;
+use postgres::Client;
 
 pub use crate::db::DbState;
 pub use crate::error::SyncError;
@@ -86,14 +87,31 @@ impl Mirror {
         import::import(self, pbf.as_ref(), replication, opts)
     }
 
-    /// Applies the diffs of `replication` after the database's sequence, up to the stream's latest or
-    /// [`UpdateOpts::until`]. The files are brought up to the database first if a crash left them behind.
+    /// [`open`](Self::open), then [`OpenMirror::update`]: the diffs of `replication` after the database's sequence.
     pub fn update(
         &self,
         replication: &Replication,
         opts: &UpdateOpts,
     ) -> Result<UpdateStats, SyncError> {
-        update::update(self, replication, opts)
+        self.open()?.update(replication, opts)
+    }
+
+    /// Connects to the database and opens the reverse index, checked against the database and brought up to it if a
+    /// crash left it behind: an error if it is missing, or of another database or ahead of it, which
+    /// [`rebuild`](Self::rebuild) fixes. The node file is opened by the first update, and stays open with the index
+    /// until the mirror is dropped; only one process can have either open at a time.
+    pub fn open(&self) -> Result<OpenMirror, SyncError> {
+        let mut client = db::connect(&self.url)?;
+        let state = DbState::read(&mut client)?;
+        let mut open = OpenMirror {
+            mirror: self.clone(),
+            client,
+            index: index::ReverseIndex::open(&self.index_path())?,
+            store: None,
+            temp_tables: false,
+        };
+        open.sync_index(&state)?;
+        Ok(open)
     }
 
     /// Makes the node file and the reverse index again, up to the database's revision. The database is only read.
@@ -131,6 +149,49 @@ impl Mirror {
     #[must_use]
     pub fn index_path(&self) -> PathBuf {
         self.dir.join("ways.redb")
+    }
+}
+
+/// A [`Mirror`] open for updates and lookups, from [`Mirror::open`]: its database connection, its reverse index, and
+/// after the first update its node file. An update borrows it mutably and a lookup shares it, so no lookup runs while
+/// a batch writes.
+pub struct OpenMirror {
+    mirror: Mirror,
+    client: Client,
+    index: index::ReverseIndex,
+    /// Taken out during an update, and put back when it succeeds.
+    store: Option<PagedStore>,
+    /// Whether the connection has the temporary tables a batch copies its rows into.
+    temp_tables: bool,
+}
+
+/// A way through a node, from the reverse index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeWay {
+    /// The node's ID.
+    pub node: i64,
+    /// The way's ID.
+    pub way: i64,
+}
+
+impl OpenMirror {
+    /// The ways through `nodes`, which may be in any order and repeat, sorted by node and way: the lookup an update
+    /// makes to find the ways a moved node changes. Negative node IDs, which only editors' files have, find none.
+    ///
+    /// The index lists every way through a node, but may list a way that no longer has it, after a crash between the
+    /// database's commit and the index's: check the ways against their node lists in `osm.ways`. After an update
+    /// fails, it may also miss ways until the next update succeeds.
+    pub fn ways_through(&self, nodes: &[i64]) -> Result<Vec<NodeWay>, SyncError> {
+        let nodes = nodes.iter().filter_map(|&n| u64::try_from(n).ok());
+        Ok(self
+            .index
+            .ways_of(nodes)?
+            .into_iter()
+            .map(|(node, way)| NodeWay {
+                node: node.cast_signed(),
+                way: way.cast_signed(),
+            })
+            .collect())
     }
 }
 

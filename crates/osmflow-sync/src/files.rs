@@ -9,13 +9,12 @@ use std::{fs, io};
 use osmflow::nodes::PagedStore;
 use osmflow::nodes::prelude::*;
 use osmflow::osc::{Replication, State};
-use postgres::Client;
 use tracing::info;
 
 use crate::db::DbState;
-use crate::index::{Pair, ReverseIndex};
+use crate::index::Pair;
 use crate::update::Changes;
-use crate::{Mirror, SyncError};
+use crate::{OpenMirror, SyncError};
 
 /// The node file's metadata entry with the database's identity.
 pub(crate) const ID_KEY: &str = "osmflow-sync.id";
@@ -96,73 +95,70 @@ pub(crate) fn read_diffs(
     Ok((changes, last))
 }
 
-impl Mirror {
-    /// Opens the node file, and brings it up to the database from the cached diffs if it is behind.
-    pub(crate) fn open_node_file(
-        &self,
-        client: &mut Client,
+impl OpenMirror {
+    /// Checks the reverse index against the database, and brings it up to the database from its rows if it is behind.
+    pub(crate) fn sync_index(&mut self, state: &DbState) -> Result<(), SyncError> {
+        let (id, rev) = self.index.stamp()?;
+        check(&self.mirror.index_path(), Some(id), rev, state)?;
+        if rev == state.rev {
+            return Ok(());
+        }
+        let rows = self.client.query(
+            "SELECT id, nodes FROM osm.ways WHERE id IN \
+             (SELECT id FROM osm.changes WHERE kind = 'w' AND action = 'u' AND rev > $1)",
+            &[&rev],
+        )?;
+        let mut add: Vec<Pair> = Vec::new();
+        for row in rows {
+            add.extend(way_pairs(row.get(0), &row.get::<_, Vec<i64>>(1)));
+        }
+        add.sort_unstable();
+        add.dedup();
+        self.index.apply(&[], &add, state.rev)?;
+        info!(
+            from = rev,
+            to = state.rev,
+            ways = add.len(),
+            "brought the reverse index up to the database"
+        );
+        Ok(())
+    }
+
+    /// Takes the node file, opening it if it is not open, checks it against the database, and brings it up to the
+    /// database from the cached diffs if it is behind.
+    pub(crate) fn take_node_file(
+        &mut self,
         state: &DbState,
         replication: &Replication,
     ) -> Result<PagedStore, SyncError> {
-        let path = self.node_path();
-        if !path.exists() {
-            return Err(SyncError::Missing(path));
-        }
-        let mut store = PagedStore::open(&path)?;
+        let path = self.mirror.node_path();
+        let mut store = match self.store.take() {
+            Some(store) => store,
+            None if path.exists() => PagedStore::open(&path)?,
+            None => return Err(SyncError::Missing(path)),
+        };
         let rev = store.stamp().cast_signed();
         check(&path, node_file_id(&store), rev, state)?;
-        if rev < state.rev {
-            let batches = client.query(
-                "SELECT rev, first_sequence, last_sequence FROM osm.batches WHERE rev > $1 ORDER BY rev",
-                &[&rev],
-            )?;
-            for b in batches {
-                let (rev, first, last): (i64, i64, i64) = (b.get(0), b.get(1), b.get(2));
-                let (changes, _) =
-                    read_diffs(replication, first.cast_unsigned()..=last.cast_unsigned())?;
-                set_locations(&mut store, &changes)?;
-                store.commit(rev.cast_unsigned())?;
-            }
-            info!(
-                from = rev,
-                to = state.rev,
-                "brought the node file up to the database"
-            );
+        if rev == state.rev {
+            return Ok(store);
         }
+        let batches = self.client.query(
+            "SELECT rev, first_sequence, last_sequence FROM osm.batches WHERE rev > $1 ORDER BY rev",
+            &[&rev],
+        )?;
+        for b in batches {
+            let (rev, first, last): (i64, i64, i64) = (b.get(0), b.get(1), b.get(2));
+            let (changes, _) =
+                read_diffs(replication, first.cast_unsigned()..=last.cast_unsigned())?;
+            set_locations(&mut store, &changes)?;
+            store.commit(rev.cast_unsigned())?;
+        }
+        info!(
+            from = rev,
+            to = state.rev,
+            "brought the node file up to the database"
+        );
         Ok(store)
-    }
-
-    /// Opens the reverse index, and adds the ways the database changed since its revision if it is behind.
-    pub(crate) fn open_index(
-        &self,
-        client: &mut Client,
-        state: &DbState,
-    ) -> Result<ReverseIndex, SyncError> {
-        let path = self.index_path();
-        let index = ReverseIndex::open(&path)?;
-        let (id, rev) = index.stamp()?;
-        check(&path, Some(id), rev, state)?;
-        if rev < state.rev {
-            let rows = client.query(
-                "SELECT id, nodes FROM osm.ways WHERE id IN \
-                 (SELECT id FROM osm.changes WHERE kind = 'w' AND action = 'u' AND rev > $1)",
-                &[&rev],
-            )?;
-            let mut add: Vec<Pair> = Vec::new();
-            for row in rows {
-                add.extend(way_pairs(row.get(0), &row.get::<_, Vec<i64>>(1)));
-            }
-            add.sort_unstable();
-            add.dedup();
-            index.apply(&[], &add, state.rev)?;
-            info!(
-                from = rev,
-                to = state.rev,
-                ways = add.len(),
-                "brought the reverse index up to the database"
-            );
-        }
-        Ok(index)
     }
 }
 
