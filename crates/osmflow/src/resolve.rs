@@ -19,7 +19,6 @@ use crate::reader::PbfReader;
 /// Why a way or a relation has no geometry.
 #[cfg(feature = "geometry")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum GeometryError {
     /// A node of the way, or of a ring of the relation, has no location: the store does not have it, as when the way
     /// leaves an extract.
