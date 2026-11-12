@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/nyurik/osmflow/compare/osmflow-sync-v0.14.0...osmflow-sync-v0.14.1) - 2026-11-12
+
+### Other
+
+- updated the following local packages: osmflow
+
 ## [0.14.0](https://github.com/nyurik/osmflow/compare/osmflow-sync-v0.13.1...osmflow-sync-v0.14.0) - 2026-11-12
 
 ### Changed
