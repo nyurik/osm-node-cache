@@ -108,6 +108,40 @@ type. Large blobs of such blocks are not even read past their start while most b
 the planet's ways or relations reads a fraction of the file. [`PbfReader::read_mode`] overrides how blobs are read, for
 storage where many small reads or much data cost more than usual.
 
+## Reading in ranges
+
+[`PbfReader::split`] cuts the file into ranges of whole blobs, from their headers alone, and
+[`PbfReader::blocks_in`] reads one range on the calling thread, with the reader's filters. Threads of the caller's can
+then read the ranges in any order, and putting their blocks back in range order gives the file's order.
+
+```rust
+use std::path::Path;
+use std::thread;
+
+use osmflow::{PbfError, PbfReader, Select};
+
+fn count_in_ranges(path: &Path) -> Result<usize, PbfError> {
+    let file = PbfReader::open(path)?.ways_where(|strings| strings.has("building"));
+    let ranges = file.split(32 << 20)?;
+    thread::scope(|scope| {
+        let threads: Vec<_> = ranges
+            .iter()
+            .map(|&range| {
+                let file = &file;
+                scope.spawn(move || -> Result<usize, PbfError> {
+                    let mut ways = 0;
+                    for block in file.blocks_in(range, Select::all().without_nodes())? {
+                        ways += block?.ways().len();
+                    }
+                    Ok(ways)
+                })
+            })
+            .collect();
+        threads.into_iter().map(|t| t.join().expect("no panic")).sum()
+    })
+}
+```
+
 ## Changes
 
 ```rust

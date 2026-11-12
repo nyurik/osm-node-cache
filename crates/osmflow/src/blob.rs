@@ -181,6 +181,12 @@ impl Want {
         start: usize::MAX,
         chunk: READ_BUFFER,
     };
+
+    /// Only the blob's header, in one small read: none of the blob after it is read.
+    pub(crate) const HEADER: Self = Self {
+        start: 0,
+        chunk: HEADER_ROOM,
+    };
 }
 
 /// Reads the blobs of a file in order, each whole or only its start, and stops after the first error. It reads the
@@ -255,7 +261,8 @@ fn drop_cached(file: &File, offset: u64, len: u64) {
 fn drop_cached(_file: &File, _offset: u64, _len: u64) {}
 
 impl BlobReader {
-    pub(crate) fn open(path: &Path) -> Result<Self> {
+    /// Opens the file to read its blobs from `position`, which must be the start of a blob.
+    pub(crate) fn open(path: &Path, position: BlobPosition) -> Result<Self> {
         let file = open_once(path)?;
         let file_len = file.metadata()?.len();
         Ok(Self {
@@ -264,12 +271,17 @@ impl BlobReader {
             buf: Vec::new(),
             buf_start: 0,
             chunk: READ_BUFFER,
-            position: BlobPosition { blob: 0, offset: 0 },
+            position,
             done: false,
             dropped: memory()
                 .is_some_and(|m| file_len > m / CACHED_SHARE)
-                .then_some(0),
+                .then_some(position.offset),
         })
+    }
+
+    /// The position of the next blob, where reading goes on.
+    pub(crate) fn position(&self) -> BlobPosition {
+        self.position
     }
 
     /// Drops the file from the page cache up to `DROP_LAG` behind the reader, once that is `DROP_STEP` past where it
@@ -416,14 +428,27 @@ pub(crate) struct DataBlobs {
     reader: BlobReader,
     loader: Arc<Loader>,
     ahead: Option<Result<RawBlob>>,
+    /// The offset of the first blob not handed out: the end of the file, or of a range.
+    end: u64,
 }
 
 impl DataBlobs {
     pub(crate) fn new(path: &Path, loader: Arc<Loader>) -> Result<Self> {
+        Self::new_in(path, loader, BlobPosition::FIRST, u64::MAX)
+    }
+
+    /// The data blobs from `start`, the start of a blob, up to the first blob at or after byte `end`.
+    pub(crate) fn new_in(
+        path: &Path,
+        loader: Arc<Loader>,
+        start: BlobPosition,
+        end: u64,
+    ) -> Result<Self> {
         let mut blobs = Self {
-            reader: BlobReader::open(path)?,
+            reader: BlobReader::open(path, start)?,
             loader,
             ahead: None,
+            end,
         };
         blobs.ahead = blobs.read();
         Ok(blobs)
@@ -452,6 +477,7 @@ impl Iterator for DataBlobs {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut current = match self.ahead.take()? {
+            Ok(blob) if blob.position.offset >= self.end => return None,
             Ok(blob) => blob,
             Err(e) => return Some(Err(e)),
         };
@@ -843,7 +869,7 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/osm-io/history-niue-230109.osm.pbf");
         let all = |dropped| {
-            let mut reader = BlobReader::open(&path).unwrap();
+            let mut reader = BlobReader::open(&path, BlobPosition::FIRST).unwrap();
             reader.dropped = dropped;
             let mut blobs = Vec::new();
             while let Some(blob) = reader.next_with(|_, _| Want::WHOLE) {
