@@ -16,7 +16,7 @@ use tracing::debug;
 
 use crate::blob::{BlobKind, BlobReader, DataBlobs, Loader, RawBlob, ReadMode, Want, open_once};
 use crate::block::{Block, Fields, Select, TagMode};
-use crate::error::{PbfError, Result};
+use crate::error::{BlobPosition, PbfError, Result};
 use crate::filter::{BlockStrings, Filters};
 use crate::header::Header;
 
@@ -30,6 +30,29 @@ const MIN_BYTES_IN_FLIGHT: usize = 256 << 20;
 const DECODED_FACTOR: usize = 3;
 /// How long a thread of the decoding pool waits for another to finish its work, when it has none of its own to run.
 const POOL_WAIT: Duration = Duration::from_millis(1);
+
+/// Consecutive data blobs of a file, from [`PbfReader::split`], for [`PbfReader::blocks_in`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlobRange {
+    /// The first blob of the range.
+    pub start: BlobPosition,
+    /// The byte offset after the range's last blob.
+    pub end: u64,
+}
+
+impl BlobRange {
+    /// The bytes of the file the range covers, blob headers included.
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        self.end - self.start.offset
+    }
+
+    /// Whether the range covers no bytes, which no range from [`PbfReader::split`] does.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 
 /// An OSM PBF file, with its header read.
 #[derive(Debug, Clone)]
@@ -49,7 +72,7 @@ impl PbfReader {
     /// format does not allow but some tools write, gets an empty [`Header`]; an empty file is an error.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let Some(blob) = BlobReader::open(&path)?
+        let Some(blob) = BlobReader::open(&path, BlobPosition::FIRST)?
             .next_with(|_, _| Want::WHOLE)
             .transpose()?
         else {
@@ -188,6 +211,53 @@ impl PbfReader {
                 let block = blob.and_then(|blob| loader.load(&blob));
                 block.map(|b| b.map(Block::with_mode)).transpose()
             }),
+        )
+    }
+
+    /// Splits the file's data blobs into consecutive ranges of about `bytes` bytes each, for reading them with
+    /// [`blocks_in`](Self::blocks_in) on threads of the caller's: each range starts at a blob, and holds at least one.
+    /// In file order, the ranges cover every data blob once; none if the file has none.
+    ///
+    /// It decodes only blob headers, with one small read per blob of at most a few KiB, which may take in the start of
+    /// the blob's data but does not inflate it: about 1.4 million reads for the planet.
+    pub fn split(&self, bytes: u64) -> Result<Vec<BlobRange>> {
+        let mut reader = BlobReader::open(&self.path, BlobPosition::FIRST)?;
+        let mut ranges: Vec<BlobRange> = Vec::new();
+        loop {
+            let start = reader.position();
+            let Some(blob) = reader.next_with(|_, _| Want::HEADER).transpose()? else {
+                return Ok(ranges);
+            };
+            if blob.kind != BlobKind::Data {
+                continue;
+            }
+            let end = reader.position().offset;
+            match ranges.last_mut() {
+                Some(range) if range.len() < bytes.max(1) => range.end = end,
+                _ => ranges.push(BlobRange { start, end }),
+            }
+        }
+    }
+
+    /// The blocks of `range`, from [`split`](Self::split) on this file, in file order, each decoded on the calling
+    /// thread, as [`blocks`](Self::blocks) reads them. The filters skip blocks as they do in a read of the whole file:
+    /// a block may still be skipped whole for what the first blob after the range starts with. As after any filtered
+    /// read, check [`split_string_tables`](Self::split_string_tables) once every range is read: ranges read in any
+    /// order or at once share what a whole read learns in file order, so a block before the first split table may
+    /// have been skipped by its start.
+    pub fn blocks_in<T: TagMode>(
+        &self,
+        range: BlobRange,
+        select: Select<T>,
+    ) -> Result<impl Iterator<Item = Result<Block<T>>> + use<T>> {
+        let loader = self.loader(select.fields())?;
+        Ok(
+            DataBlobs::new_in(&self.path, Arc::clone(&loader), range.start, range.end)?.filter_map(
+                move |blob| {
+                    let block = blob.and_then(|blob| loader.load(&blob));
+                    block.map(|b| b.map(Block::with_mode)).transpose()
+                },
+            ),
         )
     }
 

@@ -16,6 +16,11 @@ pub struct BlobPosition {
     pub offset: u64,
 }
 
+impl BlobPosition {
+    /// The start of a file, where its header blob is.
+    pub(crate) const FIRST: Self = Self { blob: 0, offset: 0 };
+}
+
 impl fmt::Display for BlobPosition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "blob {} at byte {}", self.blob, self.offset)

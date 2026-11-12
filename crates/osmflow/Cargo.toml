@@ -101,3 +101,7 @@ required-features = ["osc", "pbf"]
 [[test]]
 name = "replication"
 required-features = ["osc"]
+
+[[test]]
+name = "ranges"
+required-features = ["pbf"]

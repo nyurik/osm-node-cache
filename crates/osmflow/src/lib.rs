@@ -74,7 +74,7 @@ pub use crate::filter::BlockStrings;
 pub use crate::header::{BBox, Header};
 pub use crate::model::{Location, Member, MemberType};
 #[cfg(feature = "pbf")]
-pub use crate::reader::{ParOrdered, PbfReader};
+pub use crate::reader::{BlobRange, ParOrdered, PbfReader};
 #[cfg(feature = "geometry")]
 pub use crate::resolve::GeometryError;
 #[cfg(all(feature = "pbf", feature = "nodes"))]
