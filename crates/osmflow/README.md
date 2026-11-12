@@ -95,7 +95,9 @@ A way's nodes are looked up only when its geometry is asked for, and its node ID
 extract give `GeometryError::MissingNode`; files that store locations on their ways need no store.
 `Locator::area_or_line` makes a closed way a polygon when `AreaRules` say its tags make it an area (`building`,
 `landuse`, `natural` but not `coastline`, `area=yes`, and so on), and a line otherwise; the rules have a built-in list,
-which `add` and `remove` change.
+which `add` and `remove` change. `Locator::multi_polygon` builds the area of a multipolygon or boundary relation from
+its member ways' node IDs, as valid polygons whatever the roles say: a ring inside another is a hole, a ring inside that
+an island.
 
 ## Skipping blocks
 

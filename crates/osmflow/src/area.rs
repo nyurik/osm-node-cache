@@ -1,8 +1,15 @@
 //! Which closed ways are areas rather than closed lines, by their tags.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use geo_types::{Coord, LineString, MultiPolygon, Polygon};
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay::{IntOverlayOptions, Overlay};
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::core::solver::Solver;
+use i_overlay::i_float::int::point::IntPoint;
+
+use crate::Location;
 
 /// What a key says about a closed way that has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,11 +238,16 @@ fn owned(values: &[&str]) -> Vec<String> {
 }
 
 /// The closed rings the ways make, joined end to end where they share an end node, each as its node IDs with the
-/// first repeated at the end; chains that do not close, and rings of fewer than four nodes, are left out.
+/// first repeated at the end; a way listed twice counts once, and chains that do not close, and rings of fewer than
+/// four nodes, are left out.
 pub(crate) fn closed_rings<'w>(ways: impl IntoIterator<Item = &'w [i64]>) -> Vec<Vec<i64>> {
     let mut rings = Vec::new();
     let mut open: Vec<&[i64]> = Vec::new();
+    let mut seen = HashSet::new();
     for way in ways {
+        if !seen.insert(way) {
+            continue;
+        }
         match (way.first(), way.last()) {
             (Some(first), Some(last)) if way.len() >= 2 && first == last => {
                 rings.push(way.to_vec());
@@ -306,80 +318,100 @@ pub(crate) fn closed_rings<'w>(ways: impl IntoIterator<Item = &'w [i64]>) -> Vec
     rings
 }
 
-/// Twice the signed area of a closed ring: positive when it runs counterclockwise.
-fn signed_area(ring: &LineString<f64>) -> f64 {
-    ring.0
-        .windows(2)
-        .map(|w| w[0].x * w[1].y - w[1].x * w[0].y)
+/// Twice the signed area of a ring of points, the first not repeated at the end: positive when it runs
+/// counterclockwise. Exact, as the products of coordinates in the overlay's range fit an `i64` and their sum an `i128`.
+fn signed_area_2x(ring: &[IntPoint]) -> i128 {
+    let next = ring.iter().cycle().skip(1);
+    ring.iter()
+        .zip(next)
+        .map(|(a, b)| i128::from(i64::from(a.x) * i64::from(b.y) - i64::from(b.x) * i64::from(a.y)))
         .sum()
 }
 
-/// Whether `point` is inside the closed ring, by the even-odd rule; a point on its edge may count as either.
-fn inside(point: Coord<f64>, ring: &LineString<f64>) -> bool {
-    let mut inside = false;
-    for w in ring.0.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        if (a.y > point.y) != (b.y > point.y)
-            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
-        {
-            inside = !inside;
-        }
-    }
-    inside
-}
+/// How far from the origin `i_overlay` computes without overflow: it scales its own float input into this range.
+const OVERLAY_RANGE: i64 = 1 << 30;
 
-/// Whether `inner`, a ring that does not cross `outer`, lies inside it: tested at a vertex of `inner` that is not one
-/// of `outer`'s, as rings of a relation may touch at a node.
-fn ring_inside(inner: &LineString<f64>, outer: &LineString<f64>) -> bool {
-    let shared = |c: &Coord<f64>| outer.0.contains(c);
-    inner
-        .0
+/// The area the closed rings cover by the even-odd rule, as valid polygons, in degrees; each ring is its locations,
+/// with the first repeated at the end.
+///
+/// A point is in the area where it is inside an odd number of rings: a ring inside another is a hole of it, a ring
+/// inside that an island, and an edge two rings share cancels out. Rings may touch each other or themselves at a node,
+/// or cross: rings that touch are split there, and rings that cross get a vertex where they cross, on the integer grid.
+/// Outer rings run counterclockwise, holes clockwise. Every location is kept as it is, unless the rings span more than
+/// 2^31 units of 1e-7 degrees (about 214 degrees of longitude), which rounds them down to multiples of 2e-7 degrees.
+pub(crate) fn even_odd(rings: &[Vec<Location>]) -> MultiPolygon<f64> {
+    let (mut min, mut max) = ((i64::MAX, i64::MAX), (i64::MIN, i64::MIN));
+    for loc in rings.iter().flatten() {
+        let (x, y) = (i64::from(loc.lon), i64::from(loc.lat));
+        min = (min.0.min(x), min.1.min(y));
+        max = (max.0.max(x), max.1.max(y));
+    }
+    if min.0 > max.0 {
+        return MultiPolygon::new(Vec::new());
+    }
+    // Locations relative to the middle of their bounds, halved until they fit the overlay's range
+    let origin = (i64::midpoint(min.0, max.0), i64::midpoint(min.1, max.1));
+    let reach = (max.0 - min.0).max(max.1 - min.1) / 2 + 1;
+    let mut shift = 0;
+    while reach >> shift >= OVERLAY_RANGE {
+        shift += 1;
+    }
+    let narrow = |v: i64| i32::try_from(v).expect("the overlay's range and locations fit an i32");
+    let contours: Vec<Vec<IntPoint>> = rings
         .iter()
-        .find(|c| !shared(c))
-        .is_some_and(|&c| inside(c, outer))
-}
-
-/// The rings as polygons: a ring inside an odd number of others is a hole of the smallest ring around it, every other
-/// ring the outer ring of a polygon. Outer rings are made to run counterclockwise, holes clockwise.
-pub(crate) fn nest(rings: Vec<LineString<f64>>) -> MultiPolygon<f64> {
-    let mut rings: Vec<(f64, LineString<f64>)> = rings
-        .into_iter()
-        .map(|ring| (signed_area(&ring), ring))
+        .map(|ring| {
+            ring[..ring.len() - 1]
+                .iter()
+                .map(|loc| {
+                    IntPoint::new(
+                        narrow((i64::from(loc.lon) - origin.0) >> shift),
+                        narrow((i64::from(loc.lat) - origin.1) >> shift),
+                    )
+                })
+                .collect()
+        })
         .collect();
-    rings.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()));
-    // For each ring, larger first: its depth, and the polygon it is the outer ring of, or a hole of.
-    let mut depth: Vec<usize> = Vec::with_capacity(rings.len());
-    let mut polygon_of: Vec<usize> = Vec::with_capacity(rings.len());
-    let mut polygons: Vec<(LineString<f64>, Vec<LineString<f64>>)> = Vec::new();
-    for i in 0..rings.len() {
-        let parent = (0..i)
-            .rev()
-            .find(|&j| ring_inside(&rings[i].1, &rings[j].1));
-        let d = parent.map_or(0, |j| depth[j] + 1);
-        depth.push(d);
-        let (area, ring) = (rings[i].0, rings[i].1.clone());
-        if d % 2 == 0 {
-            let ring = if area < 0.0 { reversed(ring) } else { ring };
-            polygon_of.push(polygons.len());
-            polygons.push((ring, Vec::new()));
-        } else {
-            let parent = polygon_of[parent.expect("a ring at an odd depth is inside another")];
-            let ring = if area > 0.0 { reversed(ring) } else { ring };
-            polygon_of.push(parent);
-            polygons[parent].1.push(ring);
+    let options = IntOverlayOptions {
+        preserve_input_collinear: true,
+        preserve_output_collinear: true,
+        ..IntOverlayOptions::ogc()
+    };
+    let shapes = Overlay::with_contours_custom(&contours, &[], options, Solver::default())
+        .overlay(OverlayRule::Subject, FillRule::EvenOdd);
+    // `i_overlay` gives a hole that touches its outer ring at a node counterclockwise, so each ring is turned the right
+    // way here
+    let ring = |mut contour: Vec<IntPoint>, counterclockwise: bool| {
+        if (signed_area_2x(&contour) > 0) != counterclockwise {
+            contour.reverse();
         }
-    }
-    MultiPolygon::new(
-        polygons
+        let mut coords: Vec<Coord<f64>> = contour
             .into_iter()
-            .map(|(outer, holes)| Polygon::new(outer, holes))
+            .map(|p| {
+                let lon = narrow((i64::from(p.x) << shift) + origin.0);
+                let lat = narrow((i64::from(p.y) << shift) + origin.1);
+                let loc = Location::new(lat, lon);
+                Coord {
+                    x: loc.lon_degrees(),
+                    y: loc.lat_degrees(),
+                }
+            })
+            .collect();
+        coords.extend(coords.first().copied());
+        LineString::new(coords)
+    };
+    MultiPolygon::new(
+        shapes
+            .into_iter()
+            .filter_map(|shape| {
+                let mut rings = shape.into_iter();
+                let outer = ring(rings.next()?, true);
+                Some(Polygon::new(
+                    outer,
+                    rings.map(|hole| ring(hole, false)).collect(),
+                ))
+            })
             .collect(),
     )
-}
-
-fn reversed(mut ring: LineString<f64>) -> LineString<f64> {
-    ring.0.reverse();
-    ring
 }
 
 #[cfg(test)]

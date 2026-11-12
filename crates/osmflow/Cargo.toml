@@ -29,8 +29,9 @@ required-features = ["nodes"]
 
 [features]
 default = ["geometry", "osc"]
-# Ways as geo-types geometries, their node locations from a node store: the reader and the stores together
-geometry = ["dep:geo-types", "nodes", "pbf"]
+# Ways and multipolygon relations as geo-types geometries, their node locations from a node store: the reader and the
+# stores together
+geometry = ["dep:geo-types", "dep:i_overlay", "nodes", "pbf"]
 # The node location stores, in `osmflow::nodes`
 nodes = ["dep:bytemuck", "dep:crc32fast", "dep:memmap2", "dep:rayon"]
 # The PBF reader
@@ -46,6 +47,7 @@ bytemuck = { workspace = true, optional = true }
 crc32fast = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true, features = ["zlib-rs", "runtime_detection"] }
 geo-types = { workspace = true, optional = true }
+i_overlay = { workspace = true, optional = true }
 memchr = { workspace = true, optional = true }
 memmap2 = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
@@ -61,6 +63,8 @@ rustix = { workspace = true, optional = true }
 # For the `codegen` example, which regenerates src/generated (`just update-generated`, needs protoc)
 buffa-build.workspace = true
 criterion.workspace = true
+# `Validation`, to check that the areas of multipolygon relations are valid
+geo.workspace = true
 insta.workspace = true
 osmpbf.workspace = true
 osmpbfreader.workspace = true

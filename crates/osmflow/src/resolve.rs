@@ -8,7 +8,7 @@ use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
 
 use crate::Location;
 #[cfg(feature = "geometry")]
-use crate::area::{AreaRules, closed_rings, nest};
+use crate::area::{AreaRules, closed_rings, even_odd};
 use crate::block::{Block, Select, TagMode};
 #[cfg(feature = "geometry")]
 use crate::block::{Tags, Way};
@@ -16,11 +16,13 @@ use crate::error::Result;
 use crate::nodes::{BulkLoad as _, NodeRead, NodeReader, NodeStore};
 use crate::reader::PbfReader;
 
-/// Why a way has no geometry.
+/// Why a way or a relation has no geometry.
 #[cfg(feature = "geometry")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum GeometryError {
-    /// A node of the way has no location: the store does not have it, as when the way leaves an extract.
+    /// A node of the way, or of a ring of the relation, has no location: the store does not have it, as when the way
+    /// leaves an extract.
     #[error("node {0} has no location")]
     MissingNode(i64),
     /// A line needs two nodes or more.
@@ -29,7 +31,8 @@ pub enum GeometryError {
     /// An area needs a closed way of four nodes or more, the last at the location of the first.
     #[error("the way is not a closed ring")]
     NotClosed,
-    /// No member ways of a relation join into a closed ring of four nodes or more.
+    /// The member ways of a relation join into no closed ring of four nodes or more, or the rings they join into cover
+    /// no area.
     #[error("the member ways join into no closed ring")]
     NoRing,
 }
@@ -105,13 +108,18 @@ impl<R: NodeReader> Locator<R> {
     }
 
     /// The area of a multipolygon or boundary relation, from the node IDs of its member ways, in any order and
-    /// direction. The ways are joined end to end, where they share an end node, into closed rings; chains of ways that
-    /// do not close are left out, as are rings of fewer than four nodes. Roles are not read: a ring inside an odd
-    /// number of other rings is a hole of the smallest ring around it, and every other ring is an outer ring, so a hole
-    /// marked `outer` or an island marked `inner` still comes out right. Outer rings run counterclockwise, holes
-    /// clockwise.
+    /// direction, as valid polygons.
     ///
-    /// Fails if a node of a closed ring has no location, or if no ring closes.
+    /// The ways are joined end to end, where they share an end node, into closed rings; a way listed twice counts once,
+    /// and chains of ways that do not close are left out, as are rings of fewer than four nodes. Roles are not read:
+    /// the area is where a point is inside an odd number of rings, so a ring inside another is a hole and a ring inside
+    /// that an island, whatever their roles say, and an edge two rings share cancels out. Rings that touch at a node
+    /// are split there into separate rings; rings that cross, which OpenStreetMap does not allow, get a vertex where
+    /// they cross, rounded to 1e-7 degrees, and outer rings that overlap leave the overlap out. Outer rings run
+    /// counterclockwise, holes clockwise. Locations are kept exactly, unless the rings span more than about 214 degrees
+    /// of longitude, which rounds them down to multiples of 2e-7 degrees.
+    ///
+    /// Fails if a node of a closed ring has no location, or if the rings cover no area.
     #[cfg(feature = "geometry")]
     pub fn multi_polygon<'w>(
         &mut self,
@@ -119,19 +127,17 @@ impl<R: NodeReader> Locator<R> {
     ) -> Result<MultiPolygon<f64>, GeometryError> {
         let mut rings = Vec::new();
         for ids in closed_rings(ways) {
-            let coords = ids
+            let ring = ids
                 .iter()
-                .map(|&id| {
-                    let loc = self.location(id).ok_or(GeometryError::MissingNode(id))?;
-                    Ok(coord(loc))
-                })
+                .map(|&id| self.location(id).ok_or(GeometryError::MissingNode(id)))
                 .collect::<Result<Vec<_>, _>>()?;
-            rings.push(LineString::new(coords));
+            rings.push(ring);
         }
-        if rings.is_empty() {
+        let area = even_odd(&rings);
+        if area.0.is_empty() {
             return Err(GeometryError::NoRing);
         }
-        Ok(nest(rings))
+        Ok(area)
     }
 
     /// The way as an area if it is closed and `areas` say its tags make it one, and as a line otherwise.
