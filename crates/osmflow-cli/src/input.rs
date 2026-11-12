@@ -1,6 +1,7 @@
 //! What an input is, from its contents rather than its name: a PBF file, an osmChange file, a replication state file,
 //! or a replication stream in a local directory or on a server.
 
+use std::fmt;
 use std::fs::{self, File};
 use std::io::Read as _;
 use std::ops::RangeInclusive;
@@ -67,11 +68,14 @@ impl Input {
             Self::Pbf(path)
         }
     }
+}
 
-    pub fn name(&self) -> String {
+/// The path or URL the input was given as.
+impl fmt::Display for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pbf(p) | Self::Osc(p) | Self::State(p) | Self::Dir(p) => p.display().to_string(),
-            Self::Url(url) => url.clone(),
+            Self::Pbf(p) | Self::Osc(p) | Self::State(p) | Self::Dir(p) => p.display().fmt(f),
+            Self::Url(url) => f.write_str(url),
         }
     }
 }
@@ -177,7 +181,7 @@ impl Stream {
                 bail!("give --cache DIR to read the diffs of {url}: they are downloaded into it")
             }
             (Input::Pbf(_) | Input::Osc(_) | Input::State(_), _) => {
-                bail!("{} is not a replication stream", input.name())
+                bail!("{input} is not a replication stream")
             }
         };
         let replication = match read_ahead {
@@ -384,9 +388,7 @@ pub fn fetch(url: &str) -> Result<Box<dyn Fetch>> {
 
 /// The sequence of a diff or state file at `path`, from its last three components: `…/007/363/600.osc.gz` is 7363600.
 fn sequence_of(path: &Path) -> Option<u64> {
-    let mut parts = path.components().rev().map(|c| c.as_os_str().to_str());
-    let (c, b, a) = (parts.next()??, parts.next()??, parts.next()??);
-    path_sequence(&format!("{a}/{b}/{c}"))
+    path_sequence(path.to_str()?)
 }
 
 /// The sequences of the diffs a local stream has, in order: every `AAA/BBB/CCC.osc.gz` three directories down.

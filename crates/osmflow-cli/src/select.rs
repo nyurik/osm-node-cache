@@ -1,17 +1,33 @@
 //! What a command reads: which objects (by type, ID and tag), which changes (by action, changeset and user), and on
 //! how many threads.
 
+use std::error::Error;
 use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use osmflow::osc::{Action, Change};
 use osmflow::rayon::ThreadPoolBuilder;
 use osmflow::{Block, MemberType, PbfError, PbfReader, Select, TagMode};
 
 use crate::input::{Seqs, Since, parse_seqs, parse_since};
+
+/// A flag's parser of `T`'s names, as strum gives them, which the help and the errors list.
+pub fn names<T>() -> impl TypedValueParser<Value = T>
+where
+    T: strum::VariantNames
+        + FromStr<Err: Error + Send + Sync + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    PossibleValuesParser::new(T::VARIANTS).try_map(|s| s.parse::<T>())
+}
 
 /// The name of the first flag of `flags` that is given.
 pub fn first_given(flags: &[(bool, &'static str)]) -> Option<&'static str> {
@@ -21,7 +37,8 @@ pub fn first_given(flags: &[(bool, &'static str)]) -> Option<&'static str> {
 }
 
 /// An object type, as the flags name it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum, strum::Display)]
+#[strum(serialize_all = "lowercase")]
 pub enum Kind {
     Node,
     Way,
@@ -43,19 +60,7 @@ impl Kind {
     pub const ALL: [Self; 3] = [Self::Node, Self::Way, Self::Relation];
 
     pub fn index(self) -> usize {
-        match self {
-            Self::Node => 0,
-            Self::Way => 1,
-            Self::Relation => 2,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Node => "node",
-            Self::Way => "way",
-            Self::Relation => "relation",
-        }
+        self as usize
     }
 
     /// The name of many: `nodes`, as summaries label them.
@@ -360,24 +365,6 @@ impl Threads {
     }
 }
 
-/// An `--action` value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum ActionArg {
-    Create,
-    Modify,
-    Delete,
-}
-
-impl From<ActionArg> for Action {
-    fn from(action: ActionArg) -> Self {
-        match action {
-            ActionArg::Create => Self::Create,
-            ActionArg::Modify => Self::Modify,
-            ActionArg::Delete => Self::Delete,
-        }
-    }
-}
-
 /// The flags of osmChange files and replication streams: which diffs to read, where to keep them, and which changes
 /// to take.
 #[derive(Debug, Default, clap::Args)]
@@ -404,8 +391,8 @@ pub struct ChangeArgs {
     #[arg(long, value_name = "DIR")]
     pub cache: Option<PathBuf>,
     /// Only changes in these sections, by commas.
-    #[arg(long = "action", value_name = "ACTION", value_delimiter = ',')]
-    actions: Vec<ActionArg>,
+    #[arg(long = "action", value_name = "ACTION", value_delimiter = ',', value_parser = names::<Action>())]
+    actions: Vec<Action>,
     /// Only changes in these changesets, by commas.
     ///
     /// Geofabrik's public diffs have no changesets.
@@ -464,11 +451,7 @@ impl ChangeArgs {
     /// Whether `change` passes `--action`, `--changeset` and `--user`.
     pub fn matches(&self, change: &Change) -> bool {
         let meta = change.object.meta();
-        (self.actions.is_empty()
-            || self
-                .actions
-                .iter()
-                .any(|&a| Action::from(a) == change.action))
+        (self.actions.is_empty() || self.actions.contains(&change.action))
             && (self.changesets.is_empty()
                 || meta.changeset.is_some_and(|c| self.changesets.contains(&c)))
             && ((self.users.is_empty() && self.uids.is_empty())
@@ -566,7 +549,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(chosen(ChangeArgs::default()), [1, 2, 3]);
-        let actions = vec![ActionArg::Delete, ActionArg::Modify];
+        let actions = vec![Action::Delete, Action::Modify];
         assert_eq!(
             chosen(ChangeArgs {
                 actions,

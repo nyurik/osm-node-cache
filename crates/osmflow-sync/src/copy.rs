@@ -1,7 +1,11 @@
 //! Rows in PostgreSQL's binary `COPY` format, encoded straight into a buffer: a row is its field count, then each
-//! field as its length and its bytes, big-endian. Geometries are EWKB with SRID 4326.
+//! field as its length and its bytes, big-endian. Geometries are TWKB with OSM's 7 decimal digits, which PostGIS reads
+//! with `ST_GeomFromTWKB` exactly as they were, or EWKB with SRID 4326, by the database's [`GeometryFormat`].
 
 use osmflow::{Info, Location, Member, MemberType, Timestamp, osc};
+use twkb::{write_scaled_line_string, write_scaled_point};
+
+use crate::GeometryFormat;
 
 /// The start of a binary `COPY` stream: its signature, no flags, and no header extension.
 pub(crate) const HEADER: &[u8] = b"PGCOPY\n\xff\r\n\0\0\0\0\0\0\0\0\0";
@@ -16,6 +20,8 @@ const TEXT_OID: i32 = 25;
 /// EWKB's flag for a geometry that carries its SRID.
 const EWKB_SRID: u32 = 0x2000_0000;
 const SRID: u32 = 4326;
+/// OSM's decimal digits, which TWKB keeps exactly.
+const DIGITS: i8 = 7;
 
 /// An object's metadata, as both PBF files and osmChange files may give it.
 #[derive(Debug, Clone, Copy, Default)]
@@ -46,14 +52,24 @@ impl From<&osc::Meta> for Meta {
     }
 }
 
-/// Rows of one table, in the binary `COPY` format, without the stream's header and trailer.
+/// Rows of one table, in the binary `COPY` format, without the stream's header and trailer, their geometries in one
+/// format.
 #[derive(Debug, Default)]
 pub(crate) struct Rows {
     pub(crate) buf: Vec<u8>,
     pub(crate) count: u64,
+    geometry: GeometryFormat,
 }
 
 impl Rows {
+    /// No rows yet, their geometries to be in `geometry`.
+    pub(crate) fn new(geometry: GeometryFormat) -> Self {
+        Self {
+            geometry,
+            ..Self::default()
+        }
+    }
+
     /// A row of `osm.nodes`, its columns as `Table::Nodes` lists them.
     pub(crate) fn node<'a>(
         &mut self,
@@ -98,7 +114,7 @@ impl Rows {
         meta: Meta,
         rev: i64,
         tags: impl Iterator<Item = (&'a str, &'a str)>,
-        members: &[Member<'_>],
+        members: impl ExactSizeIterator<Item = Member<'a>> + Clone,
     ) {
         self.row(9)
             .i64(id)
@@ -184,11 +200,14 @@ impl Rows {
     }
 
     /// A relation's members, as three columns: `"char"[]` types, `int8[]` IDs, `text[]` roles.
-    pub(crate) fn members(&mut self, members: &[Member<'_>]) -> &mut Self {
+    pub(crate) fn members<'a>(
+        &mut self,
+        members: impl ExactSizeIterator<Item = Member<'a>> + Clone,
+    ) -> &mut Self {
         let n = members.len();
         self.var(|b| {
             array_header(b, CHAR_OID, n);
-            for m in members {
+            for m in members.clone() {
                 b.extend(1_i32.to_be_bytes());
                 b.push(match m.kind {
                     MemberType::Node => b'n',
@@ -197,7 +216,7 @@ impl Rows {
                 });
             }
         });
-        self.ids(members.iter().map(|m| m.id));
+        self.ids(members.clone().map(|m| m.id));
         self.var(|b| {
             array_header(b, TEXT_OID, n);
             for m in members {
@@ -212,22 +231,35 @@ impl Rows {
         let Some(loc) = loc else {
             return self.null();
         };
-        self.var(|b| {
-            ewkb_header(b, 1);
-            push_location(b, loc);
+        let format = self.geometry;
+        self.var(|b| match format {
+            GeometryFormat::Twkb => {
+                write_scaled_point(b, DIGITS, xy(loc)).expect("7 digits are in range");
+            }
+            GeometryFormat::Wkb => {
+                ewkb_header(b, 1);
+                push_location(b, loc);
+            }
         })
     }
 
-    /// A line string, or NULL for fewer than two points, which the database rejects.
+    /// A line string, or NULL for fewer than two points, which PostGIS does not take as a line.
     pub(crate) fn line(&mut self, locs: Option<&[Location]>) -> &mut Self {
         let Some(locs) = locs.filter(|l| l.len() >= 2) else {
             return self.null();
         };
-        self.var(|b| {
-            ewkb_header(b, 2);
-            b.extend(len(locs.len()).to_le_bytes());
-            for &loc in locs {
-                push_location(b, loc);
+        let format = self.geometry;
+        self.var(|b| match format {
+            GeometryFormat::Twkb => {
+                write_scaled_line_string(b, DIGITS, locs.iter().map(|&l| xy(l)))
+                    .expect("7 digits are in range");
+            }
+            GeometryFormat::Wkb => {
+                ewkb_header(b, 2);
+                b.extend(len(locs.len()).to_le_bytes());
+                for &loc in locs {
+                    push_location(b, loc);
+                }
             }
         })
     }
@@ -278,6 +310,31 @@ fn push_location(b: &mut Vec<u8>, loc: Location) {
     b.extend(loc.lat_degrees().to_le_bytes());
 }
 
+/// A location's x and y, as integers of 1e-7 degrees.
+fn xy(loc: Location) -> [i64; 2] {
+    [loc.lon.into(), loc.lat.into()]
+}
+
+/// A point or a line string of TWKB with OSM's 7 digits, as the database holds them, decoded for [`locations`];
+/// `None` for anything else, or for an ordinate beyond a [`Location`]'s.
+pub(crate) fn osm_twkb(buf: &[u8]) -> Option<twkb::Twkb> {
+    let g = twkb::Twkb::new(buf).ok()?;
+    let header = g.header();
+    let osm = header.precision().xy == DIGITS && header.dimension() == twkb::Dimension::Xy;
+    (osm && g.stored_coords().iter().all(|&v| i32::try_from(v).is_ok())).then_some(g)
+}
+
+/// The locations of a geometry [`osm_twkb`] decoded, every point kept.
+pub(crate) fn locations(g: &twkb::Twkb) -> impl ExactSizeIterator<Item = Location> + '_ {
+    // osm_twkb checked that each ordinate fits
+    let ordinate = |v: i64| i32::try_from(v).unwrap_or_default();
+    g.stored_coords()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(move |&[x, y]| Location::new(ordinate(y), ordinate(x)))
+}
+
 /// Writes `s` as a JSON string.
 fn json_str(b: &mut Vec<u8>, s: &str) {
     b.push(b'"');
@@ -297,35 +354,15 @@ fn json_str(b: &mut Vec<u8>, s: &str) {
     b.push(b'"');
 }
 
-/// The locations of a well-known binary line string or point, as `ST_AsBinary` gives them; empty for anything else.
-pub(crate) fn wkb_locations(wkb: &[u8]) -> Vec<Location> {
-    let u32_at = |i: usize| {
-        wkb.get(i..i + 4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap_or_default()))
-    };
-    let f64_at = |i: usize| {
-        wkb.get(i..i + 8)
-            .map(|b| f64::from_le_bytes(b.try_into().unwrap_or_default()))
-    };
-    let at = |i: usize| Some(Location::from_degrees(f64_at(i + 8)?, f64_at(i)?));
-    // Only little-endian WKB, which PostGIS writes on every common platform
-    if wkb.first() != Some(&1) {
-        return Vec::new();
-    }
-    match u32_at(1) {
-        Some(1) => at(5).into_iter().collect(),
-        Some(2) => {
-            let n = u32_at(5).unwrap_or(0) as usize;
-            (0..n).map_while(|i| at(9 + i * 16)).collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Table;
+
+    /// The locations TWKB holds, as `rebuild` reads them.
+    fn twkb_locations(buf: &[u8]) -> Vec<Location> {
+        osm_twkb(buf).iter().flat_map(locations).collect()
+    }
 
     /// The fields of each row of `rows`, walked by their lengths.
     fn fields(rows: &Rows) -> Vec<usize> {
@@ -350,7 +387,7 @@ mod tests {
         let loc = Location::new(1, 2);
         let mut rows = Rows::default();
         rows.node(1, Meta::default(), 1, tags.into_iter(), Some(loc));
-        assert_eq!(fields(&rows), [Table::Nodes.columns().len()]);
+        assert_eq!(fields(&rows), [Table::Nodes.columns().split(", ").count()]);
         let mut rows = Rows::default();
         rows.way(
             1,
@@ -360,15 +397,18 @@ mod tests {
             [1, 2].into_iter(),
             Some(&[loc, loc]),
         );
-        assert_eq!(fields(&rows), [Table::Ways.columns().len()]);
+        assert_eq!(fields(&rows), [Table::Ways.columns().split(", ").count()]);
         let mut rows = Rows::default();
         let members = [Member {
             kind: MemberType::Way,
             id: 3,
             role: "outer",
         }];
-        rows.relation(1, Meta::default(), 1, tags.into_iter(), &members);
-        assert_eq!(fields(&rows), [Table::Relations.columns().len()]);
+        rows.relation(1, Meta::default(), 1, tags.into_iter(), members.into_iter());
+        assert_eq!(
+            fields(&rows),
+            [Table::Relations.columns().split(", ").count()]
+        );
     }
 
     #[test]
@@ -396,27 +436,66 @@ mod tests {
     }
 
     #[test]
-    fn lines_read_back_from_wkb() {
+    fn lines_are_twkb() {
+        // A way of three nodes, and its bytes from PostGIS's ST_AsTWKB(geom, 7)
         let locs = [
-            Location::new(389_000_001, -770_000_002),
-            Location::new(-1, 1_800_000_000),
+            Location::new(423_734_493, -710_366_718),
+            Location::new(423_733_120, -710_367_619),
+            Location::new(423_733_207, -710_367_827),
         ];
         let mut rows = Rows::default();
         rows.line(Some(&locs));
-        // ST_AsBinary drops EWKB's SRID: the same bytes without the SRID flag and value
-        let ewkb = &rows.buf[4..];
-        let mut wkb = vec![1];
-        wkb.extend(2_u32.to_le_bytes());
-        wkb.extend(&ewkb[9..]);
-        assert_eq!(wkb_locations(&wkb), locs);
-        let mut point = Rows::default();
-        point.point(Some(locs[0]));
-        let mut wkb = vec![1];
-        wkb.extend(1_u32.to_le_bytes());
-        wkb.extend(&point.buf[13..]);
-        assert_eq!(wkb_locations(&wkb), [locs[0]]);
+        let twkb = &rows.buf[4..];
+        let postgis = [
+            0xe2, 0x00, 0x03, 0xfb, 0xd7, 0xba, 0xa5, 0x05, 0xba, 0xb3, 0x8d, 0x94, 0x03, 0x89,
+            0x0e, 0xb9, 0x15, 0x9f, 0x03, 0xae, 0x01,
+        ];
+        assert_eq!(twkb, postgis);
+        assert_eq!(twkb_locations(twkb), locs);
+        let far = [
+            Location::new(389_000_001, -770_000_002),
+            Location::new(-900_000_000, 1_800_000_000),
+        ];
+        let mut rows = Rows::default();
+        rows.line(Some(&far));
+        assert_eq!(twkb_locations(&rows.buf[4..]), far);
+        assert_eq!(twkb_locations(&[1, 2, 3]), []);
+        // A repeated point is kept, as PostGIS's ST_AsTWKB would not; an ordinate beyond a location's is refused
+        let repeated = [locs[0], locs[0], locs[1]];
+        let mut rows = Rows::default();
+        rows.line(Some(&repeated));
+        assert_eq!(twkb_locations(&rows.buf[4..]), repeated);
+        let mut big = Vec::new();
+        write_scaled_line_string(&mut big, DIGITS, [[0, 0], [1 << 31, 0]].into_iter()).unwrap();
+        assert_eq!(twkb_locations(&big), []);
+    }
+
+    #[test]
+    fn lines_are_ewkb() {
+        // Byte order, line string with an SRID, 4326, 2 points, then each point's x and y
+        let locs = [Location::new(10, -20), Location::new(-30, 40)];
+        let mut rows = Rows::new(GeometryFormat::Wkb);
+        rows.line(Some(&locs));
+        let mut ewkb = vec![1, 2, 0, 0, 0x20, 0xe6, 0x10, 0, 0, 2, 0, 0, 0];
+        for loc in locs {
+            ewkb.extend(loc.lon_degrees().to_le_bytes());
+            ewkb.extend(loc.lat_degrees().to_le_bytes());
+        }
+        assert_eq!(rows.buf[4..], ewkb);
+    }
+
+    #[test]
+    fn points_read_back_from_twkb() {
+        // A point from PostGIS's ST_AsTWKB(geom, 7), and lines too short to be one
+        let twkb = [
+            0xe1, 0, 0xfb, 0xd7, 0xba, 0xa5, 0x05, 0xba, 0xb3, 0x8d, 0x94, 0x03,
+        ];
+        assert_eq!(
+            twkb_locations(&twkb),
+            [Location::new(423_734_493, -710_366_718)]
+        );
         let mut short = Rows::default();
-        short.line(Some(&locs[..1]));
+        short.line(Some(&[Location::default()]));
         assert_eq!(short.buf, (-1_i32).to_be_bytes());
     }
 }

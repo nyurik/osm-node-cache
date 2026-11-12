@@ -117,14 +117,15 @@ pub fn sequence_path(sequence: u64) -> String {
 }
 
 /// The sequence number of a path in a replication stream: its last three components, as [`sequence_path`] makes
-/// them, with or without `.osc.gz` or `.state.txt`. Anything before them (a directory or a URL) is ignored.
+/// them, with or without `.osc.gz` or `.state.txt`, split at `/` or, as Windows paths are, at `\`. Anything before
+/// them (a directory or a URL) is ignored.
 #[must_use]
 pub fn path_sequence(path: &str) -> Option<u64> {
     let path = path
         .strip_suffix(".osc.gz")
         .or_else(|| path.strip_suffix(".state.txt"))
         .unwrap_or(path);
-    let mut parts = path.rsplit('/');
+    let mut parts = path.rsplit(['/', '\\']);
     let (c, b, a) = (parts.next()?, parts.next()?, parts.next()?);
     let digits = |s: &str| s.len() >= 3 && s.bytes().all(|d| d.is_ascii_digit());
     if !digits(a)

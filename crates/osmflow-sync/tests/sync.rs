@@ -4,13 +4,14 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 use std::{env, fs};
 
 use osmflow::Location;
 use osmflow::nodes::PagedStore;
 use osmflow::nodes::prelude::*;
 use osmflow::osc::Replication;
-use osmflow_sync::{FileStamp, ImportOpts, Mirror, NodeWay, Rebuild, UpdateOpts};
+use osmflow_sync::{FileStamp, GeometryFormat, ImportOpts, Mirror, NodeWay, Rebuild, UpdateOpts};
 use postgres::{Client, NoTls};
 
 const PBF: &str = concat!(
@@ -19,6 +20,9 @@ const PBF: &str = concat!(
 );
 /// The fixture's replication sequence and time.
 const STATE: &str = "sequenceNumber=1708\ntimestamp=2025-04-23T20\\:21\\:01Z\n";
+/// The tests share the database's `osm` schema, so they run one at a time.
+static DB: Mutex<()> = Mutex::new(());
+
 /// A node of ways 178300745 and 210476684.
 const NODE: i64 = 1_886_651_627;
 
@@ -56,14 +60,24 @@ fn import_update_rebuild() {
     let Ok(url) = env::var("OSMFLOW_SYNC_TEST_DB") else {
         return;
     };
+    let _db = DB.lock().unwrap_or_else(PoisonError::into_inner);
+    // The same imports, updates and rebuilds with each way of storing geometries: one after the other, in one schema
+    for geometry in [GeometryFormat::Twkb, GeometryFormat::Wkb] {
+        import_update_rebuild_as(&url, geometry);
+    }
+}
+
+fn import_update_rebuild_as(url: &str, geometry: GeometryFormat) {
     let dir = tempfile::tempdir().unwrap();
     let diffs = dir.path().join("diffs");
     write_state(&diffs, 708, STATE);
     let replication = Replication::local(&diffs);
     let files = dir.path().join("files");
-    let mirror = Mirror::new(&url, &files);
-    import(&mirror);
-    let mut db = Client::connect(&url, NoTls).unwrap();
+    let mirror = Mirror::new(url, &files);
+    import(&mirror, geometry);
+    let mut db = Client::connect(url, NoTls).unwrap();
+    assert_eq!(mirror.state().unwrap().geometry, geometry);
+    check_geometry(&mut db, geometry);
     write_diffs(&diffs, &mut db);
 
     // A stream whose diff 1708 is at another time is not the database's
@@ -120,10 +134,17 @@ fn import_update_rebuild() {
     );
     check_files(&mirror, 5);
 
-    update_failures(&mirror, &replication, &mut db, &saved, &one_by_one);
+    update_failures(
+        geometry,
+        &mirror,
+        &replication,
+        &mut db,
+        &saved,
+        &one_by_one,
+    );
 
     // The same diffs in one batch: the same rows, each way changed once
-    import(&mirror);
+    import(&mirror, geometry);
     let stats = mirror.update(&replication, &until(1711, 60)).unwrap();
     assert_eq!((stats.batches, stats.diffs), (1, 3));
     assert_eq!(rows(&mut db), one_by_one);
@@ -133,7 +154,8 @@ fn import_update_rebuild() {
     let stats = mirror.update(&replication, &until(1712, 60)).unwrap();
     assert_eq!(stats.batches, 0);
 
-    // The files made again both ways
+    // The files made again both ways, with the same location for every node the database has
+    let located = db_node_locations(&mirror, &mut db);
     for from in [
         Rebuild::Database,
         Rebuild::Pbf {
@@ -146,13 +168,97 @@ fn import_update_rebuild() {
         fs::remove_file(mirror.index_path()).unwrap();
         mirror.rebuild(&from).unwrap();
         check_files(&mirror, 3);
+        assert_same_locations(&mirror, &mut db, &located);
     }
+}
+
+/// Diff 1709 alone: a way through two nodes at one location, then a third, which PostGIS's `ST_AsTWKB` would give
+/// as 2 points.
+const DIFF_REPEATED: &str = r#"<create>
+  <node id="13000000001" version="1" timestamp="2026-11-01T00:00:00Z" lat="10.3" lon="-109.2"/>
+  <node id="13000000002" version="1" timestamp="2026-11-01T00:00:00Z" lat="10.3" lon="-109.2"/>
+  <node id="13000000003" version="1" timestamp="2026-11-01T00:00:00Z" lat="10.31" lon="-109.21"/>
+  <way id="2000000001" version="1" timestamp="2026-11-01T00:00:00Z">
+    <nd ref="13000000001"/><nd ref="13000000002"/><nd ref="13000000003"/>
+    <tag k="highway" v="path"/>
+  </way>
+</create>"#;
+
+/// The node file rebuilt from the database has the locations the update gave the nodes of a way with a repeated
+/// point, in either format.
+#[test]
+fn rebuild_keeps_repeated_points() {
+    let Ok(url) = env::var("OSMFLOW_SYNC_TEST_DB") else {
+        return;
+    };
+    let _db = DB.lock().unwrap_or_else(PoisonError::into_inner);
+    for geometry in [GeometryFormat::Twkb, GeometryFormat::Wkb] {
+        let dir = tempfile::tempdir().unwrap();
+        let diffs = dir.path().join("diffs");
+        write_state(&diffs, 708, STATE);
+        write_diff(&diffs, 709, DIFF_REPEATED);
+        let mirror = Mirror::new(&url, dir.path().join("files"));
+        import(&mirror, geometry);
+        mirror
+            .update(&Replication::local(&diffs), &until(1709, 1))
+            .unwrap();
+        let mut db = Client::connect(&url, NoTls).unwrap();
+        let located = db_node_locations(&mirror, &mut db);
+        let at = |id| located.iter().find(|(n, _)| *n == id).map(|(_, l)| *l);
+        assert_eq!(at(13_000_000_001), at(13_000_000_002), "{geometry:?}");
+        fs::remove_file(mirror.index_path()).unwrap();
+        mirror.rebuild(&Rebuild::Database).unwrap();
+        assert_same_locations(&mirror, &mut db, &located);
+        // A way whose geometry has fewer points than it has nodes fails the rebuild
+        let two = match geometry {
+            GeometryFormat::Twkb => "ST_AsTWKB('LINESTRING(0 0,1 1)'::geometry, 7)",
+            GeometryFormat::Wkb => "'SRID=4326;LINESTRING(0 0,1 1)'::geometry",
+        };
+        db.batch_execute(&format!(
+            "UPDATE osm.ways SET geom = {two} WHERE id = 2000000001"
+        ))
+        .unwrap();
+        fs::remove_file(mirror.index_path()).unwrap();
+        let err = mirror.rebuild(&Rebuild::Database).unwrap_err();
+        assert!(err.to_string().contains("way 2000000001"), "{err}");
+    }
+}
+
+/// The node file has the locations of `expected` for the nodes the database has: the differences, if not.
+fn assert_same_locations(mirror: &Mirror, db: &mut Client, expected: &[(i64, Option<Location>)]) {
+    let actual = db_node_locations(mirror, db);
+    assert_eq!(actual.len(), expected.len());
+    let differ: Vec<_> = actual
+        .iter()
+        .zip(expected)
+        .filter(|(a, e)| a != e)
+        .collect();
+    assert!(differ.is_empty(), "(rebuilt, expected): {differ:?}");
+}
+
+/// The node file's location of every node the database has: those of the ways with a geometry, and the tagged nodes.
+fn db_node_locations(mirror: &Mirror, db: &mut Client) -> Vec<(i64, Option<Location>)> {
+    let ids = db
+        .query(
+            "SELECT unnest(nodes) FROM osm.ways WHERE geom IS NOT NULL \
+             UNION SELECT id FROM osm.nodes WHERE geom IS NOT NULL ORDER BY 1",
+            &[],
+        )
+        .unwrap();
+    let store = PagedStore::open_read_only(mirror.node_path()).unwrap();
+    ids.iter()
+        .map(|r| {
+            let id: i64 = r.get(0);
+            (id, store.get(id.cast_unsigned()))
+        })
+        .collect()
 }
 
 /// Updates that fail on an open mirror, from a fresh import: a batch the database refuses, a database behind the
 /// files, and a node file of another database (from the files in `saved`). `one_by_one` holds the rows after diffs
 /// 1709 to 1711 applied one per batch.
 fn update_failures(
+    geometry: GeometryFormat,
     mirror: &Mirror,
     replication: &Replication,
     db: &mut Client,
@@ -161,7 +267,7 @@ fn update_failures(
 ) {
     // The third batch of an update fails after its moved node reached the node file, the first two committed: the
     // retry on the same mirror applies the third, moving the way through the node, and gives the same rows
-    import(mirror);
+    import(mirror, geometry);
     let mut open = mirror.open().unwrap();
     db.batch_execute(
         "CREATE FUNCTION osm.fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE 'injected'; END $$; \
@@ -206,9 +312,38 @@ fn update_failures(
     );
 }
 
-fn import(mirror: &Mirror) {
+/// The column `geometry` gives `osm.ways.geom`, and an index on `osm.geom(geom)` serving a query through it.
+fn check_geometry(db: &mut Client, geometry: GeometryFormat) {
+    let column = "SELECT format_type(atttypid, atttypmod) FROM pg_attribute \
+                  WHERE attrelid = 'osm.ways'::regclass AND attname = 'geom'";
+    let column: String = db.query_one(column, &[]).unwrap().get(0);
+    let expected = match geometry {
+        GeometryFormat::Twkb => "bytea",
+        GeometryFormat::Wkb => "geometry(LineString,4326)",
+    };
+    assert_eq!(column, expected);
+    // `osm.geom` is inlined, so an index on it serves a query through it, as the database builds it with only
+    // pg_catalog in the search path
+    db.batch_execute(
+        "CREATE INDEX ways_geom ON osm.ways USING gist (osm.geom(geom)); SET enable_seqscan = off",
+    )
+    .unwrap();
+    let plan = db
+        .query(
+            "EXPLAIN SELECT id FROM osm.ways WHERE osm.geom(geom) && ST_MakeEnvelope(-110, 10, -109, 11, 4326)",
+            &[],
+        )
+        .unwrap();
+    let plan: Vec<String> = plan.iter().map(|r| r.get(0)).collect();
+    assert!(plan.iter().any(|l| l.contains("ways_geom")), "{plan:?}");
+    db.batch_execute("DROP INDEX osm.ways_geom; RESET enable_seqscan")
+        .unwrap();
+}
+
+fn import(mirror: &Mirror, geometry: GeometryFormat) {
     let opts = ImportOpts {
         replace: true,
+        geometry,
         ..ImportOpts::default()
     };
     let stats = mirror.import(PBF, None, &opts).unwrap();
@@ -257,17 +392,22 @@ fn write_diffs(dir: &Path, db: &mut Client) {
         (711, DIFF_1711),
         (712, DIFF_1712),
     ] {
-        let xml = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<osmChange version=\"0.6\">\n{diff}\n</osmChange>\n"
-        );
-        fs::write(dir.join(format!("000/001/{n}.osc.gz")), xml).unwrap();
-        let state = format!(
-            "sequenceNumber={}\ntimestamp=2026-11-01T00\\:0{}\\:30Z\n",
-            1000 + n,
-            n - 709
-        );
-        write_state(dir, n, &state);
+        write_diff(dir, n, diff);
     }
+}
+
+/// Writes diff `1000 + n`, of the changes `diff`, and its state, a minute after diff 1709's for each diff after it.
+fn write_diff(dir: &Path, n: u32, diff: &str) {
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<osmChange version=\"0.6\">\n{diff}\n</osmChange>\n"
+    );
+    fs::write(dir.join(format!("000/001/{n}.osc.gz")), xml).unwrap();
+    let state = format!(
+        "sequenceNumber={}\ntimestamp=2026-11-01T00\\:0{}\\:30Z\n",
+        1000 + n,
+        n - 709
+    );
+    write_state(dir, n, &state);
 }
 
 /// Makes directory `to` a copy of the files of `from`.
@@ -294,8 +434,8 @@ fn minor_rev(db: &mut Client, id: i64) -> (i32, i64) {
 /// Every row of the three tables, without `minor` and `rev`, which depend on the batches.
 fn rows(db: &mut Client) -> Vec<String> {
     [
-        "SELECT format('n%s %s %s %s', id, version, tags, ST_AsText(geom)) FROM osm.nodes ORDER BY id",
-        "SELECT format('w%s %s %s %s %s', id, version, tags, nodes, ST_AsText(geom)) FROM osm.ways ORDER BY id",
+        "SELECT format('n%s %s %s %s', id, version, tags, ST_AsText(osm.geom(geom))) FROM osm.nodes ORDER BY id",
+        "SELECT format('w%s %s %s %s %s', id, version, tags, nodes, ST_AsText(osm.geom(geom))) FROM osm.ways ORDER BY id",
         "SELECT format('r%s %s %s %s %s', id, version, tags, member_ids, member_roles) FROM osm.relations ORDER BY id",
     ]
     .iter()
@@ -323,9 +463,12 @@ fn owned((kind, id, action): (&str, i64, &str)) -> (String, i64, String) {
 /// The rows and the change log after diffs 1709 to 1711, one per batch.
 fn check_rows(db: &mut Client) {
     let geom = |db: &mut Client, id: i64| -> Option<String> {
-        db.query_opt("SELECT ST_AsText(geom) FROM osm.ways WHERE id = $1", &[&id])
-            .unwrap()
-            .map(|r| r.get(0))
+        db.query_opt(
+            "SELECT ST_AsText(osm.geom(geom)) FROM osm.ways WHERE id = $1",
+            &[&id],
+        )
+        .unwrap()
+        .map(|r| r.get(0))
     };
     assert!(geom(db, 178_300_745).unwrap().contains("-109.22 10.32"));
     assert!(!geom(db, 210_476_684).unwrap().contains("-109.2 "));

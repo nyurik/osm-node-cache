@@ -392,7 +392,7 @@ fn planet_minute_diff() {
     };
     for action in [Action::Create, Action::Modify, Action::Delete] {
         let n = changes.iter().filter(|c| c.action == action).count();
-        assert_eq!(n, in_section(action.name()), "{action}");
+        assert_eq!(n, in_section(action.into()), "{action}");
     }
     assert_eq!(
         dump(&changes[0]),

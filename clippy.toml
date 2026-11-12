@@ -13,5 +13,7 @@ disallowed-methods = [
 # Words in docs that are not code, so they need no backticks
 doc-valid-idents = ["NVMe", "GeoJSON", "FeatureCollection", "PostGIS", ".."]
 
-# Two versions each, one through `postgres` and one through `ureq`, which neither crate lets us unify
-allowed-duplicate-crates = ["base64", "getrandom", "wasi"]
+# Two versions each: base64, getrandom and wasi through `postgres` and through `ureq`, which neither crate lets us
+# unify; syn 2 through strum's derives, and syn 3 through thiserror's and clap's; thiserror 1 and hashbrown 0.17
+# through `wkb` and its num_enum derive
+allowed-duplicate-crates = ["base64", "getrandom", "hashbrown", "syn", "thiserror", "thiserror-impl", "wasi"]

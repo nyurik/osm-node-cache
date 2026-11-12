@@ -30,10 +30,6 @@
 //! the step, pages of memory-mapped files included (Linux).
 
 #![expect(
-    clippy::multiple_crate_versions,
-    reason = "criterion, through osm-bench, and osmflow's dependencies need two versions of syn"
-)]
-#![expect(
     clippy::print_stdout,
     reason = "the measurements are the tool's output"
 )]

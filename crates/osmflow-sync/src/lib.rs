@@ -18,7 +18,7 @@ use osmflow::nodes::prelude::*;
 use osmflow::osc::Replication;
 use postgres::Client;
 
-pub use crate::db::DbState;
+pub use crate::db::{DbState, GeometryFormat};
 pub use crate::error::SyncError;
 pub use crate::import::{ImportOpts, ImportStats};
 pub use crate::rebuild::{Rebuild, RebuildStats};

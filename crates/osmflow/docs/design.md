@@ -71,12 +71,12 @@ Each part has its own error type, named for what it reads:
 
 ## Unsafe code
 
-The workspace denies unsafe code. Two functions allow it, each with its reason and a `SAFETY` comment:
+The workspace denies unsafe code. One function allows it, with its reason and a `SAFETY` comment:
+`nodes::file::map_file` maps a store's file into memory. A memory map is unsafe because the file may change under it;
+the stores lock their files and only ever grow them.
 
-* `nodes::file::map_file` maps a store's file into memory. A memory map is unsafe because the file may change under it;
-  the stores lock their files and only ever grow them.
-* `nodes::codec::zeroed` allocates zeroed memory for a reader's cache of decoded blocks, so the operating system gives
-  memory only to the parts that are used.
+A reader's cache of decoded blocks is allocated zeroed, so the operating system gives memory only to the parts that are
+used, with bytemuck's `zeroed_slice_box`: `Location` derives `Zeroable`, which checks that all zero is a valid value.
 
 The PBF reader, the osmChange parser and the generated protobuf code have no unsafe code.
 

@@ -13,6 +13,9 @@ cpd_output := 'target/jscpd'
 # as crates/osmflow-cli/Cargo.toml's binstall metadata expects
 dist_dir := 'target/dist'
 dist_build := 'cargo build --release --locked --package osmflow-cli --bin osmflow --target'
+# The database of the tests of `osmflow-sync` and `osmflow sync`, in the Docker container `test-db-up` starts. The tests
+# replace its `osm` schema.
+test_db := 'postgresql://postgres@localhost:5434/postgres'
 
 # if running in CI, treat warnings as errors by setting CARGO_BUILD_WARNINGS to 'deny' unless it is already set
 # Use `CI=true just ci-test` to run the same tests as in GitHub CI.
@@ -41,10 +44,10 @@ check:
     cargo check --workspace --all-features --all-targets
 
 # Generate LCOV coverage report for CI to upload to codecov.io
-ci-coverage: env-info && \
-        (_coverage '--lcov' '--output-path' quote(coverage_lcov))
+ci-coverage: env-info test-db-up
     rm -rf {{quote(parent_directory(coverage_lcov))}}
     mkdir -p {{quote(parent_directory(coverage_lcov))}}
+    OSMFLOW_SYNC_TEST_DB={{quote(test_db)}} {{just}} _coverage --lcov --output-path {{quote(coverage_lcov)}}
 
 # Find copy/pasted code, marking clones absent from base_ref as new, and write a Markdown summary for the PR comment
 ci-cpd base_ref='origin/main':  (assert-cmd 'jq') (cpd '--reporters' 'console,json' '--output' cpd_output '--baseline-from-ref' base_ref)
@@ -52,7 +55,7 @@ ci-cpd base_ref='origin/main':  (assert-cmd 'jq') (cpd '--reporters' 'console,js
     cat {{quote(cpd_output / 'summary.md')}} >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 # Run all tests as expected by CI
-ci-test: env-info codegen-check test-fmt clippy test test-doc && assert-git-is-clean
+ci-test: env-info codegen-check test-fmt clippy test-with-db test-doc && assert-git-is-clean
 
 # Compile default features with minimal dependencies on the configured MSRV
 ci-test-msrv:
@@ -208,12 +211,19 @@ test:
 # Test documentation generation
 test-doc:  (docs '')
 
-# Run osmflow-sync's database test against PostGIS in Docker, in the container `osmflow-sync-pg` on port 5434, started
-# if it is not running. Its `postgres` database's `osm` schema is replaced.
-test-sync-db:  (assert-cmd 'docker')
+# The container is `osmflow-sync-pg`, on port 5434.
+# Start PostgreSQL 18 with PostGIS in Docker for the database tests, unless it is running
+test-db-up:  (assert-cmd 'docker')
     docker start osmflow-sync-pg 2>/dev/null || docker run -d --name osmflow-sync-pg -p 5434:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgis/postgis:18-3.6-alpine
     until docker exec osmflow-sync-pg pg_isready -h localhost -U postgres -q; do sleep 1; done
-    OSMFLOW_SYNC_TEST_DB=postgresql://postgres@localhost:5434/postgres cargo test -p osmflow-sync --test sync
+
+# Run osmflow-sync's database test against PostGIS in Docker (`test-db-up`)
+test-sync-db *args:  test-db-up
+    OSMFLOW_SYNC_TEST_DB={{quote(test_db)}} cargo test -p osmflow-sync --test sync {{args}}
+
+# Run all tests, those of `osmflow-sync` and `osmflow sync` against PostGIS in Docker (`test-db-up`)
+test-with-db:  test-db-up
+    OSMFLOW_SYNC_TEST_DB={{quote(test_db)}} {{just}} test
 
 # Test code formatting
 test-fmt: && (fmt-toml '--check' '--check-format')
@@ -224,7 +234,8 @@ udeps:  (cargo-install 'cargo-udeps')
     cargo +nightly udeps --workspace --all-features --all-targets
 
 # Update all dependencies, including breaking changes. Requires nightly toolchain (install with `rustup install nightly`)
-update:
+update:  (cargo-install 'cargo-upgrade' 'cargo-edit')
+    cargo upgrade --incompatible --compatible ignore
     cargo update
 
 # Ensure that a certain command is available

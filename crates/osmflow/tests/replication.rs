@@ -134,6 +134,11 @@ fn sequence_paths() {
             Some(sequence),
             "{path}"
         );
+        assert_eq!(
+            path_sequence(&format!(r"C:\minute\{}.osc.gz", path.replace('/', r"\"))),
+            Some(sequence),
+            "{path}"
+        );
     }
     for bad in [
         "",

@@ -1,6 +1,7 @@
 //! Writing values as JSON and as text: strings, coordinates, timestamps, counts, sizes and group kinds; and widening
 //! ranges of them.
 
+use std::fmt;
 use std::io::{self, Write};
 
 use osmflow::{GroupKind, Timestamp};
@@ -34,31 +35,9 @@ pub fn group_index(kind: GroupKind) -> usize {
     }
 }
 
-/// Writes `s` as a quoted JSON string.
-pub fn json_str(out: &mut impl Write, s: &str) -> io::Result<()> {
-    out.write_all(b"\"")?;
-    let bytes = s.as_bytes();
-    let mut start = 0;
-    for (i, &b) in bytes.iter().enumerate() {
-        let escaped: &[u8] = match b {
-            b'"' => b"\\\"",
-            b'\\' => b"\\\\",
-            b'\n' => b"\\n",
-            b'\r' => b"\\r",
-            b'\t' => b"\\t",
-            0..=0x1f => b"",
-            _ => continue,
-        };
-        out.write_all(&bytes[start..i])?;
-        if escaped.is_empty() {
-            write!(out, "\\u{b:04x}")?;
-        } else {
-            out.write_all(escaped)?;
-        }
-        start = i + 1;
-    }
-    out.write_all(&bytes[start..])?;
-    out.write_all(b"\"")
+/// Writes `s` as a quoted JSON string, escaped as it is formatted.
+pub fn json_str(out: &mut impl Write, s: impl fmt::Display) -> io::Result<()> {
+    serde_json::to_writer(out, &format_args!("{s}")).map_err(io::Error::from)
 }
 
 /// Writes a coordinate given in 1e-7 degrees as degrees, exactly, without trailing zeros.
@@ -224,6 +203,8 @@ pub fn str_array(o: &mut impl Write, items: &[String]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn text(f: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> String {
@@ -238,6 +219,8 @@ mod tests {
             text(|o| json_str(o, "a\"b\\c\nd\u{1}é")),
             r#""a\"b\\c\nd\u0001é""#
         );
+        let path = Path::new("a\"b/\n");
+        assert_eq!(text(|o| json_str(o, path.display())), r#""a\"b/\n""#);
     }
 
     #[test]
