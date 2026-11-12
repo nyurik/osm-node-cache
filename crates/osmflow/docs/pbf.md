@@ -202,6 +202,15 @@ A way stores only its nodes' IDs. To build its geometry, osmflow looks the IDs u
   area. `add` and `remove` change the list, and `AreaRules::none` starts from no rules.
   `Locator::area_or_line` builds a closed way that the rules make an area as a `Polygon`, and any other way as a
   `LineString`.
+* **Relations' areas.** `Locator::multi_polygon` takes the node IDs of a multipolygon or boundary relation's member
+  ways, in any order and direction. It joins them end to end, where they share an end node, into closed rings, after
+  dropping ways that end where no other way does, so that a dangling way cannot lead a ring astray; a way listed twice
+  counts once. `i_overlay` then builds valid polygons from the rings by the even-odd rule: the area is where a point is
+  inside an odd number of rings. Roles are not read, so a hole marked `outer` or an island marked `inner` still comes
+  out right. Rings that touch at a node, where a way-by-way join merges them into one ring that touches itself, come out
+  as separate rings; an edge two rings share cancels out; and outer rings that overlap, which OpenStreetMap does not
+  allow, leave their overlap out. The overlay runs on `i64`s, the locations in 1e-7 degrees as they are, so every
+  location is kept exactly. Outer rings run counterclockwise and holes clockwise.
 * **Nodes are looked up only when asked for.** A way's refs are decoded, and its nodes looked up, only when its
   geometry is built, so ways a caller passes over cost nothing.
 * **A file with locations on its ways needs no store:** `line_string` takes the locations stored on the way when it has

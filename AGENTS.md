@@ -10,7 +10,7 @@ coding agents alike. How the library works is in [`crates/osmflow/docs/design.md
 | `crates/osmflow` | The library: reading PBF files, node location stores, way geometries, osmChange files and replication |
 | `crates/osmflow/src/blob.rs`, `peek.rs`, `reader.rs` | Reading blobs from the file, peeking at a block's type and strings, and handing out blocks (`blocks`, `par_ordered`, `par_unordered`) |
 | `crates/osmflow/src/block.rs`, `packed.rs`, `filter.rs`, `header.rs` | Decoding blocks into columns, packed arrays, block filters, the file header |
-| `crates/osmflow/src/resolve.rs`, `area.rs`, `model.rs` | Loading nodes into a store and building ways' geometries; which closed ways are areas; types shared by every part |
+| `crates/osmflow/src/resolve.rs`, `area.rs`, `multipolygon.rs`, `model.rs` | Loading nodes into a store and building the geometries of ways and multipolygon relations; which closed ways are areas; joining relations' member ways into rings and the area they cover; types shared by every part |
 | `crates/osmflow/src/nodes/` | The node location stores, usable without the reader |
 | `crates/osmflow/src/osc.rs`, `osc/` | osmChange files, replication streams and downloads |
 | `crates/osmflow/src/generated/` | Code generated from `proto/`, checked in; `just update-generated` rewrites it and needs `protoc` |

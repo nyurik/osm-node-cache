@@ -4,7 +4,7 @@
 use std::sync::{Mutex, PoisonError};
 
 #[cfg(feature = "geometry")]
-use geo_types::{Coord, Geometry, LineString, Polygon};
+use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
 
 use crate::Location;
 #[cfg(feature = "geometry")]
@@ -13,14 +13,17 @@ use crate::block::{Block, Select, TagMode};
 #[cfg(feature = "geometry")]
 use crate::block::{Tags, Way};
 use crate::error::Result;
+#[cfg(feature = "geometry")]
+use crate::multipolygon::{closed_rings, even_odd};
 use crate::nodes::{BulkLoad as _, NodeRead, NodeReader, NodeStore};
 use crate::reader::PbfReader;
 
-/// Why a way has no geometry.
+/// Why a way or a relation has no geometry.
 #[cfg(feature = "geometry")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum GeometryError {
-    /// A node of the way has no location: the store does not have it, as when the way leaves an extract.
+    /// A node of the way, or of a ring of the relation, has no location: the store does not have it, as when the way
+    /// leaves an extract.
     #[error("node {0} has no location")]
     MissingNode(i64),
     /// A line needs two nodes or more.
@@ -29,6 +32,10 @@ pub enum GeometryError {
     /// An area needs a closed way of four nodes or more, the last at the location of the first.
     #[error("the way is not a closed ring")]
     NotClosed,
+    /// The member ways of a relation join into no closed ring of four nodes or more, or the rings they join into cover
+    /// no area.
+    #[error("the member ways join into no closed ring")]
+    NoRing,
 }
 
 /// Looks up the locations of ways' nodes in a node location store, for one thread. Make one per thread with
@@ -40,7 +47,7 @@ pub struct Locator<R> {
 
 /// A location as a geo-types coordinate in degrees.
 #[cfg(feature = "geometry")]
-fn coord(loc: Location) -> Coord<f64> {
+pub(crate) fn coord(loc: Location) -> Coord<f64> {
     Coord {
         x: loc.lon_degrees(),
         y: loc.lat_degrees(),
@@ -56,6 +63,12 @@ impl<R: NodeReader> Locator<R> {
     /// The location of node `id`, if the store has it.
     pub fn location(&mut self, id: i64) -> Option<Location> {
         self.reader.get(u64::try_from(id).ok()?)
+    }
+
+    /// The location of node `id`, or the error that it has none.
+    #[cfg(feature = "geometry")]
+    fn located(&mut self, id: i64) -> Result<Location, GeometryError> {
+        self.location(id).ok_or(GeometryError::MissingNode(id))
     }
 
     /// The way as a line: its nodes' locations, in order: those the file stores on the way, or else the store's.
@@ -79,10 +92,7 @@ impl<R: NodeReader> Locator<R> {
                 .collect(),
             None => way
                 .refs()
-                .map(|id| {
-                    let loc = self.location(id).ok_or(GeometryError::MissingNode(id))?;
-                    Ok(coord(loc))
-                })
+                .map(|id| self.located(id).map(coord))
                 .collect::<Result<_, _>>()?,
         };
         if coords.len() < 2 {
@@ -99,6 +109,34 @@ impl<R: NodeReader> Locator<R> {
             return Err(GeometryError::NotClosed);
         }
         Ok(Polygon::new(ring, Vec::new()))
+    }
+
+    /// The area of a multipolygon or boundary relation, from the node IDs of its member ways, in any order and
+    /// direction, as valid polygons.
+    ///
+    /// The ways are joined end to end, where they share an end node, into closed rings; a way listed twice counts once,
+    /// and chains of ways that do not close are left out, as are rings of fewer than four nodes. Roles are not read:
+    /// the area is where a point is inside an odd number of rings, so a ring inside another is a hole and a ring inside
+    /// that an island, whatever their roles say, and an edge two rings share cancels out. Rings that touch at a node
+    /// are split there into separate rings; rings that cross, which OpenStreetMap does not allow, get a vertex where
+    /// they cross, rounded to 1e-7 degrees, and outer rings that overlap leave the overlap out. Outer rings run
+    /// counterclockwise, holes clockwise. Locations are kept exactly.
+    ///
+    /// Fails if a node of a closed ring has no location, or if the rings cover no area.
+    #[cfg(feature = "geometry")]
+    pub fn multi_polygon<'w>(
+        &mut self,
+        ways: impl IntoIterator<Item = &'w [i64]>,
+    ) -> Result<MultiPolygon<f64>, GeometryError> {
+        let rings = closed_rings(ways)
+            .iter()
+            .map(|ids| ids.iter().map(|&id| self.located(id)).collect())
+            .collect::<Result<Vec<Vec<_>>, _>>()?;
+        let area = even_odd(&rings);
+        if area.0.is_empty() {
+            return Err(GeometryError::NoRing);
+        }
+        Ok(area)
     }
 
     /// The way as an area if it is closed and `areas` say its tags make it one, and as a line otherwise.

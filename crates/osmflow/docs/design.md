@@ -18,7 +18,7 @@ examples of each part and the performance measurements.
 | PBF reader | the crate root: `PbfReader`, `Block`, `Select` | `pbf` | `buffa`, `flate2`, `rayon` |
 | Node location stores | `osmflow::nodes` | `nodes` | `memmap2`, `crc32fast`, `rayon` |
 | Node locations for ways | `PbfReader::load_nodes`, `PbfReader::par_resolve`, `Locator` | `pbf` and `nodes` | |
-| Ways as geometries | `Locator::line_string`, `Locator::polygon`, `GeometryError` | `geometry` | `geo-types` |
+| Ways and relations as geometries | `Locator::line_string`, `Locator::polygon`, `Locator::multi_polygon`, `GeometryError` | `geometry` | `geo-types`, `i_overlay` |
 | osmChange and replication | `osmflow::osc` | `osc` | `flate2`, `memchr` |
 | Downloading replication files | `Replication::http`, `HttpFetch` | `http` | `ureq` |
 
