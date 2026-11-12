@@ -1,0 +1,12 @@
+---
+source: crates/osmflow-cli/tests/cli.rs
+expression: "osmflow(&[\"dump\",\n\"crates/osmflow/fixtures/osc/paulmach-osm/changeset_38162206.osc\",\n\"--changeset\", \"38162206\", \"--metadata\", \"--limit\", \"4\"])"
+---
+exit code 0
+--- stdout
+# file: crates/osmflow/fixtures/osc/paulmach-osm/changeset_38162206.osc (60.0 kB)
+create w406567335 nodes=[1088206870,2973947976,2973947977,269430268] v1 2016-03-30T09:25:31Z c38162206 u2744209 "grah735" {"highway":"secondary","name":"Генерала Острякова проспект","name:en":"Henerala Ostriakova Avenue","name:ru":"Генерала Острякова проспект","name:uk":"Генерала Острякова проспект","trolley_wire":"yes"}
+create r6091239 members=[w406567027 "from", n1088206870 "via", w406567027 "to"] v1 2016-03-30T09:25:31Z c38162206 u2744209 "grah735" {"restriction":"no_u_turn","type":"restriction"}
+create r6091240 members=[w406567027 "from", n1088206870 "via", w43707707 "to"] v1 2016-03-30T09:25:32Z c38162206 u2744209 "grah735" {"restriction":"no_left_turn","type":"restriction"}
+modify w406567027 nodes=[2424596089,2973947973,307662572,2973947974,1088206870] v2 2016-03-30T09:25:32Z c38162206 u2744209 "grah735" {"highway":"secondary","name":"Генерала Острякова проспект","name:en":"Henerala Ostriakova Avenue","name:ru":"Генерала Острякова проспект","name:uk":"Генерала Острякова проспект","trolley_wire":"yes"}
+--- stderr

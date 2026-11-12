@@ -1,0 +1,21 @@
+---
+source: crates/osmflow-cli/tests/cli.rs
+expression: "osmflow_with(&[\"-vv\", \"stats\", PLANET, \"--seq\", \"7363600\"],\n&[(\"RUST_LOG_FORMAT\", \"json\")])"
+---
+exit code 0
+--- stdout
+stream        crates/osmflow/fixtures/osc/planet/minute
+sequence      7363600 at 2026-11-08T08:00:21Z
+node extent   lon -112.4422073 .. 115.7608061, lat -31.8771988 .. 52.0224126
+timestamps    2026-11-08T07:59:23Z .. 2026-11-08T08:00:21Z; highest version 42
+changesets    29
+users         26
+              --------------- created or modified ---------------
+                    create       modify       tagged         tags       delete      objects
+nodes                  744          125           19          100          194        1,063
+ways                    49           44           93          367            2           94
+relations                0            3            3           39            0            3
+total                  793          172          115          506          196        1,160
+--- stderr
+{"timestamp":"[TIME]","level":"DEBUG","fields":{"message":"reading diffs","first":7363600,"count":1},"target":"osmflow::osc::replication"}
+{"timestamp":"[TIME]","level":"DEBUG","fields":{"message":"read","path":"crates/osmflow/fixtures/osc/planet/minute/007/363/600.osc.gz"},"target":"osmflow::osc::replication","span":{"sequence":7363600,"name":"diff"},"spans":[{"sequence":7363600,"name":"diff"}]}

@@ -1,0 +1,8 @@
+---
+source: crates/osmflow-cli/tests/cli.rs
+expression: "osmflow(&[\"stats\", OSC, \"--format\", \"json\"])"
+---
+exit code 0
+--- stdout
+{"input":"crates/osmflow/fixtures/osc/geofabrik/monaco/000/004/960.osc.gz","bytes":3029,"diffs":1,"first_sequence":4960,"last_sequence":4960,"first_state":"2026-11-06T21:21:21Z","last_state":"2026-11-06T21:21:21Z","nodes":{"create":1,"modify":1,"delete":0,"objects":2,"tagged":2,"tags":71},"ways":{"create":0,"modify":0,"delete":0,"objects":0,"tagged":0,"tags":0},"relations":{"create":0,"modify":1,"delete":0,"objects":1,"tagged":1,"tags":243},"total":{"create":1,"modify":2,"delete":0,"objects":3,"tagged":3,"tags":314},"node_extent":[7.4184846,43.7284687,7.4276832,43.7323492],"first_timestamp":"2026-11-06T10:06:56Z","last_timestamp":"2026-11-06T15:52:40Z","max_version":75,"changesets":0,"users":0}
+--- stderr

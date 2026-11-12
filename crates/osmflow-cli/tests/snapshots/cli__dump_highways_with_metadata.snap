@@ -1,0 +1,10 @@
+---
+source: crates/osmflow-cli/tests/cli.rs
+expression: "osmflow(&[\"dump\", PBF, \"--format\", \"geojsonseq\", \"--tag\", \"highway\",\n\"--metadata\", \"--limit\", \"3\"])"
+---
+exit code 0
+--- stdout
+{"type":"Feature","id":"n21911886","geometry":{"type":"Point","coordinates":[7.4234985,43.7372399]},"properties":{"@type":"node","@id":21911886,"@version":9,"@timestamp":"2018-05-07T09:44:16Z","highway":"crossing","crossing":"zebra","crossing_ref":"zebra"}}
+{"type":"Feature","id":"n21912962","geometry":{"type":"Point","coordinates":[7.4269121,43.7379128]},"properties":{"@type":"node","@id":21912962,"@version":6,"@timestamp":"2018-05-07T09:44:15Z","highway":"crossing","crossing":"zebra","crossing_ref":"zebra"}}
+{"type":"Feature","id":"n21914341","geometry":{"type":"Point","coordinates":[7.4233732,43.7370146]},"properties":{"@type":"node","@id":21914341,"@version":4,"@timestamp":"2019-08-09T04:19:25Z","highway":"crossing","crossing":"uncontrolled","crossing_ref":"zebra"}}
+--- stderr
