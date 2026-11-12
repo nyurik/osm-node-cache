@@ -2,15 +2,15 @@
 
 use std::env;
 use std::io::{self, IsTerminal as _};
-use std::str::FromStr;
 
 use tracing_subscriber::filter::{EnvFilter, FilterExt as _, LevelFilter, Targets};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use tracing_subscriber::{Layer, Registry, fmt};
 
-/// How log lines are written, from `RUST_LOG_FORMAT`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// How log lines are written, from `RUST_LOG_FORMAT`, named in any case.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, strum::EnumString)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum LogFormat {
     /// The level and the message, with its fields: `INFO downloaded url=… bytes=113`.
     #[default]
@@ -22,24 +22,8 @@ pub enum LogFormat {
     /// Several lines for each event, for reading closely.
     Pretty,
     /// One JSON object for each event.
+    #[strum(serialize = "json", serialize = "jsonl")]
     Json,
-}
-
-impl FromStr for LogFormat {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "bare" => Ok(Self::Bare),
-            "compact" => Ok(Self::Compact),
-            "full" => Ok(Self::Full),
-            "pretty" => Ok(Self::Pretty),
-            "json" | "jsonl" => Ok(Self::Json),
-            _ => Err(format!(
-                "RUST_LOG_FORMAT={s:?} is not bare, compact, full, pretty or json"
-            )),
-        }
-    }
 }
 
 impl LogFormat {
@@ -48,8 +32,11 @@ impl LogFormat {
     fn from_env() -> Self {
         match env::var("RUST_LOG_FORMAT").ok().as_deref() {
             None | Some("") => Self::default(),
-            Some(s) => s.parse().unwrap_or_else(|e| {
-                eprintln!("osmflow: {e}; writing the log as bare lines");
+            Some(s) => s.parse().unwrap_or_else(|_| {
+                eprintln!(
+                    "osmflow: RUST_LOG_FORMAT={s:?} is not bare, compact, full, pretty or json; \
+                     writing the log as bare lines"
+                );
                 Self::default()
             }),
         }
@@ -107,12 +94,7 @@ mod tests {
         ] {
             assert_eq!(name.parse(), Ok(format), "{name}");
         }
-        assert!(
-            "xml"
-                .parse::<LogFormat>()
-                .unwrap_err()
-                .contains("bare, compact")
-        );
+        "xml".parse::<LogFormat>().unwrap_err();
     }
 
     #[test]

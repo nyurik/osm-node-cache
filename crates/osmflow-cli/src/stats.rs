@@ -313,7 +313,7 @@ fn pbf(args: &Args, path: &Path) -> Result<()> {
     let unordered = stats.first_unordered();
     let mut out = BufWriter::new(io::stdout().lock());
     let report = Report {
-        path: &path.display().to_string(),
+        path,
         size,
         header: file.header(),
         stats: &stats,
@@ -330,7 +330,7 @@ fn pbf(args: &Args, path: &Path) -> Result<()> {
 }
 
 struct Report<'a> {
-    path: &'a str,
+    path: &'a Path,
     size: u64,
     header: &'a Header,
     stats: &'a Stats,
@@ -352,7 +352,7 @@ impl Report<'_> {
         writeln!(
             o,
             "file          {} ({})",
-            self.path,
+            self.path.display(),
             output::size(self.size)
         )?;
         if let Some(program) = &h.writing_program {
@@ -479,7 +479,7 @@ impl Report<'_> {
     fn json(&self, o: &mut impl Write) -> io::Result<()> {
         let (h, s) = (self.header, self.stats);
         o.write_all(br#"{"file":"#)?;
-        json_str(o, self.path)?;
+        json_str(o, self.path.display())?;
         write!(o, r#","bytes":{},"header":{{"#, self.size)?;
         o.write_all(br#""writing_program":"#)?;
         opt_str(o, h.writing_program.as_deref())?;

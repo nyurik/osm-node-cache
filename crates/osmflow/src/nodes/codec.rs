@@ -8,8 +8,7 @@
 //! A page is a run of blocks in ID order, starting with a table of its blocks, so a lookup goes
 //! straight to its block. Its header has a CRC-32 of the page, to find damaged pages.
 
-use std::alloc::{self, Layout};
-use std::ptr;
+use bytemuck::zeroed_slice_box;
 
 use crate::Location;
 
@@ -513,30 +512,13 @@ pub(crate) struct Slots {
     locs: Box<[[Location; BLOCK_LEN]]>,
 }
 
-/// `n` zeroed values, allocated so that the OS gives memory only to the parts that are used
-#[expect(
-    unsafe_code,
-    reason = "`vec!` asks the allocator for zeroed memory only for some types"
-)]
-fn zeroed<T: Copy>(n: usize) -> Box<[T]> {
-    let layout = Layout::array::<T>(n).unwrap();
-    assert!(layout.size() > 0);
-    // SAFETY: the layout is not empty.
-    let p = unsafe { alloc::alloc_zeroed(layout) }.cast::<T>();
-    if p.is_null() {
-        alloc::handle_alloc_error(layout);
-    }
-    // SAFETY: `p` holds `n` zeroed values of `T`, allocated with the layout a `Box<[T]>` frees, and
-    // all zero is a valid `T`: this is only used for integers and `Location`s.
-    unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(p, n)) }
-}
-
 impl Default for Slots {
     fn default() -> Self {
         Self {
-            nums: zeroed(READER_SLOTS),
-            masks: zeroed(READER_SLOTS),
-            locs: zeroed(READER_SLOTS),
+            // Zeroed by the allocator, so the OS gives memory only to the parts that are used
+            nums: zeroed_slice_box(READER_SLOTS),
+            masks: zeroed_slice_box(READER_SLOTS),
+            locs: zeroed_slice_box(READER_SLOTS),
         }
     }
 }

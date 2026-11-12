@@ -13,7 +13,9 @@ CREATE TABLE osm.state (
     -- The replication stream's base URL, and the last sequence applied from it
     url       text,
     sequence  int8        NOT NULL,
-    timestamp timestamptz
+    timestamp timestamptz,
+    -- How `nodes` and `ways` store their geometries: 'twkb' or 'wkb'
+    geometry  text        NOT NULL
 );
 
 -- One row per revision: the import, then each update batch.
@@ -36,7 +38,8 @@ CREATE TABLE osm.nodes (
     ts        timestamptz,
     rev       int8  NOT NULL,
     tags      jsonb NOT NULL,
-    geom      geometry(Point, 4326)
+    -- The location, as `geometry` reads it (`osm.geom(geom)`)
+    geom      {point}
 ) WITH (autovacuum_enabled = off);
 
 -- Every way. `minor` counts the changes of its geometry since its version: a node of it moved or was deleted.
@@ -49,8 +52,9 @@ CREATE TABLE osm.ways (
     rev       int8   NOT NULL,
     tags      jsonb  NOT NULL,
     nodes     int8[] NOT NULL,
-    -- One point per node, or NULL when a node is missing or the way has fewer than two
-    geom      geometry(LineString, 4326)
+    -- The line, one point per node, as `geometry` reads it (`osm.geom(geom)`); NULL when a node is missing or the
+    -- way has fewer than two
+    geom      {line}
 ) WITH (autovacuum_enabled = off);
 
 -- Every relation, with its members as three arrays of the same length.
@@ -77,3 +81,6 @@ CREATE TABLE osm.changes (
     action "char" NOT NULL
 );
 CREATE INDEX ON osm.changes (rev);
+
+-- `geom` of `nodes` and `ways` as a geometry, whichever way it is stored
+{geom_function}

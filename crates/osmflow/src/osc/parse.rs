@@ -400,12 +400,7 @@ impl Scratch {
         let (mut kind, mut r, mut role) = (None, None, None);
         for (name, value) in attrs {
             match name {
-                b"type" => set(&mut kind, "type", value, |v| match v {
-                    b"node" => Some(MemberType::Node),
-                    b"way" => Some(MemberType::Way),
-                    b"relation" => Some(MemberType::Relation),
-                    _ => None,
-                })?,
+                b"type" => set(&mut kind, "type", value, MemberType::from_name)?,
                 b"ref" => set(&mut r, "ref", value, int)?,
                 b"role" => set(&mut role, "role", value, Some)?,
                 _ => {}
@@ -573,20 +568,17 @@ impl<R: Read> OscReader<R> {
                     }
                 }
                 (Level::Section(action), _) if open => {
-                    let kind = match name {
-                        b"node" => MemberType::Node,
-                        b"way" => MemberType::Way,
-                        b"relation" => MemberType::Relation,
-                        _ => {
-                            return unexpected(
-                                "in an action section, which holds only <node>, <way> and <relation>",
-                            );
-                        }
+                    let Some(kind) = MemberType::from_name(name) else {
+                        return unexpected(
+                            "in an action section, which holds only <node>, <way> and <relation>",
+                        );
                     };
                     return self.object(action, kind, &token).map(Some);
                 }
                 (Level::Root, Kind::Close) if name == b"osmChange" => self.level = Level::End,
-                (Level::Section(action), Kind::Close) if name == action.name().as_bytes() => {
+                (Level::Section(action), Kind::Close)
+                    if name == <&str>::from(action).as_bytes() =>
+                {
                     self.level = Level::Root;
                 }
                 (Level::End | Level::Done, Kind::Eof) => {
@@ -602,7 +594,7 @@ impl<R: Read> OscReader<R> {
                     return Err(self.error(&token, XmlError::Mismatched("osmChange")));
                 }
                 (Level::Section(action), _) => {
-                    return Err(self.error(&token, XmlError::Mismatched(action.name())));
+                    return Err(self.error(&token, XmlError::Mismatched(action.into())));
                 }
             }
         }
@@ -611,12 +603,9 @@ impl<R: Read> OscReader<R> {
     /// Reads a node, way or relation from its start tag `token` to its end.
     fn object(&mut self, action: Action, kind: MemberType, token: &Token) -> Result<Change> {
         // Reading the children may move the buffer, so errors name the object by its type, not by the token's range.
-        let name = match kind {
-            MemberType::Node => "node",
-            MemberType::Way => "way",
-            MemberType::Relation => "relation",
+        let error = |reader: &Self, e| {
+            reader.error_at(token.offset, Some(<&str>::from(kind).to_owned()), e)
         };
-        let error = |reader: &Self, e| reader.error_at(token.offset, Some(name.to_owned()), e);
         let head = self.head().map_err(|e| error(self, e))?;
         let s = &mut self.scratch;
         s.tags.clear();
@@ -624,7 +613,7 @@ impl<R: Read> OscReader<R> {
         s.members.clear();
         s.roles.clear();
         if token.kind == Kind::Open {
-            self.children(kind, name)?;
+            self.children(kind)?;
         }
         self.finish(action, kind, head).map_err(|e| error(self, e))
     }
@@ -662,7 +651,8 @@ impl<R: Read> OscReader<R> {
     }
 
     /// Reads the children of a node, way or relation into the scratch buffers, up to its end tag.
-    fn children(&mut self, kind: MemberType, parent: &'static str) -> Result<()> {
+    fn children(&mut self, kind: MemberType) -> Result<()> {
+        let parent: &str = kind.into();
         let allowed = match kind {
             MemberType::Node => "in <node>, which holds only <tag>",
             MemberType::Way => "in <way>, which holds only <tag> and <nd>",

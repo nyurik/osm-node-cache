@@ -4,6 +4,9 @@ use std::path::Path;
 use std::time::Instant;
 use std::{fs, iter};
 
+use geo_traits::{
+    CoordTrait, GeometryTrait as _, GeometryType, LineStringTrait as _, PointTrait as _,
+};
 use osmflow::nodes::PagedStore;
 use osmflow::nodes::prelude::*;
 use osmflow::osc::Replication;
@@ -11,14 +14,15 @@ use osmflow::{Location, PbfReader};
 use postgres::Client;
 use postgres::fallible_iterator::FallibleIterator as _;
 use tracing::info;
+use wkb::reader::read_wkb;
 
-use crate::copy::wkb_locations;
+use crate::copy::{locations, osm_twkb};
 use crate::db::{self, DbState};
 use crate::files::{ID_KEY, read_diffs, remove_node_file, set_locations, way_pairs};
 use crate::index::ReverseIndex;
 use crate::sort::{Sorted, Sorter};
 use crate::update::check_stream;
-use crate::{Mirror, SyncError};
+use crate::{GeometryFormat, Mirror, SyncError};
 
 /// Where [`Mirror::rebuild`] takes node locations from. The reverse index is always made from the database's ways.
 #[derive(Clone, Copy)]
@@ -66,7 +70,7 @@ pub(crate) fn rebuild(m: &Mirror, from: &Rebuild<'_>) -> Result<RebuildStats, Sy
             let mut load = store.bulk_load()?;
             let mut batch = Vec::with_capacity(1 << 20);
             let mut last = None;
-            for node in db_locations(&mut client, &m.dir)? {
+            for node in db_locations(&mut client, &m.dir, state.geometry)? {
                 // A node of several ways has the same location in each; one is enough
                 let (id, loc) = node?;
                 if last != Some(id) {
@@ -140,26 +144,70 @@ pub(crate) fn rebuild(m: &Mirror, from: &Rebuild<'_>) -> Result<RebuildStats, Sy
 }
 
 /// The node locations the database has, as (ID, packed location), sorted, sorted with temporary files in `dir`.
-fn db_locations(client: &mut Client, dir: &Path) -> Result<Sorted, SyncError> {
+fn db_locations(
+    client: &mut Client,
+    dir: &Path,
+    format: GeometryFormat,
+) -> Result<Sorted, SyncError> {
     let sorter = Sorter::new(dir)?;
-    // The ways' points, then the tagged nodes': (node IDs, WKB) rows
+    // The ways' points, then the tagged nodes': (kind, ID, node IDs, geometry) rows, every point as stored. Not
+    // through `ST_AsTWKB`, which leaves out a point that repeats the one before it.
+    let geom = match format {
+        GeometryFormat::Twkb => "geom",
+        GeometryFormat::Wkb => "ST_AsBinary(geom)",
+    };
     for sql in [
-        "SELECT nodes, ST_AsBinary(geom) FROM osm.ways WHERE geom IS NOT NULL",
-        "SELECT ARRAY[id], ST_AsBinary(geom) FROM osm.nodes WHERE geom IS NOT NULL",
+        format!("SELECT 'way', id, nodes, {geom} FROM osm.ways WHERE geom IS NOT NULL"),
+        format!("SELECT 'node', id, ARRAY[id], {geom} FROM osm.nodes WHERE geom IS NOT NULL"),
     ] {
-        let mut rows = client.query_raw(sql, iter::empty::<&str>())?;
+        let mut rows = client.query_raw(&sql, iter::empty::<&str>())?;
         while let Some(row) = rows.next()? {
-            let nodes: Vec<i64> = row.get(0);
-            let points = wkb_locations(row.get(1));
-            sorter.extend(
-                nodes
-                    .into_iter()
-                    .zip(points)
-                    .filter_map(|(id, l)| Some((u64::try_from(id).ok()?, pack(l)))),
-            )?;
+            let nodes: Vec<i64> = row.get(2);
+            let buf: &[u8] = row.get(3);
+            let added = match format {
+                GeometryFormat::Twkb => {
+                    let g = osm_twkb(buf);
+                    add_locations(&sorter, &nodes, g.as_ref().map(locations))?
+                }
+                GeometryFormat::Wkb => match read_wkb(buf).as_ref().map(|g| g.as_type()) {
+                    Ok(GeometryType::Point(p)) => {
+                        add_locations(&sorter, &nodes, Some(p.coord().iter().map(location)))?
+                    }
+                    Ok(GeometryType::LineString(l)) => {
+                        add_locations(&sorter, &nodes, Some(l.coords().map(|c| location(&c))))?
+                    }
+                    _ => false,
+                },
+            };
+            if !added {
+                let (kind, id): (&str, i64) = (row.get(0), row.get(1));
+                return Err(SyncError::state(format!(
+                    "{kind} {id}: its geometry does not have one point for each of its {} nodes",
+                    nodes.len()
+                )));
+            }
         }
     }
     Ok(sorter.finish()?)
+}
+
+/// Adds each node of `nodes` with its point of `points` to `sorter`; false, adding none, unless there is one point
+/// for each node.
+fn add_locations(
+    sorter: &Sorter,
+    nodes: &[i64],
+    points: Option<impl ExactSizeIterator<Item = Location>>,
+) -> Result<bool, SyncError> {
+    let Some(points) = points.filter(|p| p.len() == nodes.len()) else {
+        return Ok(false);
+    };
+    sorter.extend(
+        nodes
+            .iter()
+            .zip(points)
+            .filter_map(|(&id, l)| Some((u64::try_from(id).ok()?, pack(l)))),
+    )?;
+    Ok(true)
 }
 
 /// The reverse index's pairs, from the ways' node lists, sorted with temporary files in `dir`.
@@ -170,6 +218,11 @@ fn db_pairs(client: &mut Client, dir: &Path) -> Result<Sorted, SyncError> {
         sorter.extend(way_pairs(row.get(0), &row.get::<_, Vec<i64>>(1)))?;
     }
     Ok(sorter.finish()?)
+}
+
+/// A WKB coordinate's location.
+fn location(c: &impl CoordTrait<T = f64>) -> Location {
+    Location::from_degrees(c.y(), c.x())
 }
 
 /// A location as one number to sort beside its node ID.

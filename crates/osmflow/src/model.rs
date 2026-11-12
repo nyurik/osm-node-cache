@@ -3,6 +3,7 @@
 /// A node location in 1e-7 degrees, as OSM PBF and osmChange files store it: the same values as a PBF node's
 /// `decimicro_lat` and `decimicro_lon`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "nodes", derive(bytemuck::Zeroable))]
 #[repr(C)]
 pub struct Location {
     /// Latitude in 1e-7 degrees: ±900,000,000 at the poles.
@@ -51,8 +52,10 @@ impl Location {
     }
 }
 
-/// The type of a relation member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The type of a relation member. It converts to a `&'static str` as osmChange files name it, as an element and as
+/// a member's `type`: `node`, `way` or `relation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum MemberType {
     /// Numbered 0 in PBF files.
     Node,
@@ -60,6 +63,19 @@ pub enum MemberType {
     Way,
     /// Numbered 2 in PBF files.
     Relation,
+}
+
+impl MemberType {
+    /// The type osmChange files name `name`, matched exactly, or `None` for any other.
+    #[must_use]
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"node" => Some(Self::Node),
+            b"way" => Some(Self::Way),
+            b"relation" => Some(Self::Relation),
+            _ => None,
+        }
+    }
 }
 
 /// A relation member.

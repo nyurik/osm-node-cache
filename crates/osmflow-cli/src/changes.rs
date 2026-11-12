@@ -36,10 +36,7 @@ enum Opened {
 fn open(input: &Input, changes: &ChangeArgs, threads: &Threads) -> Result<Opened> {
     if let Input::Osc(path) = input {
         if let Some(flag) = changes.stream_flag() {
-            bail!(
-                "{flag} is for replication streams, and {} is one osmChange file",
-                input.name()
-            );
+            bail!("{flag} is for replication streams, and {input} is one osmChange file");
         }
         return Ok(Opened::File(path.clone()));
     }
@@ -92,10 +89,7 @@ fn chosen(args: &dump::Args, matcher: &Matcher, change: &Change) -> bool {
 
 pub fn dump(args: &dump::Args, input: &Input) -> Result<()> {
     if let Some(flag) = args.pbf_flag() {
-        bail!(
-            "{flag} is for PBF files, and {} is osmChange input",
-            input.name()
-        );
+        bail!("{flag} is for PBF files, and {input} is osmChange input");
     }
     let opened = open(input, &args.changes, &args.threads)?;
     let mut w = args.writer()?;
@@ -106,7 +100,7 @@ pub fn dump(args: &dump::Args, input: &Input) -> Result<()> {
             false
         }
         Opened::Stream(_) => {
-            w.comment(|o| write!(o, "replication: {}", input.name()))?;
+            w.comment(|o| write!(o, "replication: {input}"))?;
             true
         }
     };
@@ -152,14 +146,6 @@ pub fn dump(args: &dump::Args, input: &Input) -> Result<()> {
     Ok(())
 }
 
-fn action_index(action: Action) -> usize {
-    match action {
-        Action::Create => 0,
-        Action::Modify => 1,
-        Action::Delete => 2,
-    }
-}
-
 /// Created and modified versions with tags, and their tags.
 #[derive(Debug, Default, Clone, Copy)]
 struct Tagged {
@@ -195,7 +181,7 @@ impl ChangeStats {
     fn add(&mut self, change: &Change) {
         let o = &change.object;
         let kind = Kind::from(o.kind());
-        self.changes[kind.index()][action_index(change.action)] += 1;
+        self.changes[kind.index()][change.action as usize] += 1;
         self.objects[kind.index()].insert(o.id());
         if change.action != Action::Delete {
             let t = &mut self.tags[kind.index()];
@@ -336,8 +322,8 @@ fn text(
     s: &mut ChangeStats,
 ) -> io::Result<()> {
     match bytes {
-        Some(bytes) => writeln!(o, "file          {} ({})", input.name(), size(bytes))?,
-        None => writeln!(o, "stream        {}", input.name())?,
+        Some(bytes) => writeln!(o, "file          {input} ({})", size(bytes))?,
+        None => writeln!(o, "stream        {input}")?,
     }
     if let Some((first, last)) = s.states {
         if s.diffs > 1 {
@@ -432,7 +418,7 @@ fn json(
     s: &mut ChangeStats,
 ) -> io::Result<()> {
     o.write_all(br#"{"input":"#)?;
-    json_str(o, &input.name())?;
+    json_str(o, input)?;
     if let Some(bytes) = bytes {
         write!(o, r#","bytes":{bytes}"#)?;
     }
@@ -486,7 +472,7 @@ fn stream_state(
     };
     if json {
         o.write_all(br#"{"input":"#)?;
-        json_str(o, &input.name())?;
+        json_str(o, input)?;
         write!(
             o,
             r#","latest_sequence":{},"latest_state":"{}""#,
@@ -509,7 +495,7 @@ fn stream_state(
         writeln!(o, "}}")?;
         return Ok(());
     }
-    writeln!(o, "stream        {}", input.name())?;
+    writeln!(o, "stream        {input}")?;
     writeln!(
         o,
         "latest        sequence {} at {}, {} ago",

@@ -55,6 +55,11 @@ fn import_and_update() -> Result<(), Box<dyn std::error::Error>> {
 * **`rev`, `minor` and `osm.changes` depend on the batches:** a way whose nodes move in two diffs has `minor` 2 if the
   diffs were applied in two batches, and 1 if in one, and the log lists each object once per batch. Two databases
   kept from one stream have the same rows otherwise.
+* **Geometry is stored as TWKB or WKB,** as [`ImportOpts::geometry`] says, for good: TWKB with OSM's 7 decimal
+  digits in a `bytea` by default, which PostGIS reads back exactly as the locations were and which takes about a
+  quarter of a line's WKB, or PostGIS's `geometry`, which needs no decoding. SQL reads either as a geometry with
+  `osm.geom(geom)`, which the import creates for the format; Postgres inlines it, so an index on `osm.geom(geom)`
+  serves queries through it, views included.
 * **Geometry** is NULL for a way with fewer than two nodes, or with a node the data does not have, as at the edge of
   an extract.
 * **Untagged nodes** are only in the node file. Their locations are in the ways' geometries.

@@ -1245,7 +1245,7 @@ impl FusedIterator for Refs<'_> {}
 
 impl<'a, T: TagMode> Relation<'a, T> {
     /// The relation's members, in order.
-    pub fn members(&self) -> impl ExactSizeIterator<Item = Member<'a>> + use<'a, T> {
+    pub fn members(&self) -> impl ExactSizeIterator<Item = Member<'a>> + Clone + use<'a, T> {
         let block = self.block;
         let r = &block.c.relations;
         range(&r.member_ends, self.i).map(move |m| Member {

@@ -230,7 +230,7 @@ impl Writer {
                 }
                 Some(Err(e)) => {
                     o.write_all(b" geometry_error=")?;
-                    json_str(o, &e.to_string())?;
+                    json_str(o, e)?;
                 }
                 None => {}
             }
@@ -247,7 +247,7 @@ impl Writer {
             Some(Ok(_)) => {}
             Some(Err(e)) => {
                 self.out.write_all(br#","@error":"#)?;
-                json_str(&mut self.out, &e.to_string())?;
+                json_str(&mut self.out, e)?;
                 self.out.write_all(br#","@nodes":"#)?;
                 ids(&mut self.out, refs)?;
             }
@@ -370,7 +370,7 @@ impl Writer {
         tags: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> io::Result<()> {
         let o = &mut self.out;
-        write!(o, r#","properties":{{"@type":"{}","@id":{id}"#, kind.name())?;
+        write!(o, r#","properties":{{"@type":"{kind}","@id":{id}"#)?;
         if let Some(action) = props.action {
             write!(o, r#","@action":"{action}""#)?;
         }

@@ -1,14 +1,18 @@
 //! `osmflow sync`: OpenStreetMap data in PostgreSQL, imported from a PBF file and kept current from replication.
 
+use std::fmt;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use osmflow::PbfReader;
 use osmflow::osc::Replication;
-use osmflow_sync::{DbState, FileStamp, ImportOpts, Mirror, Rebuild, SyncError, UpdateOpts};
+use osmflow_sync::{
+    DbState, FileStamp, GeometryFormat, ImportOpts, Mirror, Rebuild, SyncError, UpdateOpts,
+};
 
 use crate::input::fetch;
+use crate::select::names;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -66,6 +70,12 @@ enum Command {
         /// Database connections to copy on at once; half the cores, up to 8, by default.
         #[arg(long, value_name = "N")]
         connections: Option<usize>,
+        /// How to store the geometries of nodes and ways, from then on; SQL reads either with `osm.geom(geom)`.
+        ///
+        /// `twkb` is TWKB with OSM's 7 decimal digits, in a `bytea`: about a quarter of a line's WKB. `wkb` is
+        /// PostGIS's `geometry`, read without decoding.
+        #[arg(long, default_value_t, value_parser = names::<GeometryFormat>())]
+        geometry: GeometryFormat,
     },
     /// Applies the replication diffs after the database's sequence, up to the latest.
     ///
@@ -113,11 +123,13 @@ pub fn run(args: &Args) -> Result<()> {
             sequence,
             cache,
             connections,
+            geometry,
         } => {
             let mut opts = ImportOpts {
                 replace: *replace,
                 replication_url: replication.clone(),
                 sequence: *sequence,
+                geometry: *geometry,
                 ..ImportOpts::default()
             };
             if let Some(n) = connections {
@@ -133,7 +145,7 @@ pub fn run(args: &Args) -> Result<()> {
             let s = mirror(place)
                 .import(pbf, stream.as_ref(), &opts)
                 .with_context(|| format!("importing {}", pbf.display()))?;
-            out(&format!(
+            out(format_args!(
                 "imported {} nodes: {} tagged, {} ways, {} relations; {} reverse index pairs",
                 s.nodes, s.tagged_nodes, s.ways, s.relations, s.pairs
             ))
@@ -150,7 +162,7 @@ pub fn run(args: &Args) -> Result<()> {
                 until: *until,
             };
             let s = mirror.update(&replication, &opts).context("updating")?;
-            out(&format!(
+            out(format_args!(
                 "applied {} diffs in {} batches: {} rows, {} ways moved by their nodes; now at sequence {}",
                 s.diffs, s.batches, s.rows, s.moved_ways, s.sequence
             ))
@@ -176,7 +188,7 @@ pub fn run(args: &Args) -> Result<()> {
                 }
             }
             .context("rebuilding")?;
-            out(&format!(
+            out(format_args!(
                 "rebuilt the node file from {} nodes and {} diffs, and the reverse index with {} pairs",
                 s.nodes, s.diffs, s.pairs
             ))
@@ -190,15 +202,21 @@ pub fn run(args: &Args) -> Result<()> {
                 timestamp,
                 ..
             } = &s.db;
-            let time = timestamp.map_or_else(String::new, |t| format!(" at {t}"));
-            out(&format!(
-                "database      revision {rev}, sequence {sequence}{time} of {}",
-                url.as_deref().unwrap_or("no stream")
-            ))?;
-            out(&format!("node file     {}", file(&s.nodes, &s.db)))?;
-            out(&format!("reverse index {}", file(&s.index, &s.db)))
+            let mut o = io::stdout().lock();
+            write!(o, "database      revision {rev}, sequence {sequence}")?;
+            if let Some(t) = timestamp {
+                write!(o, " at {t}")?;
+            }
+            writeln!(o, " of {}", url.as_deref().unwrap_or("no stream"))?;
+            writeln!(o, "node file     {}", file(&s.nodes, &s.db))?;
+            Ok(writeln!(o, "reverse index {}", file(&s.index, &s.db))?)
         }
     }
+}
+
+fn out(line: fmt::Arguments<'_>) -> Result<()> {
+    writeln!(io::stdout(), "{line}")?;
+    Ok(())
 }
 
 fn mirror(place: &Place) -> Mirror {
@@ -240,7 +258,110 @@ fn file(stamp: &Result<FileStamp, SyncError>, db: &DbState) -> String {
     }
 }
 
-fn out(line: &str) -> Result<()> {
-    writeln!(io::stdout(), "{line}")?;
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use std::{env, fs};
+
+    use clap::Parser as _;
+    use osmflow_sync::NodeWay;
+
+    use super::*;
+
+    /// The fixture, whose header gives replication sequence 1708.
+    const PBF: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../osmflow/fixtures/osmpbfreader/clipperton.osm.pbf"
+    );
+    /// A node of way 178300745, which diff 1709 moves.
+    const NODE: i64 = 1_886_651_627;
+
+    #[derive(clap::Parser)]
+    struct Sync {
+        #[command(flatten)]
+        args: Args,
+    }
+
+    /// Runs `osmflow sync` with `args`.
+    fn sync(args: &[&str]) {
+        let cli = Sync::try_parse_from(["sync"].iter().chain(args)).unwrap();
+        run(&cli.args).unwrap();
+    }
+
+    /// Every subcommand of `osmflow sync`, against the database `OSMFLOW_SYNC_TEST_DB` names (`just test-with-db`
+    /// starts one), whose `osm` schema is replaced; without it, the test does nothing.
+    #[test]
+    fn import_update_status_rebuild() {
+        let Ok(url) = env::var("OSMFLOW_SYNC_TEST_DB") else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        // A copy of the fixture's stream: its state 1708, then diff 1709, which moves NODE, and is the latest
+        let diffs = dir.path().join("diffs");
+        fs::create_dir_all(diffs.join("000/001")).unwrap();
+        let state = |n: u32, at: &str| format!("sequenceNumber={n}\ntimestamp={at}\n");
+        fs::write(
+            diffs.join("000/001/708.state.txt"),
+            state(1708, "2025-04-23T20\\:21\\:01Z"),
+        )
+        .unwrap();
+        for latest in ["000/001/709.state.txt", "state.txt"] {
+            fs::write(diffs.join(latest), state(1709, "2026-11-01T00\\:00\\:30Z")).unwrap();
+        }
+        fs::write(
+            diffs.join("000/001/709.osc.gz"),
+            format!(
+                r#"<osmChange version="0.6"><modify><node id="{NODE}" version="9" timestamp="2026-11-01T00:00:00Z" lat="10.3" lon="-109.2"/></modify></osmChange>"#
+            ),
+        )
+        .unwrap();
+        let files = dir.path().join("files");
+        let place = ["--db", &url, "--dir", files.to_str().unwrap()];
+        let diffs = diffs.to_str().unwrap();
+        let mirror = Mirror::new(&url, &files);
+        let at = |rev: i64| {
+            let s = mirror.status().unwrap();
+            let stamp = FileStamp {
+                id: Some(s.db.id),
+                rev,
+            };
+            assert_eq!(
+                (s.db.rev, s.nodes.unwrap(), s.index.unwrap()),
+                (rev, stamp, stamp)
+            );
+            s.db.sequence
+        };
+        for geometry in ["twkb", "wkb"] {
+            sync(
+                &[
+                    &["import"],
+                    &place[..],
+                    &[
+                        PBF,
+                        "--replace",
+                        "--replication",
+                        diffs,
+                        "--geometry",
+                        geometry,
+                    ],
+                ]
+                .concat(),
+            );
+            assert_eq!(at(1), 1708, "{geometry}");
+            assert_eq!(mirror.state().unwrap().geometry.to_string(), geometry);
+            sync(&[&["update"], &place[..]].concat());
+            assert_eq!(at(2), 1709, "{geometry}");
+            let way = NodeWay {
+                node: NODE,
+                way: 178_300_745,
+            };
+            let through = mirror.open().unwrap().ways_through(&[NODE]).unwrap();
+            assert!(through.contains(&way), "{through:?}");
+            sync(&[&["status"], &place[..]].concat());
+            for from in [&[][..], &["--pbf", PBF][..]] {
+                fs::remove_file(mirror.index_path()).unwrap();
+                sync(&[&["rebuild"], &place[..], from].concat());
+                assert_eq!(at(2), 1709, "{geometry} {from:?}");
+            }
+        }
+    }
 }

@@ -46,7 +46,6 @@ mod plan;
 mod replication;
 mod value;
 
-use std::fmt;
 use std::sync::Arc;
 
 pub use self::error::{OscError, StateError, XmlError, XmlPosition};
@@ -60,8 +59,21 @@ pub use self::replication::{
 use crate::Timestamp;
 use crate::model::{Location, Member, MemberType};
 
-/// What a change does to its object: the section of the file it is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// What a change does to its object: the section of the file it is in. It displays, parses and converts to a
+/// `&'static str` as the section element's name: `create`, `modify` or `delete`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "lowercase")]
 pub enum Action {
     /// The object is new, usually at version 1.
     Create,
@@ -69,24 +81,6 @@ pub enum Action {
     Modify,
     /// The object was deleted. The file may give only its ID and version.
     Delete,
-}
-
-impl Action {
-    /// The name of the action's section element.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Create => "create",
-            Self::Modify => "modify",
-            Self::Delete => "delete",
-        }
-    }
-}
-
-impl fmt::Display for Action {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
 }
 
 /// One change of an osmChange file: an object's new version, and what was done to it.
@@ -209,7 +203,7 @@ pub struct Relation {
 
 impl Relation {
     /// The relation's members, in order; usually none in a deleted relation.
-    pub fn members(&self) -> impl ExactSizeIterator<Item = Member<'_>> {
+    pub fn members(&self) -> impl ExactSizeIterator<Item = Member<'_>> + Clone {
         self.members
             .iter()
             .enumerate()

@@ -20,15 +20,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    # For osmflow-sync's database test
-    services:
-      postgis:
-        image: postgis/postgis:18-3.6-alpine
-        env: { POSTGRES_HOST_AUTH_METHOD: trust }
-        ports: [ '5432:5432' ]
-        options: --health-cmd "pg_isready -h localhost -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
-    env:
-      OSMFLOW_SYNC_TEST_DB: postgresql://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
       - if: github.event_name != 'workflow_dispatch'

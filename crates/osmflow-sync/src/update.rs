@@ -14,7 +14,7 @@ use crate::copy::Rows;
 use crate::db::{self, DbState, Table};
 use crate::files::{read_diffs, set_locations, way_pairs};
 use crate::index::{Pair, ReverseIndex};
-use crate::{OpenMirror, SyncError};
+use crate::{GeometryFormat, OpenMirror, SyncError};
 
 /// How to update.
 #[derive(Debug, Clone)]
@@ -146,6 +146,7 @@ fn apply_diffs(
             first: next.cast_signed(),
             last: last.cast_signed(),
             timestamp: last_state.map(|s| s.timestamp),
+            geometry: state.geometry,
         };
         let applied = apply(client, store, index, &changes, &batch)?;
         info!(
@@ -210,6 +211,7 @@ struct Batch {
     first: i64,
     last: i64,
     timestamp: Option<Timestamp>,
+    geometry: GeometryFormat,
 }
 
 /// Rows to write into a table, and IDs to delete from it.
@@ -259,7 +261,7 @@ fn apply(
         .map(|r| (r.get(0), r.get(1)))
         .collect();
     let read = t.elapsed();
-    let plan = plan(store, changes, &through, &old, batch.rev);
+    let plan = plan(store, changes, &through, &old, batch);
     let planned = t.elapsed();
     let rows = write(client, changes, &plan, batch)?;
     let written = t.elapsed();
@@ -288,9 +290,13 @@ fn plan(
     changes: &Changes,
     through: &[Pair],
     old: &HashMap<i64, Vec<i64>>,
-    rev: i64,
+    batch: &Batch,
 ) -> Plan {
+    let (rev, format) = (batch.rev, batch.geometry);
     let mut plan = Plan::default();
+    plan.nodes.rows = Rows::new(format);
+    plan.ways.rows = Rows::new(format);
+    plan.geoms = Rows::new(format);
     for (&id, (deleted, w)) in &changes.ways {
         if let Some(nodes) = old.get(&id) {
             plan.remove.extend(way_pairs(id, nodes));
@@ -354,10 +360,9 @@ fn plan(
             plan.relations.deleted.push(id);
         } else {
             plan.relations.written.push(id);
-            let members: Vec<_> = r.members().collect();
             plan.relations
                 .rows
-                .relation(id, (&r.meta).into(), rev, r.tags.iter(), &members);
+                .relation(id, (&r.meta).into(), rev, r.tags.iter(), r.members());
         }
     }
     plan
@@ -384,10 +389,7 @@ fn write(
             Vec::new()
         } else {
             tx.query(
-                &format!(
-                    "DELETE FROM {} WHERE id = ANY($1) RETURNING id",
-                    table.name()
-                ),
+                &format!("DELETE FROM {table} WHERE id = ANY($1) RETURNING id"),
                 &[&w.deleted],
             )?
         };
@@ -440,13 +442,12 @@ fn write(
 fn create_temp_tables(client: &mut Client) -> Result<(), SyncError> {
     let tables = [Table::Nodes, Table::Ways, Table::Relations].map(|t| {
         format!(
-            "CREATE TEMP TABLE {} (LIKE {}) ON COMMIT DELETE ROWS;",
-            temp_name(t),
-            t.name()
+            "CREATE TEMP TABLE {} (LIKE {t}) ON COMMIT DELETE ROWS;",
+            temp_name(t)
         )
     });
     client.batch_execute(&format!(
-        "CREATE TEMP TABLE osm_geoms (id int8, geom geometry(LineString, 4326)) ON COMMIT DELETE ROWS; {}",
+        "CREATE TEMP TABLE osm_geoms ON COMMIT DELETE ROWS AS SELECT id, geom FROM osm.ways WITH NO DATA; {}",
         tables.concat()
     ))?;
     Ok(())
@@ -454,7 +455,7 @@ fn create_temp_tables(client: &mut Client) -> Result<(), SyncError> {
 
 /// The temporary table rows of `table` are copied into.
 fn temp_name(table: Table) -> String {
-    table.name().replace('.', "_")
+    <&str>::from(table).replace('.', "_")
 }
 
 /// Writes `rows` of `table` over the rows with their IDs, or as new rows: copied into its temporary table, then
@@ -463,15 +464,12 @@ fn upsert(tx: &mut Transaction<'_>, table: Table, rows: &Rows) -> Result<(), Syn
     if rows.count == 0 {
         return Ok(());
     }
-    let (name, columns, tmp) = (table.name(), table.columns(), temp_name(table));
-    let list = columns.join(", ");
-    let set = columns[1..]
-        .iter()
-        .map(|c| format!("{c} = EXCLUDED.{c}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    db::copy(tx, &tmp, &list, rows)?;
-    tx.execute(&format!("INSERT INTO {name} ({list}) SELECT {list} FROM {tmp} ON CONFLICT (id) DO UPDATE SET {set}"), &[])?;
+    let (list, tmp) = (table.columns(), temp_name(table));
+    // Every column but `id`, set to the new row's
+    let rest = list.strip_prefix("id, ").unwrap_or(list);
+    let new = rest.replace(", ", ", EXCLUDED.");
+    db::copy(tx, &tmp, list, rows)?;
+    tx.execute(&format!("INSERT INTO {table} ({list}) SELECT {list} FROM {tmp} ON CONFLICT (id) DO UPDATE SET ({rest}) = ROW(EXCLUDED.{new})"), &[])?;
     Ok(())
 }
 

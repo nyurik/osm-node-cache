@@ -130,9 +130,8 @@ pub fn run(args: &Args) -> Result<()> {
     let input = Input::of(&args.input)?;
     if !matches!(input, Input::Dir(_) | Input::Url(_)) {
         bail!(
-            "{} is not a replication stream: give a directory laid out as the servers lay theirs out, or a \
-             server's URL",
-            input.name()
+            "{input} is not a replication stream: give a directory laid out as the servers lay theirs out, or a \
+             server's URL"
         );
     }
     let (opened, root) = open(&input, args.cache.as_deref())?;
@@ -248,7 +247,7 @@ fn open_coarser(root: &Root, name: &'static str) -> Result<Option<(&'static str,
     match stream_states(&input, None) {
         Ok((source, _, _)) => Ok(Some((name, source))),
         Err(e) if is_no_stream(&e) => Ok(None),
-        Err(e) => Err(e.context(format!("cannot read the {name} stream {}", input.name()))),
+        Err(e) => Err(e.context(format!("cannot read the {name} stream {input}"))),
     }
 }
 
@@ -315,8 +314,7 @@ fn text(
     let (latest, state) = (f.latest, f.state);
     writeln!(
         o,
-        "The latest diff of {} is {}, at {}, {} ago.",
-        input.name(),
+        "The latest diff of {input} is {}, at {}, {} ago.",
         latest.sequence,
         latest.timestamp,
         ago(latest.timestamp)
@@ -412,7 +410,7 @@ fn json(
     catch_up: Option<&CatchUp>,
 ) -> io::Result<()> {
     o.write_all(br#"{"stream":"#)?;
-    json_str(o, &input.name())?;
+    json_str(o, input)?;
     write!(
         o,
         r#","latest_sequence":{},"latest_state":"{}","sequence":{},"state":"{}","exact":{},"read_from":{},"diffs":{},"catch_up":["#,
