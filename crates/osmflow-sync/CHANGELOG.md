@@ -9,9 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.14.0](https://github.com/nyurik/osmflow/compare/osmflow-sync-v0.13.1...osmflow-sync-v0.14.0) - 2026-11-12
 
-### Added
+### Changed
 
-- *(sync)* [**breaking**] store geoms as TWKB or WKB, test DBs in CI ([#57](https://github.com/nyurik/osmflow/pull/57))
+- [**breaking**] Geometries are stored as TWKB by default: `osm.nodes.geom` and `osm.ways.geom` are TWKB with OSM's
+  7 decimal digits in a `bytea`, about a quarter of a line's WKB, which PostGIS reads back exactly as the locations
+  were. `ImportOpts::geometry` (`GeometryFormat::Wkb`) keeps PostGIS's `geometry` instead. The choice is made at the
+  import, recorded in `osm.state.geometry` and `DbState::geometry`, and followed by updates and rebuilds. SQL reads
+  either format with `osm.geom(geom)`, which Postgres inlines, so an index on `osm.geom(geom)` serves queries and
+  views ([#57](https://github.com/nyurik/osmflow/pull/57))
+- [**breaking**] The `osm` schema has format 2, which 0.13 databases do not have (0.14 stops with `column "geometry"
+  does not exist`). Import again, or upgrade in place: 0.13 stored geometries as 0.14's `wkb` format does. With
+  PostGIS in schema `public`:
+
+  ```sql
+  BEGIN;
+  ALTER TABLE osm.state ADD COLUMN geometry text NOT NULL DEFAULT 'wkb';
+  ALTER TABLE osm.state ALTER COLUMN geometry DROP DEFAULT;
+  UPDATE osm.state SET version = 2;
+  CREATE FUNCTION osm.geom(g public.geometry) RETURNS public.geometry LANGUAGE sql IMMUTABLE PARALLEL SAFE
+      AS $$ SELECT g $$;
+  COMMIT;
+  ```
+
+- A rebuild from the database fails, naming the way or the node, when its stored geometry does not have one point for
+  each of its nodes, instead of giving nodes the wrong locations.
 
 ## [0.13.1](https://github.com/nyurik/osmflow/compare/osmflow-sync-v0.13.0...osmflow-sync-v0.13.1) - 2026-11-11
 

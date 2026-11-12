@@ -11,7 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(sync)* [**breaking**] store geoms as TWKB or WKB, test DBs in CI ([#57](https://github.com/nyurik/osmflow/pull/57))
+- `osmflow sync import --geometry twkb|wkb` chooses how the mirror stores geometries: TWKB by default, a quarter of
+  WKB's size, or PostGIS's `geometry`. SQL reads either with `osm.geom(geom)`
+  ([#57](https://github.com/nyurik/osmflow/pull/57))
+
+### Changed
+
+- [**breaking**] A mirror imported by 0.13 needs a new import, or the upgrade in osmflow-sync 0.14.0's changelog,
+  before `osmflow sync` can update it.
+
+### Fixed
+
+- On Windows, the files of a replication stream in a local directory are numbered right: their paths are split at
+  `\` too.
 
 ## [0.13.1](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.13.0...osmflow-cli-v0.13.1) - 2026-11-11
 
