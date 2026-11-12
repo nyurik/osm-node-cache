@@ -1,0 +1,8 @@
+---
+source: crates/osmflow-cli/tests/cli.rs
+expression: "osmflow(&[\"stats\", PBF, \"--format\", \"json\", \"--metadata\", \"--threads\", \"2\"])"
+---
+exit code 0
+--- stdout
+{"file":"crates/osmflow/fixtures/planetiler/monaco-latest.osm.pbf","bytes":445315,"header":{"writing_program":"osmium/1.8.0","required_features":["OsmSchema-V0.6","DenseNodes"],"optional_features":[],"bbox":[7.409205,43.72335,7.448637,43.75169],"replication_sequence":2947,"replication_timestamp":"2021-04-21T20:21:46Z","replication_base_url":"http://download.geofabrik.de/europe/monaco-updates"},"blocks":6,"zlib_blocks":6,"blob_bytes":445044,"raw_bytes":882770,"strings":6980,"string_bytes":106760,"groups":{"nodes":0,"dense_nodes":4,"ways":1,"relations":1,"empty":0},"nodes":{"count":25423,"tagged":2427,"tags":7822,"min_id":21911883,"max_id":8639732906},"ways":{"count":4106,"tagged":4045,"tags":13791,"min_id":4097656,"max_id":931954691},"relations":{"count":243,"tagged":243,"tags":3129,"min_id":7385,"max_id":12431099},"total":{"count":29772,"tagged":6715,"tags":24742},"way_refs":30812,"members":27740,"node_extent":[7.4016897,43.5165358,7.5002447,43.7543341],"first_timestamp":"2006-12-29T12:52:42Z","last_timestamp":"2021-04-19T22:07:27Z","max_version":724,"deleted":0,"sorted":true,"header_sorted":false}
+--- stderr

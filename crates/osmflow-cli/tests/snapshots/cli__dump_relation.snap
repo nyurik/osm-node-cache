@@ -1,0 +1,11 @@
+---
+source: crates/osmflow-cli/tests/cli.rs
+expression: "osmflow(&[\"dump\", PBF, \"--format\", \"geojson\", \"--geometry\", \"--id\",\n\"r1369191,r1369193\"])"
+---
+exit code 0
+--- stdout
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"r1369191","geometry":null,"properties":{"@type":"relation","@id":1369191,"type":"multipolygon","building":"yes","@members":[{"type":"w","ref":94399510,"role":"inner"},{"type":"w","ref":94399583,"role":"outer"}]}},
+{"type":"Feature","id":"r1369193","geometry":null,"properties":{"@type":"relation","@id":1369193,"type":"multipolygon","building":"yes","@members":[{"type":"w","ref":94399618,"role":"outer"},{"type":"w","ref":94399736,"role":"inner"}]}}
+]}
+--- stderr
