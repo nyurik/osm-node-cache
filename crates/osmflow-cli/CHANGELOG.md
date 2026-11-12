@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.14.0...osmflow-cli-v0.14.1) - 2026-11-12
+
+### Added
+
+- *(geometry)* [**breaking**] assemble the areas of multipolygon relations ([#62](https://github.com/nyurik/osmflow/pull/62))
+- *(pbf)* read a file range by range on the caller's threads ([#61](https://github.com/nyurik/osmflow/pull/61))
+
+### Other
+
+- osmflow-cli output snapshots and coverage ([#59](https://github.com/nyurik/osmflow/pull/59))
+
 ## [0.14.0](https://github.com/nyurik/osmflow/compare/osmflow-cli-v0.13.1...osmflow-cli-v0.14.0) - 2026-11-12
 
 ### Added
