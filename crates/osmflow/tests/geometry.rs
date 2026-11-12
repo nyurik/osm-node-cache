@@ -5,8 +5,9 @@ use std::iter;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use geo_types::Geometry;
-use osmflow::nodes::{MemoryStore, NodeRead as _};
+use geo::Validation as _;
+use geo_types::{Geometry, LineString, MultiPolygon};
+use osmflow::nodes::{MemoryStore, NodeRead as _, NodeStore as _};
 use osmflow::{AreaRules, GeometryError, Location, Locator, PbfReader, Select};
 
 fn fixture(name: &str) -> PbfReader {
@@ -199,35 +200,45 @@ fn closed_ways_are_areas_by_their_tags() {
     );
 }
 
-/// A store holding nodes 1.. at these (x, y) locations, in whole degrees.
-fn grid(points: &[(i32, i32)]) -> MemoryStore {
-    use osmflow::nodes::NodeStore as _;
+/// A degree in 1e-7 degrees, the unit of a [`Location`].
+const DEGREE: i32 = 10_000_000;
+
+/// The area of ways through these (x, y) points, in multiples of `unit` 1e-7 degrees; points at the same place are the
+/// same node.
+fn multi_polygon_in(unit: i32, ways: &[&[(i32, i32)]]) -> Result<MultiPolygon<f64>, GeometryError> {
     let mut store = MemoryStore::new();
-    for (id, &(x, y)) in (1..).zip(points) {
-        store
-            .set(id, Location::new(y * 10_000_000, x * 10_000_000))
-            .unwrap();
-    }
-    store
+    let mut ids = HashMap::new();
+    let ways: Vec<Vec<i64>> = ways
+        .iter()
+        .map(|way| {
+            way.iter()
+                .map(|&(x, y)| {
+                    let next = ids.len() as u64 + 1;
+                    *ids.entry((x, y)).or_insert_with(|| {
+                        store.set(next, Location::new(y * unit, x * unit)).unwrap();
+                        i64::try_from(next).unwrap()
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    Locator::new(store.reader()).multi_polygon(ways.iter().map(Vec::as_slice))
 }
 
-/// The area of the ways over these points, which must be valid.
-fn area(points: &[(i32, i32)], ways: &[&[i64]]) -> geo_types::MultiPolygon<f64> {
-    use geo::Validation as _;
-    let store = grid(points);
-    let area = Locator::new(store.reader())
-        .multi_polygon(ways.iter().copied())
-        .unwrap();
+/// The polygons of the area, which must be valid, as rings of (x, y) in multiples of `unit` 1e-7 degrees, outer ring
+/// first; each ring starts at its smallest point, keeping its direction, and the polygons are in the order of their
+/// first points.
+fn area_in(unit: i32, ways: &[&[(i32, i32)]]) -> Vec<Vec<Vec<(i32, i32)>>> {
+    let area = multi_polygon_in(unit, ways).unwrap();
     assert!(area.is_valid(), "{area:?}");
-    area
-}
-
-/// The polygons as rings of (x, y) in whole degrees, outer ring first; each ring starts at its smallest point, keeping
-/// its direction, and the polygons are in the order of their first points.
-#[expect(clippy::cast_possible_truncation)]
-fn rings(area: &geo_types::MultiPolygon<f64>) -> Vec<Vec<Vec<(i32, i32)>>> {
-    let ring = |r: &geo_types::LineString<f64>| {
-        let mut points: Vec<(i32, i32)> = r.coords().map(|c| (c.x as i32, c.y as i32)).collect();
+    let ring = |r: &LineString<f64>| {
+        let mut points: Vec<(i32, i32)> = r
+            .coords()
+            .map(|c| {
+                let loc = Location::from_degrees(c.y, c.x);
+                (loc.lon / unit, loc.lat / unit)
+            })
+            .collect();
         points.pop();
         let first = (0..points.len()).min_by_key(|&i| points[i]).unwrap();
         points.rotate_left(first);
@@ -235,7 +246,6 @@ fn rings(area: &geo_types::MultiPolygon<f64>) -> Vec<Vec<Vec<(i32, i32)>>> {
         points
     };
     let mut polygons: Vec<Vec<Vec<(i32, i32)>>> = area
-        .0
         .iter()
         .map(|p| {
             iter::once(ring(p.exterior()))
@@ -247,33 +257,22 @@ fn rings(area: &geo_types::MultiPolygon<f64>) -> Vec<Vec<Vec<(i32, i32)>>> {
     polygons
 }
 
-// 1-4 a square of 10, 5-8 a square of 2 inside it
-const NESTED: [(i32, i32); 8] = [
-    (0, 0),
-    (10, 0),
-    (10, 10),
-    (0, 10),
-    (4, 4),
-    (4, 6),
-    (6, 6),
-    (6, 4),
-];
-
-/// The square of nodes 1-4 of [`NESTED`] as [`rings`] gives it.
-const SQUARE: [(i32, i32); 5] = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)];
-
-/// Asserts that the ways over [`NESTED`] make only the square of nodes 1-4.
-fn assert_only_the_square(ways: &[&[i64]]) {
-    assert_eq!(rings(&area(&NESTED, ways)), [[SQUARE.to_vec()]]);
+/// [`area_in`] whole degrees.
+fn area(ways: &[&[(i32, i32)]]) -> Vec<Vec<Vec<(i32, i32)>>> {
+    area_in(DEGREE, ways)
 }
 
 #[test]
 fn split_and_reversed_ways_join_into_an_outer_ring_with_a_hole() {
-    let ways: [&[i64]; 3] = [&[3, 2, 1], &[5, 6, 7, 8, 5], &[3, 4, 1]];
+    let area = area(&[
+        &[(10, 10), (10, 0), (0, 0)],
+        &[(4, 4), (4, 6), (6, 6), (6, 4), (4, 4)],
+        &[(10, 10), (0, 10), (0, 0)],
+    ]);
     assert_eq!(
-        rings(&area(&NESTED, &ways)),
+        area,
         [[
-            SQUARE.to_vec(),
+            vec![(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
             vec![(4, 4), (4, 6), (6, 6), (6, 4), (4, 4)],
         ]]
     );
@@ -281,26 +280,16 @@ fn split_and_reversed_ways_join_into_an_outer_ring_with_a_hole() {
 
 #[test]
 fn an_island_in_a_hole_is_a_polygon_of_its_own() {
-    let points = [
-        (0, 0),
-        (10, 0),
-        (10, 10),
-        (0, 10),
-        (2, 2),
-        (2, 8),
-        (8, 8),
-        (8, 2),
-        (4, 4),
-        (6, 4),
-        (6, 6),
-        (4, 6),
-    ];
-    let ways: [&[i64]; 3] = [&[9, 10, 11, 12, 9], &[1, 2, 3, 4, 1], &[5, 6, 7, 8, 5]];
+    let area = area(&[
+        &[(4, 4), (6, 4), (6, 6), (4, 6), (4, 4)],
+        &[(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
+        &[(2, 2), (2, 8), (8, 8), (8, 2), (2, 2)],
+    ]);
     assert_eq!(
-        rings(&area(&points, &ways)),
+        area,
         [
             vec![
-                SQUARE.to_vec(),
+                vec![(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
                 vec![(2, 2), (2, 8), (8, 8), (8, 2), (2, 2)],
             ],
             vec![vec![(4, 4), (6, 4), (6, 6), (4, 6), (4, 4)]],
@@ -310,46 +299,50 @@ fn an_island_in_a_hole_is_a_polygon_of_its_own() {
 
 #[test]
 fn rings_touching_at_a_node_are_two_polygons() {
-    // two squares that share node 3, each of two ways: four way ends meet there
-    let points = [(0, 0), (5, 0), (5, 5), (0, 5), (10, 5), (10, 10), (5, 10)];
-    let ways: [&[i64]; 4] = [&[1, 2, 3], &[3, 5, 6], &[6, 7, 3], &[3, 4, 1]];
+    // two squares that share (5, 5), each of two ways: four way ends meet there
+    let area = area(&[
+        &[(0, 0), (5, 0), (5, 5)],
+        &[(5, 5), (10, 5), (10, 10)],
+        &[(10, 10), (5, 10), (5, 5)],
+        &[(5, 5), (0, 5), (0, 0)],
+    ]);
     assert_eq!(
-        rings(&area(&points, &ways)),
+        area,
         [
-            vec![vec![(0, 0), (5, 0), (5, 5), (0, 5), (0, 0)]],
-            vec![vec![(5, 5), (10, 5), (10, 10), (5, 10), (5, 5)]],
+            [[(0, 0), (5, 0), (5, 5), (0, 5), (0, 0)]],
+            [[(5, 5), (10, 5), (10, 10), (5, 10), (5, 5)]],
         ]
     );
 }
 
 #[test]
 fn a_hole_touching_its_outer_ring_at_a_node_stays_a_hole() {
-    // a triangle hole whose corner is node 3, a corner of the outer ring, both split into two ways
-    let points = [(0, 0), (10, 0), (10, 10), (0, 10), (8, 5), (5, 8)];
-    let ways: [&[i64]; 4] = [&[1, 2, 3], &[3, 5, 6], &[6, 3], &[3, 4, 1]];
+    // a triangle hole with a corner at (10, 10), a corner of the outer ring, both split into two ways there
+    let area = area(&[
+        &[(0, 0), (10, 0), (10, 10)],
+        &[(10, 10), (8, 5), (5, 8)],
+        &[(5, 8), (10, 10)],
+        &[(10, 10), (0, 10), (0, 0)],
+    ]);
     assert_eq!(
-        rings(&area(&points, &ways)),
-        [[SQUARE.to_vec(), vec![(5, 8), (10, 10), (8, 5), (5, 8)],]]
+        area,
+        [[
+            vec![(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
+            vec![(5, 8), (10, 10), (8, 5), (5, 8)],
+        ]]
     );
 }
 
 #[test]
 fn an_edge_two_rings_share_cancels_out() {
-    // a hole on the outer ring's right edge, from 5 to 6, notches the outer ring
-    let points = [
-        (0, 0),
-        (10, 0),
-        (10, 10),
-        (0, 10),
-        (10, 3),
-        (10, 7),
-        (6, 7),
-        (6, 3),
-    ];
-    let ways: [&[i64]; 2] = [&[1, 2, 5, 6, 3, 4, 1], &[5, 6, 7, 8, 5]];
+    // a hole on the outer ring's right edge, from (10, 3) to (10, 7), notches the outer ring
+    let area = area(&[
+        &[(0, 0), (10, 0), (10, 3), (10, 7), (10, 10), (0, 10), (0, 0)],
+        &[(10, 3), (10, 7), (6, 7), (6, 3), (10, 3)],
+    ]);
     assert_eq!(
-        rings(&area(&points, &ways)),
-        [[vec![
+        area,
+        [[[
             (0, 0),
             (10, 0),
             (10, 3),
@@ -365,124 +358,109 @@ fn an_edge_two_rings_share_cancels_out() {
 
 #[test]
 fn outer_rings_that_overlap_leave_the_overlap_out() {
-    let points = [
-        (0, 0),
-        (6, 0),
-        (6, 6),
-        (0, 6),
-        (3, 3),
-        (9, 3),
-        (9, 9),
-        (3, 9),
-    ];
-    let ways: [&[i64]; 2] = [&[1, 2, 3, 4, 1], &[5, 6, 7, 8, 5]];
+    let area = area(&[
+        &[(0, 0), (6, 0), (6, 6), (0, 6), (0, 0)],
+        &[(3, 3), (9, 3), (9, 9), (3, 9), (3, 3)],
+    ]);
     assert_eq!(
-        rings(&area(&points, &ways)),
+        area,
         [
-            vec![vec![(0, 0), (6, 0), (6, 3), (3, 3), (3, 6), (0, 6), (0, 0)]],
-            vec![vec![(3, 6), (6, 6), (6, 3), (9, 3), (9, 9), (3, 9), (3, 6)]],
+            [[(0, 0), (6, 0), (6, 3), (3, 3), (3, 6), (0, 6), (0, 0)]],
+            [[(3, 6), (6, 6), (6, 3), (9, 3), (9, 9), (3, 9), (3, 6)]],
         ]
     );
 }
 
 #[test]
 fn a_way_listed_twice_counts_once() {
-    let ways: [&[i64]; 3] = [&[1, 2, 3], &[3, 4, 1], &[3, 4, 1]];
-    assert_only_the_square(&ways);
+    let area = area(&[
+        &[(0, 0), (10, 0), (10, 10)],
+        &[(10, 10), (0, 10), (0, 0)],
+        &[(10, 10), (0, 10), (0, 0)],
+    ]);
+    assert_eq!(area, [[[(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]]]);
 }
 
 #[test]
 fn a_chain_that_does_not_close_is_left_out() {
-    let ways: [&[i64]; 2] = [&[1, 2, 3, 4, 1], &[5, 6, 7]];
-    assert_only_the_square(&ways);
+    let area = area(&[
+        &[(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
+        &[(4, 4), (4, 6), (6, 6)],
+    ]);
+    assert_eq!(area, [[[(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]]]);
 }
 
 #[test]
 fn a_dangling_way_at_a_ring_node_does_not_break_the_ring() {
-    let ways: [&[i64]; 4] = [&[2, 3], &[1, 5], &[3, 4, 1], &[1, 2]];
-    assert_only_the_square(&ways);
+    let area = area(&[
+        &[(10, 0), (10, 10)],
+        // from a corner of the ring to nowhere
+        &[(0, 0), (4, 4)],
+        &[(10, 10), (0, 10), (0, 0)],
+        &[(0, 0), (10, 0)],
+    ]);
+    assert_eq!(area, [[[(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]]]);
 }
 
 #[test]
 fn ways_that_close_no_ring_are_an_error() {
-    let store = grid(&NESTED);
-    let mut locator = Locator::new(store.reader());
-    let ways: [&[i64]; 2] = [&[1, 2, 3], &[3, 4]];
-    assert_eq!(locator.multi_polygon(ways), Err(GeometryError::NoRing));
+    let area = multi_polygon_in(
+        DEGREE,
+        &[&[(0, 0), (10, 0), (10, 10)], &[(10, 10), (0, 10)]],
+    );
+    assert_eq!(area, Err(GeometryError::NoRing));
 }
 
 #[test]
 fn a_ring_node_without_a_location_is_an_error() {
-    let store = grid(&NESTED);
-    let mut locator = Locator::new(store.reader());
-    let ways: [&[i64]; 1] = [&[1, 2, 99, 4, 1]];
-    assert_eq!(
-        locator.multi_polygon(ways),
-        Err(GeometryError::MissingNode(99))
-    );
-}
-
-/// The area's locations in 1e-7 degrees, from a ring of these (lon, lat) in 1e-7 degrees.
-#[expect(clippy::cast_possible_truncation)]
-fn round_trip(points: &[(i32, i32)]) -> Vec<(i32, i32)> {
-    use osmflow::nodes::NodeStore as _;
     let mut store = MemoryStore::new();
-    for (id, &(lon, lat)) in (1..).zip(points) {
-        store.set(id, Location::new(lat, lon)).unwrap();
-    }
-    let ring: Vec<i64> = (1..=i64::try_from(points.len()).unwrap())
-        .chain([1])
-        .collect();
-    let area = Locator::new(store.reader())
-        .multi_polygon([ring.as_slice()])
-        .unwrap();
-    let mut out: Vec<(i32, i32)> = area.0[0]
-        .exterior()
-        .coords()
-        .map(|c| ((c.x * 1e7).round() as i32, (c.y * 1e7).round() as i32))
-        .collect();
-    out.pop();
-    out.sort_unstable();
-    out
+    store.set(1, Location::new(0, 0)).unwrap();
+    store.set(2, Location::new(0, 10 * DEGREE)).unwrap();
+    store.set(4, Location::new(10 * DEGREE, 0)).unwrap();
+    // node 3, a corner of the square, is not in the store
+    let square: &[i64] = &[1, 2, 3, 4, 1];
+    let area = Locator::new(store.reader()).multi_polygon([square]);
+    assert_eq!(area, Err(GeometryError::MissingNode(3)));
 }
 
 #[test]
 fn locations_are_kept_exactly() {
     // 100 degrees across, at odd units of 1e-7 degrees
-    let points = [
-        (-500_000_001, -3),
-        (499_999_999, -3),
-        (499_999_999, 123_456_789),
-        (-500_000_001, 123_456_789),
+    let (west, east, south, north) = (-500_000_001, 499_999_999, -3, 123_456_789);
+    let square = [
+        (west, south),
+        (east, south),
+        (east, north),
+        (west, north),
+        (west, south),
     ];
-    let mut expected = points.to_vec();
-    expected.sort_unstable();
-    assert_eq!(round_trip(&points), expected);
+    assert_eq!(area_in(1, &[&square]), [[square]]);
 }
 
 #[test]
-fn rings_wider_than_214_degrees_round_to_2e_7_degrees() {
-    let points = [
-        (-1_799_999_999, -3),
-        (1_799_999_999, -3),
-        (1_799_999_999, 123_456_789),
-        (-1_799_999_999, 123_456_789),
+fn locations_are_kept_exactly_around_the_world() {
+    let (west, east, south, north) = (-1_799_999_999, 1_799_999_999, -3, 123_456_789);
+    let square = [
+        (west, south),
+        (east, south),
+        (east, north),
+        (west, north),
+        (west, south),
     ];
-    for ((lon, lat), (x, y)) in round_trip(&points).into_iter().zip({
-        let mut p = points.to_vec();
-        p.sort_unstable();
-        p
-    }) {
-        assert!(
-            (lon - x).abs() <= 1 && (lat - y).abs() <= 1,
-            "{lon},{lat} from {x},{y}"
-        );
-    }
+    assert_eq!(area_in(1, &[&square]), [[square]]);
+}
+
+/// What became of each multipolygon relation.
+#[derive(Debug, Default, PartialEq)]
+struct Outcomes {
+    built: usize,
+    polygons: usize,
+    missing_node: usize,
+    no_ring: usize,
 }
 
 #[test]
 fn monaco_multipolygons_assemble() {
-    use geo::Validation as _;
     let file = fixture("planetiler/monaco-latest.osm.pbf");
     let store = loaded(&file);
     let mut ways: HashMap<i64, Vec<i64>> = HashMap::new();
@@ -506,26 +484,32 @@ fn monaco_multipolygons_assemble() {
             }
         }
     }
+    assert_eq!(relations.len(), 72);
     let mut locator = Locator::new(store.reader());
-    // members outside the extract leave a node without a location, or rings that do not close
-    let (mut built, mut polygons, mut missing, mut open) = (0, 0, 0, 0);
+    let mut outcomes = Outcomes::default();
     for members in &relations {
+        // members outside the extract are missing, and leave rings that do not close
         let refs = members
             .iter()
             .filter_map(|id| ways.get(id).map(Vec::as_slice));
         match locator.multi_polygon(refs) {
             Ok(area) => {
                 assert!(area.is_valid(), "{members:?}");
-                built += 1;
-                polygons += area.0.len();
+                outcomes.built += 1;
+                outcomes.polygons += area.0.len();
             }
-            Err(GeometryError::MissingNode(_)) => missing += 1,
-            Err(GeometryError::NoRing) => open += 1,
+            Err(GeometryError::MissingNode(_)) => outcomes.missing_node += 1,
+            Err(GeometryError::NoRing) => outcomes.no_ring += 1,
             Err(e) => panic!("{members:?}: {e}"),
         }
     }
     assert_eq!(
-        (relations.len(), built, polygons, missing, open),
-        (72, 42, 43, 0, 30)
+        outcomes,
+        Outcomes {
+            built: 42,
+            polygons: 43,
+            missing_node: 0,
+            no_ring: 30,
+        }
     );
 }

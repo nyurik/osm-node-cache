@@ -638,7 +638,7 @@ dependencies = [
  "float_next_after",
  "geo-types",
  "geographiclib-rs",
- "i_overlay",
+ "i_overlay 4.5.2",
  "log",
  "num-traits",
  "rand",
@@ -812,10 +812,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "i_float"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ecaff1ce29bcacd72cdf581ba6fce636ef4c4e0b2da7e7846dd0137d98141e2"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "i_key_sort"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d73d122b937fca067feb0ad74f62388920272b27c356d4df2d0cfdd59e044cf0"
+
+[[package]]
+name = "i_key_sort"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14269ee362009550495e20650ff3c2bca14a8147fe251e216760381ffed90b6f"
 
 [[package]]
 name = "i_overlay"
@@ -823,10 +838,22 @@ version = "4.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8dd314b4668e2b3a12508f2e125558c82a6c0a8636fa5107a900f79ce414e450"
 dependencies = [
- "i_float",
- "i_key_sort",
- "i_shape",
- "i_tree",
+ "i_float 1.16.0",
+ "i_key_sort 0.10.3",
+ "i_shape 1.18.0",
+ "i_tree 0.18.0",
+]
+
+[[package]]
+name = "i_overlay"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913fd692c02408adc76cead636f8e7e07c705f8b995a8b54b454b995e8e197d5"
+dependencies = [
+ "i_float 5.0.0",
+ "i_key_sort 0.12.0",
+ "i_shape 5.0.0",
+ "i_tree 0.20.0",
 ]
 
 [[package]]
@@ -835,7 +862,16 @@ version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa9eac533d7509a8ab87672b60ac610c17240f9ea4851d26227689fdfe349c8"
 dependencies = [
- "i_float",
+ "i_float 1.16.0",
+]
+
+[[package]]
+name = "i_shape"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa1878f91ef7921feaf1b2346253ebc5e661878b22d5715195c1d5dcf0f20ae5"
+dependencies = [
+ "i_float 5.0.0",
 ]
 
 [[package]]
@@ -843,6 +879,12 @@ name = "i_tree"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4804bdc1dc124eb7e1aa9e144ecc04096bcf787a10a15fa44af682b51f0f6cce"
+
+[[package]]
+name = "i_tree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "048af31de955890c62a8506fec511335a5089e91e1c516537add16f96c507d84"
 
 [[package]]
 name = "indexmap"
@@ -1166,7 +1208,7 @@ dependencies = [
  "flate2",
  "geo",
  "geo-types",
- "i_overlay",
+ "i_overlay 9.1.0",
  "insta",
  "memchr",
  "memmap2 0.9.12",

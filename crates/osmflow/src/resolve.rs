@@ -8,11 +8,13 @@ use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
 
 use crate::Location;
 #[cfg(feature = "geometry")]
-use crate::area::{AreaRules, closed_rings, even_odd};
+use crate::area::AreaRules;
 use crate::block::{Block, Select, TagMode};
 #[cfg(feature = "geometry")]
 use crate::block::{Tags, Way};
 use crate::error::Result;
+#[cfg(feature = "geometry")]
+use crate::multipolygon::{closed_rings, even_odd};
 use crate::nodes::{BulkLoad as _, NodeRead, NodeReader, NodeStore};
 use crate::reader::PbfReader;
 
@@ -45,7 +47,7 @@ pub struct Locator<R> {
 
 /// A location as a geo-types coordinate in degrees.
 #[cfg(feature = "geometry")]
-fn coord(loc: Location) -> Coord<f64> {
+pub(crate) fn coord(loc: Location) -> Coord<f64> {
     Coord {
         x: loc.lon_degrees(),
         y: loc.lat_degrees(),
@@ -61,6 +63,12 @@ impl<R: NodeReader> Locator<R> {
     /// The location of node `id`, if the store has it.
     pub fn location(&mut self, id: i64) -> Option<Location> {
         self.reader.get(u64::try_from(id).ok()?)
+    }
+
+    /// The location of node `id`, or the error that it has none.
+    #[cfg(feature = "geometry")]
+    fn located(&mut self, id: i64) -> Result<Location, GeometryError> {
+        self.location(id).ok_or(GeometryError::MissingNode(id))
     }
 
     /// The way as a line: its nodes' locations, in order: those the file stores on the way, or else the store's.
@@ -84,10 +92,7 @@ impl<R: NodeReader> Locator<R> {
                 .collect(),
             None => way
                 .refs()
-                .map(|id| {
-                    let loc = self.location(id).ok_or(GeometryError::MissingNode(id))?;
-                    Ok(coord(loc))
-                })
+                .map(|id| self.located(id).map(coord))
                 .collect::<Result<_, _>>()?,
         };
         if coords.len() < 2 {
@@ -115,8 +120,7 @@ impl<R: NodeReader> Locator<R> {
     /// that an island, whatever their roles say, and an edge two rings share cancels out. Rings that touch at a node
     /// are split there into separate rings; rings that cross, which OpenStreetMap does not allow, get a vertex where
     /// they cross, rounded to 1e-7 degrees, and outer rings that overlap leave the overlap out. Outer rings run
-    /// counterclockwise, holes clockwise. Locations are kept exactly, unless the rings span more than about 214 degrees
-    /// of longitude, which rounds them down to multiples of 2e-7 degrees.
+    /// counterclockwise, holes clockwise. Locations are kept exactly.
     ///
     /// Fails if a node of a closed ring has no location, or if the rings cover no area.
     #[cfg(feature = "geometry")]
@@ -124,14 +128,10 @@ impl<R: NodeReader> Locator<R> {
         &mut self,
         ways: impl IntoIterator<Item = &'w [i64]>,
     ) -> Result<MultiPolygon<f64>, GeometryError> {
-        let mut rings = Vec::new();
-        for ids in closed_rings(ways) {
-            let ring = ids
-                .iter()
-                .map(|&id| self.location(id).ok_or(GeometryError::MissingNode(id)))
-                .collect::<Result<Vec<_>, _>>()?;
-            rings.push(ring);
-        }
+        let rings = closed_rings(ways)
+            .iter()
+            .map(|ids| ids.iter().map(|&id| self.located(id)).collect())
+            .collect::<Result<Vec<Vec<_>>, _>>()?;
         let area = even_odd(&rings);
         if area.0.is_empty() {
             return Err(GeometryError::NoRing);

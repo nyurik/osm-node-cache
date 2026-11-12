@@ -39,6 +39,8 @@ mod generated;
 #[cfg(feature = "pbf")]
 mod header;
 mod model;
+#[cfg(feature = "geometry")]
+mod multipolygon;
 #[cfg(feature = "nodes")]
 pub mod nodes;
 #[cfg(feature = "osc")]

@@ -209,10 +209,8 @@ A way stores only its nodes' IDs. To build its geometry, osmflow looks the IDs u
   inside an odd number of rings. Roles are not read, so a hole marked `outer` or an island marked `inner` still comes
   out right. Rings that touch at a node, where a way-by-way join merges them into one ring that touches itself, come out
   as separate rings; an edge two rings share cancels out; and outer rings that overlap, which OpenStreetMap does not
-  allow, leave their overlap out. The overlay runs on integers: the locations, in 1e-7 degrees, less the middle of
-  their bounds, so every location is kept exactly unless the rings span more than about 214 degrees of longitude,
-  where they are halved first and round down to multiples of 2e-7 degrees. Outer rings run counterclockwise and holes
-  clockwise.
+  allow, leave their overlap out. The overlay runs on `i64`s, the locations in 1e-7 degrees as they are, so every
+  location is kept exactly. Outer rings run counterclockwise and holes clockwise.
 * **Nodes are looked up only when asked for.** A way's refs are decoded, and its nodes looked up, only when its
   geometry is built, so ways a caller passes over cost nothing.
 * **A file with locations on its ways needs no store:** `line_string` takes the locations stored on the way when it has
