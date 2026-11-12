@@ -1,6 +1,7 @@
 //! Ways as geometries: node locations loaded into a store, and looked up for each way.
 
 use std::collections::HashMap;
+use std::iter;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -196,4 +197,176 @@ fn closed_ways_are_areas_by_their_tags() {
         areas > 1000 && closed_lines > 0 && open > 1000,
         "{areas} {closed_lines} {open}"
     );
+}
+
+/// A store holding nodes 1.. at these (x, y) locations, in whole degrees.
+fn grid(points: &[(i32, i32)]) -> MemoryStore {
+    use osmflow::nodes::NodeStore as _;
+    let mut store = MemoryStore::new();
+    for (id, &(x, y)) in (1..).zip(points) {
+        store
+            .set(id, Location::new(y * 10_000_000, x * 10_000_000))
+            .unwrap();
+    }
+    store
+}
+
+/// The polygons as rings of (x, y) in whole degrees, outer ring first.
+#[expect(clippy::cast_possible_truncation)]
+fn rings(area: &geo_types::MultiPolygon<f64>) -> Vec<Vec<Vec<(i32, i32)>>> {
+    let ring =
+        |r: &geo_types::LineString<f64>| r.coords().map(|c| (c.x as i32, c.y as i32)).collect();
+    area.0
+        .iter()
+        .map(|p| {
+            iter::once(ring(p.exterior()))
+                .chain(p.interiors().iter().map(ring))
+                .collect()
+        })
+        .collect()
+}
+
+// 1-4 a square of 10, 5-8 a square of 2 inside it, 9-12 a square of 1 inside that
+const NESTED: [(i32, i32); 12] = [
+    (0, 0),
+    (10, 0),
+    (10, 10),
+    (0, 10),
+    (4, 4),
+    (4, 6),
+    (6, 6),
+    (6, 4),
+    (5, 5),
+    (5, 5),
+    (5, 5),
+    (5, 5),
+];
+
+#[test]
+fn split_and_reversed_ways_join_into_an_outer_ring_with_a_hole() {
+    let store = grid(&NESTED);
+    let mut locator = Locator::new(store.reader());
+    let ways: [&[i64]; 3] = [&[3, 2, 1], &[5, 6, 7, 8, 5], &[3, 4, 1]];
+    let area = locator.multi_polygon(ways).unwrap();
+    assert_eq!(
+        rings(&area),
+        [[
+            vec![(10, 10), (10, 0), (0, 0), (0, 10), (10, 10)]
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            vec![(4, 4), (4, 6), (6, 6), (6, 4), (4, 4)],
+        ]]
+    );
+}
+
+#[test]
+fn an_island_in_a_hole_is_a_polygon_of_its_own() {
+    let points = [
+        (0, 0),
+        (10, 0),
+        (10, 10),
+        (0, 10),
+        (2, 2),
+        (2, 8),
+        (8, 8),
+        (8, 2),
+        (4, 4),
+        (6, 4),
+        (6, 6),
+        (4, 6),
+    ];
+    let store = grid(&points);
+    let mut locator = Locator::new(store.reader());
+    let ways: [&[i64]; 3] = [&[9, 10, 11, 12, 9], &[1, 2, 3, 4, 1], &[5, 6, 7, 8, 5]];
+    let area = locator.multi_polygon(ways).unwrap();
+    assert_eq!(
+        rings(&area),
+        [
+            vec![
+                vec![(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
+                vec![(2, 2), (2, 8), (8, 8), (8, 2), (2, 2)]
+            ],
+            vec![vec![(4, 4), (6, 4), (6, 6), (4, 6), (4, 4)]],
+        ]
+    );
+}
+
+#[test]
+fn a_chain_that_does_not_close_is_left_out() {
+    let store = grid(&NESTED);
+    let mut locator = Locator::new(store.reader());
+    let ways: [&[i64]; 2] = [&[1, 2, 3, 4, 1], &[5, 6, 7]];
+    let area = locator.multi_polygon(ways).unwrap();
+    assert_eq!(
+        rings(&area),
+        [[vec![(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]]]
+    );
+}
+
+#[test]
+fn a_dangling_way_at_a_ring_node_does_not_break_the_ring() {
+    let store = grid(&NESTED);
+    let mut locator = Locator::new(store.reader());
+    let ways: [&[i64]; 4] = [&[2, 3], &[1, 5], &[3, 4, 1], &[1, 2]];
+    let area = locator.multi_polygon(ways).unwrap();
+    assert_eq!(
+        rings(&area),
+        [[vec![(10, 0), (10, 10), (0, 10), (0, 0), (10, 0)]]]
+    );
+}
+
+#[test]
+fn ways_that_close_no_ring_are_an_error() {
+    let store = grid(&NESTED);
+    let mut locator = Locator::new(store.reader());
+    let ways: [&[i64]; 2] = [&[1, 2, 3], &[3, 4]];
+    assert_eq!(locator.multi_polygon(ways), Err(GeometryError::NoRing));
+}
+
+#[test]
+fn a_ring_node_without_a_location_is_an_error() {
+    let store = grid(&NESTED);
+    let mut locator = Locator::new(store.reader());
+    let ways: [&[i64]; 1] = [&[1, 2, 99, 4, 1]];
+    assert_eq!(
+        locator.multi_polygon(ways),
+        Err(GeometryError::MissingNode(99))
+    );
+}
+
+#[test]
+fn monaco_multipolygons_assemble() {
+    let file = fixture("planetiler/monaco-latest.osm.pbf");
+    let store = loaded(&file);
+    let mut ways: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut relations = Vec::new();
+    for block in file.blocks(Select::all()).unwrap() {
+        let block = block.unwrap();
+        for way in block.ways() {
+            ways.insert(way.id(), way.refs().collect());
+        }
+        for relation in block.relations() {
+            if relation.tags().any(|tag| tag == ("type", "multipolygon")) {
+                let members: Vec<i64> = relation
+                    .members()
+                    .filter(|m| m.kind == osmflow::MemberType::Way)
+                    .map(|m| m.id)
+                    .collect();
+                relations.push(members);
+            }
+        }
+    }
+    let mut locator = Locator::new(store.reader());
+    let (mut built, mut polygons) = (0, 0);
+    for members in &relations {
+        let refs = members
+            .iter()
+            .filter_map(|id| ways.get(id).map(Vec::as_slice));
+        if let Ok(area) = locator.multi_polygon(refs) {
+            built += 1;
+            polygons += area.0.len();
+        }
+    }
+    assert_eq!((relations.len(), built, polygons), (33, 33, 33));
 }

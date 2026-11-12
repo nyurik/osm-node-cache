@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use geo_types::{Coord, LineString, MultiPolygon, Polygon};
+
 /// What a key says about a closed way that has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Rule {
@@ -226,6 +228,158 @@ impl AreaRules {
 
 fn owned(values: &[&str]) -> Vec<String> {
     values.iter().map(|&v| v.to_owned()).collect()
+}
+
+/// The closed rings the ways make, joined end to end where they share an end node, each as its node IDs with the
+/// first repeated at the end; chains that do not close, and rings of fewer than four nodes, are left out.
+pub(crate) fn closed_rings<'w>(ways: impl IntoIterator<Item = &'w [i64]>) -> Vec<Vec<i64>> {
+    let mut rings = Vec::new();
+    let mut open: Vec<&[i64]> = Vec::new();
+    for way in ways {
+        match (way.first(), way.last()) {
+            (Some(first), Some(last)) if way.len() >= 2 && first == last => {
+                rings.push(way.to_vec());
+            }
+            _ if way.len() >= 2 => open.push(way),
+            _ => {}
+        }
+    }
+    let mut by_end: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (i, way) in open.iter().enumerate() {
+        by_end.entry(way[0]).or_default().push(i);
+        by_end.entry(way[way.len() - 1]).or_default().push(i);
+    }
+    let mut used = vec![false; open.len()];
+    // A way with an end no other way reaches is in no ring: dropping it, and the ways that leaves dangling in turn,
+    // keeps a chain from following one off a ring it could have closed.
+    let mut degree: HashMap<i64, usize> = by_end
+        .iter()
+        .map(|(&node, ways)| (node, ways.len()))
+        .collect();
+    let mut dangling: Vec<i64> = degree
+        .iter()
+        .filter(|&(_, &d)| d == 1)
+        .map(|(&node, _)| node)
+        .collect();
+    while let Some(node) = dangling.pop() {
+        let Some(i) = by_end[&node].iter().copied().find(|&i| !used[i]) else {
+            continue;
+        };
+        used[i] = true;
+        for end in [open[i][0], open[i][open[i].len() - 1]] {
+            let d = degree
+                .get_mut(&end)
+                .expect("every end of a way has a degree");
+            *d -= 1;
+            if *d == 1 {
+                dangling.push(end);
+            }
+        }
+    }
+    for start in 0..open.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let mut chain = open[start].to_vec();
+        while chain.first() != chain.last() {
+            let end = *chain.last().expect("a chain has two nodes or more");
+            let Some(next) = by_end
+                .get(&end)
+                .and_then(|ways| ways.iter().copied().find(|&i| !used[i]))
+            else {
+                break;
+            };
+            used[next] = true;
+            let way = open[next];
+            if way[0] == end {
+                chain.extend_from_slice(&way[1..]);
+            } else {
+                chain.extend(way.iter().rev().skip(1));
+            }
+        }
+        if chain.first() == chain.last() {
+            rings.push(chain);
+        }
+    }
+    rings.retain(|ring| ring.len() >= 4);
+    rings
+}
+
+/// Twice the signed area of a closed ring: positive when it runs counterclockwise.
+fn signed_area(ring: &LineString<f64>) -> f64 {
+    ring.0
+        .windows(2)
+        .map(|w| w[0].x * w[1].y - w[1].x * w[0].y)
+        .sum()
+}
+
+/// Whether `point` is inside the closed ring, by the even-odd rule; a point on its edge may count as either.
+fn inside(point: Coord<f64>, ring: &LineString<f64>) -> bool {
+    let mut inside = false;
+    for w in ring.0.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if (a.y > point.y) != (b.y > point.y)
+            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
+        {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// Whether `inner`, a ring that does not cross `outer`, lies inside it: tested at a vertex of `inner` that is not one
+/// of `outer`'s, as rings of a relation may touch at a node.
+fn ring_inside(inner: &LineString<f64>, outer: &LineString<f64>) -> bool {
+    let shared = |c: &Coord<f64>| outer.0.contains(c);
+    inner
+        .0
+        .iter()
+        .find(|c| !shared(c))
+        .is_some_and(|&c| inside(c, outer))
+}
+
+/// The rings as polygons: a ring inside an odd number of others is a hole of the smallest ring around it, every other
+/// ring the outer ring of a polygon. Outer rings are made to run counterclockwise, holes clockwise.
+pub(crate) fn nest(rings: Vec<LineString<f64>>) -> MultiPolygon<f64> {
+    let mut rings: Vec<(f64, LineString<f64>)> = rings
+        .into_iter()
+        .map(|ring| (signed_area(&ring), ring))
+        .collect();
+    rings.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()));
+    // For each ring, larger first: its depth, and the polygon it is the outer ring of, or a hole of.
+    let mut depth: Vec<usize> = Vec::with_capacity(rings.len());
+    let mut polygon_of: Vec<usize> = Vec::with_capacity(rings.len());
+    let mut polygons: Vec<(LineString<f64>, Vec<LineString<f64>>)> = Vec::new();
+    for i in 0..rings.len() {
+        let parent = (0..i)
+            .rev()
+            .find(|&j| ring_inside(&rings[i].1, &rings[j].1));
+        let d = parent.map_or(0, |j| depth[j] + 1);
+        depth.push(d);
+        let (area, ring) = (rings[i].0, rings[i].1.clone());
+        if d % 2 == 0 {
+            let ring = if area < 0.0 { reversed(ring) } else { ring };
+            polygon_of.push(polygons.len());
+            polygons.push((ring, Vec::new()));
+        } else {
+            let parent = polygon_of[parent.expect("a ring at an odd depth is inside another")];
+            let ring = if area > 0.0 { reversed(ring) } else { ring };
+            polygon_of.push(parent);
+            polygons[parent].1.push(ring);
+        }
+    }
+    MultiPolygon::new(
+        polygons
+            .into_iter()
+            .map(|(outer, holes)| Polygon::new(outer, holes))
+            .collect(),
+    )
+}
+
+fn reversed(mut ring: LineString<f64>) -> LineString<f64> {
+    ring.0.reverse();
+    ring
 }
 
 #[cfg(test)]

@@ -4,11 +4,11 @@
 use std::sync::{Mutex, PoisonError};
 
 #[cfg(feature = "geometry")]
-use geo_types::{Coord, Geometry, LineString, Polygon};
+use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
 
 use crate::Location;
 #[cfg(feature = "geometry")]
-use crate::area::AreaRules;
+use crate::area::{AreaRules, closed_rings, nest};
 use crate::block::{Block, Select, TagMode};
 #[cfg(feature = "geometry")]
 use crate::block::{Tags, Way};
@@ -29,6 +29,9 @@ pub enum GeometryError {
     /// An area needs a closed way of four nodes or more, the last at the location of the first.
     #[error("the way is not a closed ring")]
     NotClosed,
+    /// No member ways of a relation join into a closed ring of four nodes or more.
+    #[error("the member ways join into no closed ring")]
+    NoRing,
 }
 
 /// Looks up the locations of ways' nodes in a node location store, for one thread. Make one per thread with
@@ -99,6 +102,36 @@ impl<R: NodeReader> Locator<R> {
             return Err(GeometryError::NotClosed);
         }
         Ok(Polygon::new(ring, Vec::new()))
+    }
+
+    /// The area of a multipolygon or boundary relation, from the node IDs of its member ways, in any order and
+    /// direction. The ways are joined end to end, where they share an end node, into closed rings; chains of ways that
+    /// do not close are left out, as are rings of fewer than four nodes. Roles are not read: a ring inside an odd
+    /// number of other rings is a hole of the smallest ring around it, and every other ring is an outer ring, so a hole
+    /// marked `outer` or an island marked `inner` still comes out right. Outer rings run counterclockwise, holes
+    /// clockwise.
+    ///
+    /// Fails if a node of a closed ring has no location, or if no ring closes.
+    #[cfg(feature = "geometry")]
+    pub fn multi_polygon<'w>(
+        &mut self,
+        ways: impl IntoIterator<Item = &'w [i64]>,
+    ) -> Result<MultiPolygon<f64>, GeometryError> {
+        let mut rings = Vec::new();
+        for ids in closed_rings(ways) {
+            let coords = ids
+                .iter()
+                .map(|&id| {
+                    let loc = self.location(id).ok_or(GeometryError::MissingNode(id))?;
+                    Ok(coord(loc))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            rings.push(LineString::new(coords));
+        }
+        if rings.is_empty() {
+            return Err(GeometryError::NoRing);
+        }
+        Ok(nest(rings))
     }
 
     /// The way as an area if it is closed and `areas` say its tags make it one, and as a line otherwise.
