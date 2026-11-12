@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/nyurik/osmflow/compare/osmflow-v0.13.1...osmflow-v0.14.0) - 2026-11-12
+
+### Added
+
+- *(sync)* [**breaking**] store geoms as TWKB or WKB, test DBs in CI ([#57](https://github.com/nyurik/osmflow/pull/57))
+
 ## [0.13.1](https://github.com/nyurik/osmflow/compare/osmflow-v0.13.0...osmflow-v0.13.1) - 2026-11-11
 
 The library's code is unchanged: this release fixes how its tests are built, and adds badges to its README.
