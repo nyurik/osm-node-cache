@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "osmflow"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "buffa",
  "buffa-build",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "osmflow-cli"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "osmflow-sync"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "crossbeam-channel",
  "geo-traits",

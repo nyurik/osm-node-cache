@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/nyurik/osmflow/compare/osmflow-v0.13.1...osmflow-v0.14.0) - 2026-11-12
+
+### Changed
+
+- [**breaking**] `Action::name()` is gone: `Action` converts to `&'static str` (`<&str>::from(action)`) and displays
+  as before, as `create`, `modify` or `delete`, and now also parses from them
+  ([#57](https://github.com/nyurik/osmflow/pull/57))
+
+### Added
+
+- `MemberType::from_name` reads `node`, `way` or `relation` as osmChange files write them, and `MemberType` converts to
+  `&'static str` the same way.
+- The iterators of both relations' `members()`, of a PBF block and of an osmChange file, are `Clone`.
+
+### Fixed
+
+- `path_sequence` splits a path at `\` too, so on Windows the files of a replication stream in a local directory get
+  their sequence numbers.
+
+### Other
+
+- The node stores' block cache is allocated without unsafe code.
+
 ## [0.13.1](https://github.com/nyurik/osmflow/compare/osmflow-v0.13.0...osmflow-v0.13.1) - 2026-11-11
 
 The library's code is unchanged: this release fixes how its tests are built, and adds badges to its README.

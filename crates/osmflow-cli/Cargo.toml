@@ -1,6 +1,6 @@
 [package]
 name = "osmflow-cli"
-version = "0.13.1"
+version = "0.14.0"
 description = "The osmflow command: dump OpenStreetMap PBF and osmChange files as text or GeoJSON, and summarize them"
 authors.workspace = true
 repository.workspace = true
